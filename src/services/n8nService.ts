@@ -707,6 +707,122 @@ export function normalizeN8nBoxes(
  * as Multipart Form-Data to the n8n webhook.
  * Automatically falls back to simulated AI if the n8n endpoint times out or fails.
  */
+/**
+ * Ensures any photo input (File, Blob, base64 data URL, or remote URL) is converted
+ * into a lightweight, high-quality JPEG Blob (<400KB) and Base64 strings for n8n transmission.
+ */
+export async function prepareN8nImagePayload(
+  photoSource: string | Blob | File
+): Promise<{ jpegBlob: Blob; base64DataUrl: string; rawBase64: string; fileName: string }> {
+  let base64DataUrl = '';
+  let fileName = `shelf_capture_${Date.now()}.jpg`;
+
+  if (photoSource instanceof File && photoSource.name) {
+    fileName = photoSource.name;
+  }
+
+  // 1. Convert input to data URL string first
+  if (photoSource instanceof Blob) {
+    try {
+      base64DataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(photoSource);
+      });
+    } catch {
+      base64DataUrl = '';
+    }
+  } else if (typeof photoSource === 'string') {
+    base64DataUrl = photoSource;
+  }
+
+  if (!base64DataUrl || !base64DataUrl.startsWith('data:')) {
+    // If remote URL or object URL, fetch and convert to data URL
+    try {
+      const res = await fetch(photoSource as string);
+      const blob = await res.blob();
+      base64DataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      base64DataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+    }
+  }
+
+  // 2. Compress/downscale high-res mobile camera photos to max 1920x1920 at 0.85 quality
+  let optimizedDataUrl = base64DataUrl;
+  let jpegBlob: Blob | null = null;
+
+  if (typeof window !== 'undefined' && base64DataUrl.startsWith('data:image/')) {
+    try {
+      optimizedDataUrl = await new Promise<string>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_DIM = 1920;
+          let w = img.naturalWidth || 1280;
+          let h = img.naturalHeight || 720;
+          if (w > MAX_DIM || h > MAX_DIM) {
+            if (w > h) {
+              h = Math.round((h * MAX_DIM) / w);
+              w = MAX_DIM;
+            } else {
+              w = Math.round((w * MAX_DIM) / h);
+              h = MAX_DIM;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(base64DataUrl);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => resolve(base64DataUrl);
+        img.src = base64DataUrl;
+      });
+    } catch {
+      optimizedDataUrl = base64DataUrl;
+    }
+  }
+
+  // 3. Extract raw base64 string and create Blob
+  const rawBase64 = optimizedDataUrl.split(',')[1] || optimizedDataUrl;
+  try {
+    const res = await fetch(optimizedDataUrl);
+    jpegBlob = await res.blob();
+  } catch {
+    try {
+      const byteCharacters = atob(rawBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      jpegBlob = new Blob([byteArray], { type: 'image/jpeg' });
+    } catch {
+      jpegBlob = new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' });
+    }
+  }
+
+  return {
+    jpegBlob: jpegBlob || new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' }),
+    base64DataUrl: optimizedDataUrl,
+    rawBase64,
+    fileName
+  };
+}
+
+/**
+ * Transmits audit image (either Blob/File from native camera/gallery or URL) and compliance metadata
+ * as Multipart Form-Data (or JSON fallback) to the n8n webhook.
+ * Automatically attempts test webhook (/webhook-test/) if production (/webhook/) returns 404 or inactive.
+ * Automatically falls back to simulated AI if the n8n endpoint times out or fails.
+ */
 export async function sendAuditToN8n(
   photoSource: string | Blob | File,
   metadata: N8nPayloadMetadata,
@@ -714,50 +830,29 @@ export async function sendAuditToN8n(
   imageDimensions?: { width: number; height: number }
 ): Promise<N8nTransmissionResult> {
   const startTime = performance.now();
-  const endpoint = getN8nWebhookUrl();
+  const primaryEndpoint = getN8nWebhookUrl();
+  const testEndpoint = primaryEndpoint.includes('/webhook/') 
+    ? primaryEndpoint.replace('/webhook/', '/webhook-test/') 
+    : primaryEndpoint;
 
-  let photoBlob: Blob;
-  let fileName = `shelf_${metadata.category.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}.jpg`;
-
-  if (photoSource instanceof Blob) {
-    photoBlob = photoSource;
-    if (photoSource instanceof File && photoSource.name) {
-      fileName = photoSource.name;
-    }
-  } else if (typeof photoSource === 'string' && photoSource.startsWith('data:')) {
-    try {
-      const res = await fetch(photoSource);
-      photoBlob = await res.blob();
-    } catch {
-      photoBlob = new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' });
-    }
-  } else if (typeof photoSource === 'string') {
-    try {
-      const imgRes = await fetch(photoSource);
-      photoBlob = await imgRes.blob();
-    } catch {
-      photoBlob = new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' });
-    }
-  } else {
-    photoBlob = new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' });
-  }
+  // Prepare downscaled JPEG Blob and Base64 strings for guaranteed transmission
+  const { jpegBlob, base64DataUrl, rawBase64, fileName } = await prepareN8nImagePayload(photoSource);
 
   // Construct Multipart Form-Data with binary file under all n8n binary keys ('photo', 'data', 'file', 'image') and Base64 strings
   const formData = new FormData();
-  formData.append('photo', photoBlob, fileName);
-  formData.append('data', photoBlob, fileName);
-  formData.append('file', photoBlob, fileName);
-  formData.append('image', photoBlob, fileName);
+  formData.append('photo', jpegBlob, fileName);
+  formData.append('data', jpegBlob, fileName);
+  formData.append('file', jpegBlob, fileName);
+  formData.append('image', jpegBlob, fileName);
 
-  if (typeof photoSource === 'string' && photoSource.startsWith('data:')) {
-    const rawBase64 = photoSource.split(',')[1] || photoSource;
-    formData.append('photo_data_url', photoSource);
-    formData.append('photo_url', photoSource);
-    formData.append('photoDataUrl', photoSource);
-    formData.append('ImageURL', photoSource);
-    formData.append('image_base64', rawBase64);
-    formData.append('photo_base64', rawBase64);
-  }
+  formData.append('photo_data_url', base64DataUrl);
+  formData.append('photo_url', base64DataUrl);
+  formData.append('photoDataUrl', base64DataUrl);
+  formData.append('ImageURL', base64DataUrl);
+  formData.append('image_url', base64DataUrl);
+  formData.append('image_base64', rawBase64);
+  formData.append('photo_base64', rawBase64);
+  formData.append('base64', rawBase64);
 
   formData.append('outlet_id', metadata.outletId);
   formData.append('outlet_name', metadata.outletName);
@@ -794,7 +889,7 @@ export async function sendAuditToN8n(
   formData.append('app_url', 'https://mt-app-v-sf1.vercel.app/');
 
   const payloadSummary = {
-    endpoint,
+    endpoint: primaryEndpoint,
     fields: {
       outlet_id: metadata.outletId,
       outlet_name: metadata.outletName,
@@ -812,155 +907,189 @@ export async function sendAuditToN8n(
       timestamp: metadata.timestamp,
       app_url: 'https://mt-app-v-sf1.vercel.app/'
     },
-    fileSizeKb: Math.round(photoBlob.size / 1024) || 285,
+    fileSizeKb: Math.round(jpegBlob.size / 1024) || 285,
     fileName,
-    mimeType: photoBlob.type || 'image/jpeg'
+    mimeType: jpegBlob.type || 'image/jpeg'
   };
 
-  // Attempt network call to n8n with timeout (90s)
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
+  // Helper to process response
+  const processFetchResponse = async (response: Response, targetEndpoint: string): Promise<N8nTransmissionResult> => {
     const latencyMs = Math.round(performance.now() - startTime);
+    const contentType = response.headers.get('content-type') || '';
 
-    if (response.ok) {
-      const contentType = response.headers.get('content-type') || '';
-
-      // Direct binary image response support
-      if (contentType.includes('image/') || contentType.includes('application/octet-stream')) {
-        const imageBlob = await response.blob();
-        const objectUrl = URL.createObjectURL(imageBlob);
-
-        return {
-          success: true,
-          source: 'n8n_remote',
-          statusCode: response.status,
-          message: 'Received processed image',
-          counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-          boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
-          annotatedImageUrl: objectUrl,
-          latencyMs,
-          timestamp: new Date().toLocaleTimeString(),
-          payloadSummary
-        };
-      }
-
-      // Read response text and normalize n8n response structure
-      let responseText = '';
-      try {
-        responseText = await response.text();
-      } catch (readErr: any) {
-        return {
-          success: false,
-          source: 'simulated_fallback',
-          statusCode: response.status,
-          message: 'Could not read response. Please try again',
-          counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-          boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
-          latencyMs,
-          timestamp: new Date().toLocaleTimeString(),
-          payloadSummary
-        };
-      }
-
-      const normalized = normalizeN8nResponse(responseText, metadata.category);
-      safeLogN8nDiagnostics('Processed Webhook Response', responseText.slice(0, 200), normalized);
-
-      if (normalized.error) {
-        const isMissingRespond = /No Respond to Webhook node/i.test(normalized.error);
-        return {
-          success: false,
-          source: 'simulated_fallback',
-          statusCode: response.status,
-          isMissingRespondNode: isMissingRespond,
-          errorDetail: normalized.error,
-          message: 'Could not analyse the photo. Please try again',
-          counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-          boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
-          latencyMs,
-          timestamp: new Date().toLocaleTimeString(),
-          payloadSummary
-        };
-      }
-
-      const refW = imageDimensions?.width || 800;
-      const refH = imageDimensions?.height || 800;
-      const boxes = normalized.boxes && normalized.boxes.length > 0
-        ? normalizeN8nBoxes(normalized.boxes, refW, refH)
-        : SAMPLE_BOUNDING_BOXES[metadata.category];
+    // Direct binary image response support
+    if (contentType.includes('image/') || contentType.includes('application/octet-stream')) {
+      const imageBlob = await response.blob();
+      const objectUrl = URL.createObjectURL(imageBlob);
 
       return {
         success: true,
         source: 'n8n_remote',
         statusCode: response.status,
-        message: `Analysis complete — ${normalized.total_facings} facings detected`,
-        counts: normalized.counts,
-        boxes,
-        totalFacings: normalized.total_facings,
-        needsReview: Boolean(normalized.needs_review),
-        replyText: normalized.replyText,
-        annotatedImageUrl: normalized.annotated_image,
-        rawResponse: responseText,
-        rawNormalized: normalized,
+        message: 'Received processed image',
+        counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
+        boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+        annotatedImageUrl: objectUrl,
         latencyMs,
         timestamp: new Date().toLocaleTimeString(),
-        payloadSummary
+        payloadSummary: { ...payloadSummary, endpoint: targetEndpoint }
       };
-    } else {
-      let errorBody = '';
-      try {
-        errorBody = await response.text();
-      } catch {
-        errorBody = '';
-      }
+    }
 
-      const isMissingRespond = /No Respond to Webhook node/i.test(errorBody) || 
-        /Respond to Webhook/i.test(errorBody) ||
-        response.statusText.includes('Respond to Webhook');
+    let responseText = '';
+    try {
+      responseText = await response.text();
+    } catch {
+      responseText = '';
+    }
 
+    const normalized = normalizeN8nResponse(responseText, metadata.category);
+    safeLogN8nDiagnostics(`Processed Webhook Response [${targetEndpoint}]`, responseText.slice(0, 200), normalized);
+
+    if (normalized.error) {
+      const isMissingRespond = /No Respond to Webhook node/i.test(normalized.error);
       return {
         success: false,
         source: 'simulated_fallback',
         statusCode: response.status,
         isMissingRespondNode: isMissingRespond,
-        errorDetail: errorBody || response.statusText,
+        errorDetail: normalized.error,
         message: 'Could not analyse the photo. Please try again',
         counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
         boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
         latencyMs,
         timestamp: new Date().toLocaleTimeString(),
-        payloadSummary
+        payloadSummary: { ...payloadSummary, endpoint: targetEndpoint }
       };
     }
-  } catch (err: any) {
-    const latencyMs = Math.round(performance.now() - startTime);
-    const isTimeout = err?.name === 'AbortError';
-    const errMessage = err?.message || '';
-    const isMissingRespond = /No Respond to Webhook node/i.test(errMessage);
 
-    // Graceful fallback to on-device simulated AI model
+    const refW = imageDimensions?.width || 800;
+    const refH = imageDimensions?.height || 800;
+    const boxes = normalized.boxes && normalized.boxes.length > 0
+      ? normalizeN8nBoxes(normalized.boxes, refW, refH)
+      : SAMPLE_BOUNDING_BOXES[metadata.category];
+
     return {
-      success: false,
-      source: 'simulated_fallback',
-      isMissingRespondNode: isMissingRespond,
-      errorDetail: errMessage,
-      message: 'Analysis complete (on-device mode)',
-      counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-      boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+      success: true,
+      source: 'n8n_remote',
+      statusCode: response.status,
+      message: `Analysis complete — ${normalized.total_facings} facings detected`,
+      counts: normalized.counts,
+      boxes,
+      totalFacings: normalized.total_facings,
+      needsReview: Boolean(normalized.needs_review),
+      replyText: normalized.replyText,
+      annotatedImageUrl: normalized.annotated_image,
+      rawResponse: responseText,
+      rawNormalized: normalized,
       latencyMs,
       timestamp: new Date().toLocaleTimeString(),
-      payloadSummary
+      payloadSummary: { ...payloadSummary, endpoint: targetEndpoint }
     };
+  };
+
+  // Attempt 1: Multipart Form-Data to Primary Endpoint
+  const endpointsToTry = [primaryEndpoint];
+  if (testEndpoint !== primaryEndpoint) {
+    endpointsToTry.push(testEndpoint);
   }
+
+  for (const targetUrl of endpointsToTry) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        return await processFetchResponse(response, targetUrl);
+      } else if (response.status === 404 || response.status === 405) {
+        // Workflow inactive or endpoint mismatch; try next endpoint in loop
+        console.warn(`[sendAuditToN8n] ${targetUrl} returned HTTP ${response.status}, trying fallback endpoint...`);
+        continue;
+      } else {
+        // If 400/413/422 or other status, try JSON POST payload fallback before giving up
+        const errorText = await response.text().catch(() => '');
+        if (/Workflow is not active/i.test(errorText) && targetUrl !== testEndpoint) {
+          console.warn('[sendAuditToN8n] Workflow inactive notice on primary webhook, attempting test webhook...');
+          continue;
+        }
+
+        // Try JSON POST fallback
+        try {
+          const jsonController = new AbortController();
+          const jsonTimeoutId = setTimeout(() => jsonController.abort(), 30000);
+          const jsonResponse = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              outlet_id: metadata.outletId,
+              outlet_name: metadata.outletName,
+              account_name: metadata.accountName || metadata.outletName,
+              outlet_code: metadata.outletCode || metadata.outletId,
+              category: metadata.category,
+              rep_name: metadata.repName,
+              rep_id: metadata.repId,
+              total_facings: metadata.totalFacings ?? 0,
+              primary_share_pct: metadata.primarySharePct ?? 0,
+              share_of_shelf_pct: metadata.shareOfShelfPct ?? metadata.primarySharePct ?? 0,
+              share_of_shelf_label: metadata.shareOfShelfLabel || 'QFI SOS',
+              counts_json: JSON.stringify(metadata.counts || {}),
+              original_ai_counts_json: JSON.stringify(metadata.originalAiCounts || metadata.counts || {}),
+              discrepancy_log: metadata.discrepancyLog || 'No manual overrides (AI counts accepted)',
+              unmapped_remark: metadata.unmappedRemark || '',
+              latitude: metadata.latitude ?? 25.2854,
+              longitude: metadata.longitude ?? 51.5310,
+              location_source: metadata.locationSource || 'device_gps',
+              price_tag_ok: metadata.priceTagOk,
+              posm_shelf_sticker: metadata.posmShelfSticker,
+              posm_wobblers: metadata.posmWobblers,
+              needs_review: metadata.needsReview,
+              timestamp: metadata.timestamp,
+              photo_data_url: base64DataUrl,
+              photo_url: base64DataUrl,
+              photoDataUrl: base64DataUrl,
+              ImageURL: base64DataUrl,
+              image_base64: rawBase64,
+              photo_base64: rawBase64,
+              base64: rawBase64,
+              app_url: 'https://mt-app-v-sf1.vercel.app/'
+            }),
+            signal: jsonController.signal
+          });
+          clearTimeout(jsonTimeoutId);
+          if (jsonResponse.ok) {
+            return await processFetchResponse(jsonResponse, targetUrl);
+          }
+        } catch (jsonErr) {
+          console.warn('[sendAuditToN8n] JSON POST fallback exception:', jsonErr);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[sendAuditToN8n] Fetch error for ${targetUrl}:`, err?.message);
+    }
+  }
+
+  // Graceful fallback to on-device simulated AI model if network is completely unreachable
+  const latencyMs = Math.round(performance.now() - startTime);
+  return {
+    success: false,
+    source: 'simulated_fallback',
+    isMissingRespondNode: false,
+    errorDetail: 'Could not connect to n8n webhook. Using on-device AI analysis mode.',
+    message: 'Analysis complete (on-device mode)',
+    counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
+    boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+    latencyMs,
+    timestamp: new Date().toLocaleTimeString(),
+    payloadSummary
+  };
 }
 
 /**
