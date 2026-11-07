@@ -122,13 +122,17 @@ export const PRODUCT_CATEGORY_BRANDS: Record<string, string[]> = {
   'Pasta': ['QFM', 'QFM PREM', 'ZAIN', 'OTHER']
 };
 
+export function resolveCategoryKey(cat?: string): CategoryType {
+  if (!cat) return 'Edible Oil';
+  const clean = cat.trim().toLowerCase();
+  if (clean.includes('flour')) return 'Flour';
+  if (clean.includes('pasta')) return 'Pasta';
+  return 'Edible Oil';
+}
+
 export function getCategoryValidBrands(category?: string): string[] {
-  if (!category) return CATEGORY_BRANDS['Edible Oil'];
-  const clean = category.trim().toLowerCase();
-  if (clean.includes('flour')) return CATEGORY_BRANDS['Flour'];
-  if (clean.includes('oil')) return CATEGORY_BRANDS['Edible Oil'];
-  if (clean.includes('pasta')) return CATEGORY_BRANDS['Pasta'];
-  return PRODUCT_CATEGORY_BRANDS[category] || ['OTHER'];
+  const catKey = resolveCategoryKey(category);
+  return CATEGORY_BRANDS[catKey];
 }
 
 export const DEFAULT_AI_COUNTS: Record<CategoryType, Record<string, number>> = {

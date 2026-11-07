@@ -106,9 +106,23 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     totalFacings = target.totalFacings;
   } else if (target?.total_facings !== undefined && target?.total_facings !== null && !isNaN(Number(target.total_facings))) {
     totalFacings = Number(target.total_facings);
+  } else if (target?.totalFacings !== undefined && target?.totalFacings !== null && !isNaN(Number(target.totalFacings))) {
+    totalFacings = Number(target.totalFacings);
   }
 
-  const rawCounts = (target?.counts && typeof target.counts === 'object') ? target.counts : {};
+  // Parse stringified JSON counts if delivered as string
+  let rawCounts = target?.counts;
+  if (typeof rawCounts === 'string') {
+    try {
+      rawCounts = JSON.parse(rawCounts);
+    } catch {
+      rawCounts = {};
+    }
+  }
+  if (!rawCounts || typeof rawCounts !== 'object') {
+    rawCounts = {};
+  }
+
   const catKey = category || 'Edible Oil';
   const standardBrands = CATEGORY_BRANDS[catKey] || ['YARA', 'ZAIN', 'ADEERA', 'AL RAI', 'DAWI', 'OTHER'];
 
@@ -131,7 +145,7 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     }
   }
 
-  if (totalFacings === 0 && target?.total_facings === undefined && target?.totalFacings === undefined) {
+  if (totalFacings === 0) {
     totalFacings = Object.values(counts).reduce((acc, v) => acc + (v ?? 0), 0);
   }
 

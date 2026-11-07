@@ -1,5 +1,5 @@
 import { CategoryType, BoundingBox } from '../types';
-import { DEFAULT_AI_COUNTS, SAMPLE_BOUNDING_BOXES } from '../constants';
+import { DEFAULT_AI_COUNTS, SAMPLE_BOUNDING_BOXES, resolveCategoryKey } from '../constants';
 
 export const N8N_DEFAULT_WEBHOOK_URL = 'https://qfirestaurantchannel.n8n-wsk.com/webhook/mt-visit-audit';
 export const N8N_PRODUCTION_WEBHOOK_URL = 'https://qfirestaurantchannel.n8n-wsk.com/webhook/mt-visit-audit';
@@ -144,21 +144,22 @@ export const STANDARD_SHELF_BRANDS = ['YARA', 'ZAIN', 'AL RAI', 'ADEERA', 'DAWI'
  * - Edible Oil (6 classes): YARA, ZAIN, ADEERA, AL RAI, DAWI, OTHER
  * - Pasta (4 classes): QFM, QFM PREM, ZAIN, OTHER
  */
-export function canonicalizeBrand(brand: string, category?: CategoryType): string {
+export function canonicalizeBrand(brand: string, category?: string): string {
   if (!brand) return 'OTHER';
   const clean = brand.trim().toUpperCase();
+  const catKey = resolveCategoryKey(category);
 
-  if (category === 'Flour') {
-    if (clean === 'F1' || clean.startsWith('F1 ')) return 'F1';
-    if (clean === 'F2' || clean.startsWith('F2 ')) return 'F2';
-    if (clean === 'F3' || clean.startsWith('F3 ')) return 'F3';
-    if (clean === 'PREM' || clean.includes('PREMIUM')) return 'PREM';
-    if (clean === 'SR' || clean.includes('SELF RAISING') || clean.includes('SELF-RAISING')) return 'SR';
+  if (catKey === 'Flour') {
+    if (clean === 'F1' || clean.startsWith('F1') || clean.includes('F1')) return 'F1';
+    if (clean === 'F2' || clean.startsWith('F2') || clean.includes('F2')) return 'F2';
+    if (clean === 'F3' || clean.startsWith('F3') || clean.includes('F3')) return 'F3';
+    if (clean.includes('PREM') || clean.includes('PREMIUM')) return 'PREM';
+    if (clean.includes('SR') || clean.includes('SELF') || clean.includes('RAISING')) return 'SR';
     if (clean.includes('KFM')) return 'KFM';
     return 'OTHER';
   }
 
-  if (category === 'Pasta') {
+  if (catKey === 'Pasta') {
     if (clean.includes('PREM') || clean.includes('PREMIUM')) return 'QFM PREM';
     if (clean.includes('QFM')) return 'QFM';
     if (clean.includes('ZAIN')) return 'ZAIN';
@@ -169,7 +170,7 @@ export function canonicalizeBrand(brand: string, category?: CategoryType): strin
   if (clean.includes('YARA')) return 'YARA';
   if (clean.includes('ZAIN')) return 'ZAIN';
   if (clean.includes('ADEERA')) return 'ADEERA';
-  if (clean.includes('AL RAI') || clean.includes('ALRAI')) return 'AL RAI';
+  if (clean.includes('AL RAI') || clean.includes('ALRAI') || clean.includes('RAI')) return 'AL RAI';
   if (clean.includes('DAWI')) return 'DAWI';
   return 'OTHER';
 }
@@ -325,7 +326,18 @@ export function normalizeN8nResponse(rawInput: any, category?: CategoryType): No
   }
 
   // 3. Extract Counts using strict nullish checks (0 is a valid count!)
-  const rawCounts = (target.counts && typeof target.counts === 'object') ? target.counts : {};
+  let rawCounts = target.counts;
+  if (typeof rawCounts === 'string') {
+    try {
+      rawCounts = JSON.parse(rawCounts);
+    } catch {
+      rawCounts = {};
+    }
+  }
+  if (!rawCounts || typeof rawCounts !== 'object') {
+    rawCounts = {};
+  }
+
   const resolvedCounts: Record<string, number> = {};
 
   // Helper to extract a brand count with case-insensitivity
@@ -916,6 +928,7 @@ export async function sendAuditToN8n(
   const processFetchResponse = async (response: Response, targetEndpoint: string): Promise<N8nTransmissionResult> => {
     const latencyMs = Math.round(performance.now() - startTime);
     const contentType = response.headers.get('content-type') || '';
+    const catKey = resolveCategoryKey(metadata.category);
 
     // Direct binary image response support
     if (contentType.includes('image/') || contentType.includes('application/octet-stream')) {
@@ -927,8 +940,8 @@ export async function sendAuditToN8n(
         source: 'n8n_remote',
         statusCode: response.status,
         message: 'Received processed image',
-        counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-        boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+        counts: { ...DEFAULT_AI_COUNTS[catKey] },
+        boxes: SAMPLE_BOUNDING_BOXES[catKey] || [],
         annotatedImageUrl: objectUrl,
         latencyMs,
         timestamp: new Date().toLocaleTimeString(),
@@ -943,7 +956,7 @@ export async function sendAuditToN8n(
       responseText = '';
     }
 
-    const normalized = normalizeN8nResponse(responseText, metadata.category);
+    const normalized = normalizeN8nResponse(responseText, catKey);
     safeLogN8nDiagnostics(`Processed Webhook Response [${targetEndpoint}]`, responseText.slice(0, 200), normalized);
 
     if (normalized.error) {
@@ -955,8 +968,8 @@ export async function sendAuditToN8n(
         isMissingRespondNode: isMissingRespond,
         errorDetail: normalized.error,
         message: 'Could not analyse the photo. Please try again',
-        counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-        boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+        counts: { ...DEFAULT_AI_COUNTS[catKey] },
+        boxes: SAMPLE_BOUNDING_BOXES[catKey] || [],
         latencyMs,
         timestamp: new Date().toLocaleTimeString(),
         payloadSummary: { ...payloadSummary, endpoint: targetEndpoint }
@@ -967,7 +980,7 @@ export async function sendAuditToN8n(
     const refH = imageDimensions?.height || 800;
     const boxes = normalized.boxes && normalized.boxes.length > 0
       ? normalizeN8nBoxes(normalized.boxes, refW, refH)
-      : SAMPLE_BOUNDING_BOXES[metadata.category];
+      : SAMPLE_BOUNDING_BOXES[catKey];
 
     return {
       success: true,
@@ -1078,14 +1091,15 @@ export async function sendAuditToN8n(
 
   // Graceful fallback to on-device simulated AI model if network is completely unreachable
   const latencyMs = Math.round(performance.now() - startTime);
+  const fallbackCatKey = resolveCategoryKey(metadata.category);
   return {
     success: false,
     source: 'simulated_fallback',
     isMissingRespondNode: false,
     errorDetail: 'Could not connect to n8n webhook. Using on-device AI analysis mode.',
     message: 'Analysis complete (on-device mode)',
-    counts: { ...DEFAULT_AI_COUNTS[metadata.category] },
-    boxes: SAMPLE_BOUNDING_BOXES[metadata.category] || [],
+    counts: { ...DEFAULT_AI_COUNTS[fallbackCatKey] },
+    boxes: SAMPLE_BOUNDING_BOXES[fallbackCatKey] || [],
     latencyMs,
     timestamp: new Date().toLocaleTimeString(),
     payloadSummary
