@@ -2381,52 +2381,71 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
             {/* Post-Capture Inline Bay Prompt Overlay */}
             {showPostCapturePrompt && (
-              <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center space-y-3 animate-fade-in">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/60 flex items-center justify-center text-emerald-400 mb-1">
-                  <CheckCircle2 size={26} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-white">
-                    {aisleSessions[lastCapturedAisle]?.label || 'Bay'} Captured!
-                  </h3>
-                  <p className="text-[11px] text-emerald-300/80 mt-0.5">
-                    Analysis is running in the background. What's next?
+              <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md flex flex-col items-center justify-between p-4 text-center animate-fade-in overflow-y-auto">
+                <div className="w-full max-w-sm flex flex-col items-center space-y-3 my-auto py-2">
+                  <div className="flex items-center gap-2 text-emerald-400 bg-emerald-950/80 border border-emerald-500/50 px-3 py-1 rounded-full text-xs font-bold shadow-lg">
+                    <CheckCircle2 size={16} className="text-emerald-400" />
+                    <span>Image Taken &bull; {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'}</span>
+                  </div>
+
+                  {/* Captured Photo Preview as taken */}
+                  {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl && (
+                    <div className="relative w-full max-h-[50vh] h-48 sm:h-60 my-1 rounded-2xl overflow-hidden border-2 border-emerald-500/60 shadow-2xl bg-black/90 flex items-center justify-center">
+                      <img
+                        src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
+                        alt="Captured Photo Preview"
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-emerald-500/40 text-[10px] font-mono text-emerald-300 shadow-md">
+                        {aisleSessions[lastCapturedAisle]?.capturedFileName || 'photo.jpg'}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-emerald-200/90 font-medium px-2">
+                    Bay photo captured successfully! n8n AI analysis is running in the background.
                   </p>
-                </div>
 
-                <div className="w-full max-w-xs space-y-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleAddNewBay}
-                    className="w-full py-3 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.98] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus size={16} />
-                    <span>Scan Next Bay</span>
-                  </button>
+                  {/* Action Options */}
+                  <div className="w-full max-w-xs space-y-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleAddNewBay}
+                      className="w-full py-3.5 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.98] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer hover:brightness-110 transition-all"
+                    >
+                      <Plus size={18} className="stroke-[2.5]" />
+                      <span>+ Add a Bay / Scan Next Bay</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={handleDoneShooting}
-                    className="w-full py-3 bg-[#132219] hover:bg-[#1b3024] border border-emerald-700/60 active:scale-[0.98] text-emerald-200 font-bold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <CheckCircle2 size={16} />
-                    <span>Done Shooting &bull; Proceed to POSM</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleDoneShooting}
+                      className="w-full py-3.5 bg-[#132219] hover:bg-[#1b3024] border border-emerald-600/70 active:scale-[0.98] text-emerald-200 font-bold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-lg"
+                    >
+                      <CheckCircle2 size={18} className="text-emerald-400" />
+                      <span>Shelf Completed &bull; Proceed to POSM Form</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Shutter Bar with Manual Shutter, Gallery, and Done Shooting Action */}
-          <div className="shrink-0 space-y-1.5 pt-1">
-            <div className="grid grid-cols-2 gap-2">
-              {/* Primary 1: Shutter Button (Always functional) */}
+          {/* Mobile-friendly Bottom Shutter Bar Deck */}
+          <div className="shrink-0 space-y-2 pt-2 pb-6 sm:pb-3 px-3 mt-1 bg-gradient-to-t from-black via-black/95 to-black/80 backdrop-blur-md rounded-t-3xl border-t border-emerald-900/60 shadow-2xl z-20 select-none">
+            {/* Visual grip bar hint for mobile viewports */}
+            <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1" />
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Primary 1: Shutter Button (Always functional & mobile-optimized) */}
               <button
                 type="button"
                 onClick={handleManualShutter}
-                className="h-12 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.98] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-1.5 hover:brightness-110 transition-all cursor-pointer"
+                className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
               >
-                <Camera size={18} className="stroke-[2.5]" />
+                <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <Camera size={16} className="text-white stroke-[2.5]" />
+                </div>
                 <span>Shoot {currentSession?.label || 'Bay 1'}</span>
               </button>
 
@@ -2434,27 +2453,29 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               <button
                 type="button"
                 onClick={() => galleryInputRef.current?.click()}
-                className={`h-12 border active:scale-[0.98] font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                className={`h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
                   isDark
-                    ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-800/70 shadow-sm'
-                    : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20 shadow-xs'
+                    ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
+                    : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
                 }`}
               >
-                <Upload size={16} />
+                <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
+                  <Upload size={15} className="text-emerald-400" />
+                </div>
                 <span>Gallery</span>
               </button>
             </div>
 
             {/* Bottom auxiliary link: Done Shooting or Sample Shelf (debug only) */}
-            <div className="flex items-center justify-between px-1 text-[10px]">
+            <div className="flex items-center justify-between px-2 pt-0.5 text-[11px]">
               {capturedAisles.length > 0 ? (
                 <button
                   type="button"
                   onClick={handleDoneShooting}
-                  className="text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                  className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/40"
                 >
-                  <CheckCircle2 size={11} />
-                  <span>Done Shooting &bull; Proceed to POSM ({capturedAisles.length} captured)</span>
+                  <CheckCircle2 size={12} className="text-emerald-400" />
+                  <span>Shelf Completed &bull; Proceed to POSM ({capturedAisles.length} captured)</span>
                 </button>
               ) : <div />}
 

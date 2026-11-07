@@ -742,9 +742,23 @@ export async function sendAuditToN8n(
     photoBlob = new Blob(['simulated-binary-jpeg-data'], { type: 'image/jpeg' });
   }
 
-  // Construct Multipart Form-Data with binary file and full Google Sheets audit fields
+  // Construct Multipart Form-Data with binary file under all n8n binary keys ('photo', 'data', 'file', 'image') and Base64 strings
   const formData = new FormData();
   formData.append('photo', photoBlob, fileName);
+  formData.append('data', photoBlob, fileName);
+  formData.append('file', photoBlob, fileName);
+  formData.append('image', photoBlob, fileName);
+
+  if (typeof photoSource === 'string' && photoSource.startsWith('data:')) {
+    const rawBase64 = photoSource.split(',')[1] || photoSource;
+    formData.append('photo_data_url', photoSource);
+    formData.append('photo_url', photoSource);
+    formData.append('photoDataUrl', photoSource);
+    formData.append('ImageURL', photoSource);
+    formData.append('image_base64', rawBase64);
+    formData.append('photo_base64', rawBase64);
+  }
+
   formData.append('outlet_id', metadata.outletId);
   formData.append('outlet_name', metadata.outletName);
   formData.append('account_name', metadata.accountName || metadata.outletName.split(' - ')[0] || metadata.outletName);
@@ -1038,22 +1052,35 @@ export async function sendAuditToSheetWriteN8n(
   formData.append('timestamp', metadata.timestamp || new Date().toISOString());
 
   if (metadata.photoUrl) {
+    const rawBase64 = metadata.photoUrl.startsWith('data:') ? (metadata.photoUrl.split(',')[1] || metadata.photoUrl) : '';
     formData.append('photo_url', metadata.photoUrl);
+    formData.append('photo_data_url', metadata.photoUrl);
     formData.append('photoDataUrl', metadata.photoUrl);
     formData.append('ImageURL', metadata.photoUrl);
+    if (rawBase64) {
+      formData.append('image_base64', rawBase64);
+      formData.append('photo_base64', rawBase64);
+    }
 
-    // Try converting base64 or URL photo into binary file blob for n8n $binary
+    // Try converting base64 or URL photo into binary file blob under all n8n binary keys ('photo', 'data', 'file', 'image')
     try {
+      const fileName = `audit_${metadata.outletId}_${Date.now()}.jpg`;
+      let blob: Blob | null = null;
       if (metadata.photoUrl.startsWith('data:')) {
         const res = await fetch(metadata.photoUrl);
-        const blob = await res.blob();
-        formData.append('photo', blob, `audit_${metadata.outletId}_${Date.now()}.jpg`);
+        blob = await res.blob();
       } else if (metadata.photoUrl.startsWith('http')) {
         const res = await fetch(metadata.photoUrl);
         if (res.ok) {
-          const blob = await res.blob();
-          formData.append('photo', blob, `audit_${metadata.outletId}_${Date.now()}.jpg`);
+          blob = await res.blob();
         }
+      }
+
+      if (blob) {
+        formData.append('photo', blob, fileName);
+        formData.append('data', blob, fileName);
+        formData.append('file', blob, fileName);
+        formData.append('image', blob, fileName);
       }
     } catch (e) {
       console.warn('[n8n Sheet Write] Binary photo attach note:', e);
@@ -1079,6 +1106,7 @@ export async function sendAuditToSheetWriteN8n(
 
   // Attempt 2: Fallback to JSON payload if n8n expects Content-Type: application/json
   try {
+    const rawBase64 = metadata.photoUrl && metadata.photoUrl.startsWith('data:') ? (metadata.photoUrl.split(',')[1] || metadata.photoUrl) : '';
     const jsonPayload = {
       outlet_id: metadata.outletId,
       outlet_name: metadata.outletName,
@@ -1107,8 +1135,11 @@ export async function sendAuditToSheetWriteN8n(
       needs_review: Boolean(metadata.needsReview),
       timestamp: metadata.timestamp || new Date().toISOString(),
       photo_url: metadata.photoUrl || '',
+      photo_data_url: metadata.photoUrl || '',
       photoDataUrl: metadata.photoUrl || '',
-      ImageURL: metadata.photoUrl || ''
+      ImageURL: metadata.photoUrl || '',
+      image_base64: rawBase64,
+      photo_base64: rawBase64
     };
 
     const response = await fetch(endpoint, {
