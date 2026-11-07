@@ -1,0 +1,73 @@
+[
+  {
+    "id": "audit-1793523878072-5je1v",
+    "timestamp": "11/1/2026, 9:04:38 AM",
+    "repId": "#9",
+    "repName": "Safwan Asif",
+    "accountName": "Lulu",
+    "outletId": "out-test-1",
+    "outletCode": "",
+    "outletName": "Lulu Hypermarket - D-Ring Road",
+    "category": "Flour",
+    "totalFacings": 15,
+    "shareOfShelfPct": 80,
+    "shareOfShelfLabel": "QFM SOS",
+    "brandBreakdown": "F1: 10 | F2: 5",
+    "counts": {
+      "F1": 10,
+      "F2": 5
+    },
+    "originalAiCounts": {
+      "F1": 8,
+      "F2": 7
+    },
+    "discrepancyLog": "[F1]: System said 8, user changed to 10 (+2) | [F2]: System said 7, user changed to 5 (-2)",
+    "latitude": 25.2608,
+    "longitude": 51.5284,
+    "locationSource": "device_gps",
+    "unmappedRemark": "",
+    "priceTagOk": "Yes",
+    "posmShelfSticker": "Yes",
+    "posmWobblers": "No",
+    "needsReview": "No",
+    "imageFormula": "=IMAGE(\"https://storage.googleapis.com/example/shelf_photo.jpg\")",
+    "photoUrl": "https://storage.googleapis.com/example/shelf_photo.jpg",
+    "driveFolderUrl": "https://drive.google.com/drive/folders/19gOKo7bgAMoB4zu_DBSbodeEr_wMGJCL",
+    "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1ZNy_T7Di2sIgtJ_v90ECtwM2c1qD-_poZFjOMQsmaQ8/edit",
+    "replyText": "QFI Visit Audit Record",
+    "created_at": "2026-11-01T09:04:38.079Z"
+  },
+  {
+    "id": "audit-1793523865768-qr681",
+    "timestamp": "11/1/2026, 9:04:25 AM",
+    "outletId": "out-test-1",
+    "outletName": "Lulu Hypermarket - D-Ring Road",
+    "category": "Flour",
+    "repId": "#9",
+    "repName": "Safwan Asif",
+    "totalFacings": 15,
+    "shareOfShelfPct": 80,
+    "shareOfShelfLabel": "QFM SOS",
+    "brandBreakdown": "F1: 10 | F2: 5",
+    "counts": {
+      "F1": 10,
+      "F2": 5
+    },
+    "originalAiCounts": {
+      "F1": 8,
+      "F2": 7
+    },
+    "discrepancyLog": "[F1]: System said 8, user changed to 10 (+2) | [F2]: System said 7, user changed to 5 (-2)",
+    "unmappedRemark": "",
+    "priceTagOk": "Yes",
+    "posmShelfSticker": "Yes",
+    "posmWobblers": "No",
+    "needsReview": "No",
+    "imageFormula": "=IMAGE(\"https://storage.googleapis.com/example/shelf_photo.jpg\")",
+    "photoUrl": "https://storage.googleapis.com/example/shelf_photo.jpg",
+    "driveFolderUrl": "https://drive.google.com/drive/folders/19gOKo7bgAMoB4zu_DBSbodeEr_wMGJCL",
+    "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1ZNy_T7Di2sIgtJ_v90ECtwM2c1qD-_poZFjOMQsmaQ8/edit",
+    "replyText": "QFI Visit Audit Record",
+    "created_at": "2026-11-01T09:04:25.776Z"
+  }
+]

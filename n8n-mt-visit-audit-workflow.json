@@ -1,0 +1,268 @@
+{
+  "name": "MT Visit Audit - 3 Category CV Shelf Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/mt-visit-audit",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true
+        }
+      },
+      "name": "Webhook Trigger (Multipart)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 360],
+      "id": "node-webhook-1"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.body?.category || $json.category || 'Edible Oil' }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "Edible Oil",
+              "output": 0
+            },
+            {
+              "value2": "Flour",
+              "output": 1
+            },
+            {
+              "value2": "Pasta",
+              "output": 2
+            }
+          ]
+        },
+        "fallbackOutput": 0
+      },
+      "name": "Route by Category",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [480, 360],
+      "id": "node-switch-category"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://detect.roboflow.com/edible-oil-shelf-audit/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "={{ $env.ROBOFLOW_API_KEY || 'YOUR_ROBOFLOW_API_KEY' }}"
+            },
+            {
+              "name": "confidence",
+              "value": "40"
+            },
+            {
+              "name": "overlap",
+              "value": "30"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "photo",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "Edible Oil CV Model",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 200],
+      "id": "node-cv-edible-oil"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://detect.roboflow.com/flour-shelf-audit/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "={{ $env.ROBOFLOW_API_KEY || 'YOUR_ROBOFLOW_API_KEY' }}"
+            },
+            {
+              "name": "confidence",
+              "value": "40"
+            },
+            {
+              "name": "overlap",
+              "value": "30"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "photo",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "Flour CV Model",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 360],
+      "id": "node-cv-flour"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://detect.roboflow.com/pasta-shelf-audit/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "={{ $env.ROBOFLOW_API_KEY || 'YOUR_ROBOFLOW_API_KEY' }}"
+            },
+            {
+              "name": "confidence",
+              "value": "40"
+            },
+            {
+              "name": "overlap",
+              "value": "30"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "photo",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "Pasta CV Model",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 520],
+      "id": "node-cv-pasta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract CV model predictions and original request payload\nconst webhookData = $('Webhook Trigger (Multipart)').first().json.body || $('Webhook Trigger (Multipart)').first().json;\nconst cvResponse = $input.first().json;\n\n// Image geometry (defaulting to 1920x1080 if not returned by inference model)\nconst imgWidth = cvResponse.image?.width || 1920;\nconst imgHeight = cvResponse.image?.height || 1080;\n\n// Brand color mapping matching QFI corporate visual identity\nconst BRAND_COLORS = {\n  'YARA': '#4B0082',\n  'ADEERA': '#16A34A',\n  'OTHER': '#DC2626',\n  'ZAIN': '#2563EB',\n  'AL RAI': '#059669',\n  'DAWI': '#9333EA'\n};\n\n// Initialize counts\nconst counts = {\n  'YARA': 0,\n  'ZAIN': 0,\n  'AL RAI': 0,\n  'ADEERA': 0,\n  'DAWI': 0,\n  'OTHER': 0\n};\n\nconst predictions = cvResponse.predictions || [];\nconst boxes = [];\n\n// Process each bounding box detected by the Computer Vision model\npredictions.forEach((pred, index) => {\n  const rawClass = (pred.class || 'OTHER').toUpperCase();\n  const matchedBrand = Object.keys(counts).includes(rawClass) ? rawClass : 'OTHER';\n  \n  counts[matchedBrand] = (counts[matchedBrand] || 0) + 1;\n\n  const left = Math.round(pred.x - pred.width / 2);\n  const top = Math.round(pred.y - pred.height / 2);\n  const width = Math.round(pred.width);\n  const height = Math.round(pred.height);\n\n  boxes.push({\n    id: `box-${index + 1}`,\n    brand: matchedBrand,\n    confidence: Number((pred.confidence || 0.99).toFixed(2)),\n    x: left,\n    y: top,\n    width: width,\n    height: height,\n    color: BRAND_COLORS[matchedBrand] || '#DC2626',\n    thickness: 5,\n    fontSize: 18,\n    labelBackground: BRAND_COLORS[matchedBrand] || '#DC2626',\n    label: matchedBrand\n  });\n});\n\nconst totalFacings = Object.values(counts).reduce((a, b) => a + b, 0);\nconst needsReview = predictions.some(p => (p.confidence || 1) < 0.65);\n\nconst replyText = `QFI Shelf Audit\\nTotal facings: ${totalFacings}\\nYARA: ${counts['YARA']}\\nZAIN: ${counts['ZAIN']}\\nAL RAI: ${counts['AL RAI']}\\nADEERA: ${counts['ADEERA']}\\nDAWI: ${counts['DAWI']}\\nOTHER: ${counts['OTHER']}\\nNeeds review: ${needsReview ? 'Yes' : 'No'}`;\n\nreturn [{\n  json: {\n    success: true,\n    chatId: 8223336613,\n    replyText,\n    total_facings: totalFacings,\n    counts,\n    boxes,\n    needs_review: needsReview,\n    annotation_style: {\n      thickness: 5,\n      fontSize: 18,\n      solidLabelBackground: true,\n      labelContent: 'brand only'\n    }\n  }\n}];"
+      },
+      "name": "Parse CV Output & Facing Counts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 360],
+      "id": "node-code-parse"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Respond to MT Audit App",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1280, 360],
+      "id": "node-respond-webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger (Multipart)": {
+      "main": [
+        [
+          {
+            "node": "Route by Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Category": {
+      "main": [
+        [
+          {
+            "node": "Edible Oil CV Model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flour CV Model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pasta CV Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edible Oil CV Model": {
+      "main": [
+        [
+          {
+            "node": "Parse CV Output & Facing Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flour CV Model": {
+      "main": [
+        [
+          {
+            "node": "Parse CV Output & Facing Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasta CV Model": {
+      "main": [
+        [
+          {
+            "node": "Parse CV Output & Facing Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CV Output & Facing Counts": {
+      "main": [
+        [
+          {
+            "node": "Respond to MT Audit App",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

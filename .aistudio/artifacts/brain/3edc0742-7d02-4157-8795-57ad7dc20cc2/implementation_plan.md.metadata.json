@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for Cross-Bay Duplicate Detection in CameraWorkflowScreen.tsx: algorithm for seam overlap detection in adjacent bays, coordinate center calculation from webhook corners, amber header chip and expansion panel, dimmed strike-through visualization, and audit persistence.",
+  "updatedAt": "2026-11-04T11:30:13.524391646Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

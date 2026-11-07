@@ -1,0 +1,8 @@
+{
+  "name": "TEST Modern Trade Visit Audit",
+  "description": "High-speed zero-scroll mobile audit app for Modern Trade field merchandisers featuring parallel compliance checks and AI shelf verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
