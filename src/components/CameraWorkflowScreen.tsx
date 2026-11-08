@@ -1344,6 +1344,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       }));
 
       try {
+        console.log(`[Bay ${targetAisle}] Starting transmission to n8n...`);
         const result = await sendAuditToN8n(
           file || dataUrl,
           {
@@ -1376,6 +1377,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           90000,
           { width: 800, height: 800 }
         );
+        console.log(`[Bay ${targetAisle}] Transmission result:`, result);
 
         const normalized = normalizeN8nAuditResponse(
           result.rawResponse || result.rawNormalized || result,
@@ -1455,57 +1457,84 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
   // Auto-capture frame execution from WebRTC video stream
   const handleAutoCaptureTrigger = useCallback(() => {
-    if (!videoRef.current || !cameraStreamActive) return;
+    if (!videoRef.current || !cameraStreamActive) {
+      cameraInputRef.current?.click();
+      return;
+    }
 
     try {
       const video = videoRef.current;
+      const w = video.videoWidth || 1280;
+      const h = video.videoHeight || 720;
+      if (w === 0 || h === 0) {
+        cameraInputRef.current?.click();
+        return;
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      if (!ctx) {
+        cameraInputRef.current?.click();
+        return;
+      }
+      ctx.drawImage(video, 0, 0, w, h);
 
       const targetAisle = currentAisle;
       setLastCapturedAisle(targetAisle);
 
-      // Record true snapshot dimensions immediately
-      setAisleSessions((prev) => {
-        const s = prev[targetAisle];
-        if (!s) return prev;
-        return {
-          ...prev,
-          [targetAisle]: {
-            ...s,
-            naturalDimensions: { width: canvas.width, height: canvas.height }
-          }
-        };
-      });
-
-      // If returning from retake, jump directly back to POSM
       const isRetake = retakeBayKey === targetAisle;
-      if (isRetake) {
-        setRetakeBayKey(null);
-        setShowPostCapturePrompt(false);
-        setStep('POSM');
-      } else {
-        setShowPostCapturePrompt(true);
-      }
 
-      // Start upload & analysis immediately for this bay
-      startAsyncBayAnalysis(targetAisle, null, dataUrl);
+      // Convert canvas snapshot into a real binary File object (identical to gallery upload)
+      canvas.toBlob((blob) => {
+        let capturedFile: File | null = null;
+        let objectUrl = '';
+
+        if (blob) {
+          const fileName = `camera_${targetAisle}_${Date.now()}.jpg`;
+          capturedFile = new File([blob], fileName, { type: 'image/jpeg' });
+          objectUrl = URL.createObjectURL(blob);
+        } else {
+          objectUrl = canvas.toDataURL('image/jpeg', 0.85);
+        }
+
+        // Record true snapshot dimensions immediately
+        setAisleSessions((prev) => {
+          const s = prev[targetAisle];
+          if (!s) return prev;
+          return {
+            ...prev,
+            [targetAisle]: {
+              ...s,
+              naturalDimensions: { width: w, height: h }
+            }
+          };
+        });
+
+        if (isRetake) {
+          setRetakeBayKey(null);
+          setShowPostCapturePrompt(false);
+          setStep('POSM');
+        } else {
+          setShowPostCapturePrompt(true);
+        }
+
+        // Start upload & analysis immediately passing real File object
+        startAsyncBayAnalysis(targetAisle, capturedFile, objectUrl);
+      }, 'image/jpeg', 0.85);
     } catch (err) {
-      console.warn('Auto-capture canvas snapshot note:', err);
+      console.warn('Auto-capture canvas snapshot note, falling back to system camera:', err);
+      cameraInputRef.current?.click();
     }
   }, [cameraStreamActive, currentAisle, startAsyncBayAnalysis, retakeBayKey]);
 
-  // Manual Shutter Click handler: snaps live video frame inside app or starts stream
+  // Manual Shutter Click handler: snaps live video frame inside app or opens system camera
   const handleManualShutter = () => {
-    if (cameraStreamActive && videoRef.current) {
+    if (cameraStreamActive && videoRef.current && videoRef.current.videoWidth > 0) {
       handleAutoCaptureTrigger();
     } else {
-      startCameraStream();
+      cameraInputRef.current?.click();
     }
   };
 

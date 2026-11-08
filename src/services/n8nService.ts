@@ -891,6 +891,8 @@ export async function sendAuditToN8n(
   formData.append('unmapped_remark', metadata.unmappedRemark || '');
   formData.append('latitude', String(metadata.latitude ?? 25.2854));
   formData.append('longitude', String(metadata.longitude ?? 51.5310));
+  formData.append('lat', String(metadata.latitude ?? 25.2854));
+  formData.append('lng', String(metadata.longitude ?? 51.5310));
   formData.append('location_source', metadata.locationSource || 'device_gps');
   formData.append('price_tag_ok', String(metadata.priceTagOk));
   formData.append('posm_shelf_sticker', String(metadata.posmShelfSticker));
