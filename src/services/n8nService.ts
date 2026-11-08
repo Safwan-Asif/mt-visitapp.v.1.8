@@ -1087,7 +1087,8 @@ export async function sendAuditToN8n(
         }
       }
     } catch (err: any) {
-      console.warn(`[sendAuditToN8n] Fetch error for ${targetUrl}:`, err?.message);
+      console.error(`[sendAuditToN8n] CRITICAL FETCH ERROR for ${targetUrl}:`, err);
+      console.warn(`[sendAuditToN8n] Fetch error message:`, err?.message);
     }
   }
 
