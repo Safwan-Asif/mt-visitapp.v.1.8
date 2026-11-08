@@ -984,32 +984,111 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
     const constraintTiers: MediaStreamConstraints[] = [];
 
-    // Device enumeration to pinpoint back camera deviceId if available
+    // Intelligent device scoring to pinpoint 1x main back camera (strictly avoiding 0.5x ultra-wide lenses)
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       console.info('ℹ️ Available Input Devices:', devices);
       const videoInputs = devices.filter((d) => d.kind === 'videoinput');
       console.info(`ℹ️ Found ${videoInputs.length} video input device(s):`, videoInputs);
 
-      const backDevice = videoInputs.find((d) =>
-        /back|rear|environment|main|0/i.test(d.label || '')
-      );
-      if (backDevice && backDevice.deviceId) {
-        console.info('✅ Found matching rear camera device:', backDevice);
-        constraintTiers.push({
-          video: { deviceId: { exact: backDevice.deviceId } },
-          audio: false
-        });
+      // Score devices: prioritize 1x standard/main back camera and heavily penalize 0.5x ultra-wide, telephoto & front cameras
+      const scoredDevices = videoInputs.map((d) => {
+        const label = (d.label || '').toLowerCase();
+        let score = 0;
+
+        // Front / selfie cameras
+        if (label.includes('front') || label.includes('selfie') || label.includes('user') || label.includes('truedepth')) {
+          score -= 1000;
+        }
+
+        // Ultra-wide (0.5x) cameras: heavily penalized so 0.5x zoom is NEVER auto-selected
+        if (label.includes('ultra') || label.includes('0.5') || (label.includes('wide-angle') && label.includes('ultra'))) {
+          score -= 500;
+        }
+
+        // Telephoto (2x, 3x, 5x, 10x) cameras: penalized
+        if (label.includes('tele') || label.includes('zoom') || label.includes('periscope')) {
+          score -= 300;
+        }
+
+        // Macro or virtual cameras: penalized
+        if (label.includes('macro') || label.includes('virtual')) {
+          score -= 200;
+        }
+
+        // Primary 1x main camera bonuses:
+        // iOS standard main camera is labeled "Back Camera" or "Back Dual Wide Camera" (without "ultra")
+        if (label === 'back camera' || label === 'rear camera') {
+          score += 180;
+        }
+        if (label.includes('main') || label.includes('primary') || label.includes('standard') || label.includes('camera 1') || label.includes('camera2 1')) {
+          score += 150;
+        }
+        if (label.includes('wide') && !label.includes('ultra')) {
+          score += 100;
+        }
+        if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
+          score += 80;
+        }
+
+        return { device: d, score, label };
+      });
+
+      scoredDevices.sort((a, b) => b.score - a.score);
+      console.info('📊 Ranked camera devices (top is preferred 1x lens):', scoredDevices);
+
+      const bestBackDevice = scoredDevices[0] && scoredDevices[0].score > -100 ? scoredDevices[0].device : null;
+
+      if (bestBackDevice && bestBackDevice.deviceId) {
+        console.info('✅ Pinpointed 1x main rear camera:', bestBackDevice.label, bestBackDevice.deviceId);
+        constraintTiers.push(
+          {
+            video: {
+              deviceId: { exact: bestBackDevice.deviceId },
+              width: { ideal: 3840, min: 1920 },
+              height: { ideal: 2160, min: 1080 }
+            },
+            audio: false
+          },
+          {
+            video: {
+              deviceId: { exact: bestBackDevice.deviceId },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 }
+            },
+            audio: false
+          },
+          {
+            video: {
+              deviceId: { exact: bestBackDevice.deviceId }
+            },
+            audio: false
+          }
+        );
       }
     } catch (enumErr) {
       console.warn('Device enumeration note:', enumErr);
     }
 
-    // Universal cross-platform constraint fallbacks
+    // High-clarity 1x environment camera fallbacks (requests full HD / 4K resolution)
     if (supportedConstraints.facingMode) {
       constraintTiers.push(
-        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
-        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+        {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 3840, min: 1920 },
+            height: { ideal: 2160, min: 1080 }
+          },
+          audio: false
+        },
+        {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 }
+          },
+          audio: false
+        },
         { video: { facingMode: { ideal: 'environment' } }, audio: false },
         { video: { facingMode: 'environment' }, audio: false },
         { video: { facingMode: { exact: 'environment' } }, audio: false }
@@ -1049,9 +1128,75 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       videoRef.current.setAttribute('playsinline', 'true');
       videoRef.current.setAttribute('autoplay', 'true');
       videoRef.current.setAttribute('muted', 'true');
+
+      // Hardware Track Optimization: Enforce 1.0x optical zoom and continuous autofocus for clear shelf details
+      try {
+        const track = activeStream.getVideoTracks()[0];
+        if (track) {
+          const capabilities: any = track.getCapabilities ? track.getCapabilities() : {};
+          const advancedSettings: any = {};
+
+          // Enforce 1.0x standard zoom (bypass 0.5x ultra-wide default on multi-camera devices)
+          if (capabilities.zoom) {
+            const minZ = capabilities.zoom.min ?? 1;
+            const maxZ = capabilities.zoom.max ?? 1;
+            const targetZ = Math.min(Math.max(1.0, minZ), maxZ);
+            advancedSettings.zoom = targetZ;
+            console.info(`🔍 Enforcing 1x zoom on camera track: ${targetZ} (device range: ${minZ}-${maxZ})`);
+          }
+
+          // Enforce continuous autofocus for clear, crisp shelf details
+          if (capabilities.focusMode && Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+            advancedSettings.focusMode = 'continuous';
+          }
+
+          // Enforce continuous auto exposure
+          if (capabilities.exposureMode && Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes('continuous')) {
+            advancedSettings.exposureMode = 'continuous';
+          }
+
+          if (Object.keys(advancedSettings).length > 0) {
+            await track.applyConstraints({ advanced: [advancedSettings] });
+            console.info('✅ Applied optimal camera hardware constraints (1x zoom & continuous focus):', advancedSettings);
+          }
+
+          // If the initially assigned track happens to be an ultra-wide lens, re-enumerate now that labels are unlocked and switch to 1x main
+          const trackLabel = (track.label || '').toLowerCase();
+          if (trackLabel.includes('ultra') || trackLabel.includes('0.5')) {
+            console.warn('Initial camera track selected 0.5x ultra-wide lens. Switching to 1x main camera...');
+            try {
+              const freshDevices = await navigator.mediaDevices.enumerateDevices();
+              const freshInputs = freshDevices.filter((d) => d.kind === 'videoinput');
+              const main1xDevice = freshInputs.find((d) => {
+                const l = (d.label || '').toLowerCase();
+                return !l.includes('front') && !l.includes('ultra') && !l.includes('0.5') && !l.includes('tele') && (l.includes('back') || l.includes('main') || l.includes('wide'));
+              });
+              if (main1xDevice && main1xDevice.deviceId && main1xDevice.deviceId !== track.getSettings?.().deviceId) {
+                console.info('Switching from 0.5x ultra-wide to 1x main camera:', main1xDevice.label);
+                const betterStream = await navigator.mediaDevices.getUserMedia({
+                  video: {
+                    deviceId: { exact: main1xDevice.deviceId },
+                    width: { ideal: 3840, min: 1920 },
+                    height: { ideal: 2160, min: 1080 }
+                  },
+                  audio: false
+                });
+                track.stop();
+                activeStream = betterStream;
+                videoRef.current.srcObject = betterStream;
+              }
+            } catch (switchErr) {
+              console.warn('Lens switch note:', switchErr);
+            }
+          }
+        }
+      } catch (optErr) {
+        console.warn('Track hardware optimization note:', optErr);
+      }
+
       try {
         await videoRef.current.play();
-        console.info('▶️ Video stream playing successfully');
+        console.info('▶️ Video stream playing successfully at 1x zoom');
       } catch (playErr) {
         console.warn('Mobile video play deferred:', playErr);
       }
@@ -1479,6 +1624,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         cameraInputRef.current?.click();
         return;
       }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(video, 0, 0, w, h);
 
       const targetAisle = currentAisle;
@@ -1486,7 +1633,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
       const isRetake = retakeBayKey === targetAisle;
 
-      // Convert canvas snapshot into a real binary File object (identical to gallery upload)
+      // Convert canvas snapshot into a real binary File object (identical to gallery upload) with high crispness (0.92)
       canvas.toBlob((blob) => {
         let capturedFile: File | null = null;
         let objectUrl = '';
@@ -1496,38 +1643,47 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           capturedFile = new File([blob], fileName, { type: 'image/jpeg' });
           objectUrl = URL.createObjectURL(blob);
         } else {
-          objectUrl = canvas.toDataURL('image/jpeg', 0.85);
+          objectUrl = canvas.toDataURL('image/jpeg', 0.92);
         }
 
-        // Record true snapshot dimensions immediately
+        // Store captured photo in bay session without triggering n8n yet (status: 'idle')
         setAisleSessions((prev) => {
           const s = prev[targetAisle];
-          if (!s) return prev;
           return {
             ...prev,
             [targetAisle]: {
-              ...s,
-              naturalDimensions: { width: w, height: h }
+              ...(s || {
+                key: targetAisle,
+                label: targetAisle,
+                naturalDimensions: { width: w, height: h },
+                rawCounts: {},
+                counts: {},
+                originalAiCounts: {},
+                totalFacings: null,
+                boxes: [],
+                rawBoxes: [],
+                n8nStatus: null,
+                analysisStartTime: null,
+                analysisDurationSeconds: 0
+              }),
+              status: 'idle',
+              capturedFile,
+              capturedPhotoUrl: objectUrl,
+              capturedFileName: capturedFile?.name || `${targetAisle}_capture.jpg`,
+              naturalDimensions: { width: w, height: h },
+              errorMessage: undefined
             }
           };
         });
 
-        if (isRetake) {
-          setRetakeBayKey(null);
-          setShowPostCapturePrompt(false);
-          setStep('POSM');
-        } else {
-          setShowPostCapturePrompt(true);
-        }
-
-        // Start upload & analysis immediately passing real File object
-        startAsyncBayAnalysis(targetAisle, capturedFile, objectUrl);
-      }, 'image/jpeg', 0.85);
+        setRetakeBayKey(null);
+        setShowPostCapturePrompt(true);
+      }, 'image/jpeg', 0.90);
     } catch (err) {
       console.warn('Auto-capture canvas snapshot note, falling back to system camera:', err);
       cameraInputRef.current?.click();
     }
-  }, [cameraStreamActive, currentAisle, startAsyncBayAnalysis, retakeBayKey]);
+  }, [cameraStreamActive, currentAisle]);
 
   // Manual Shutter Click handler: snaps live video frame inside app or opens system camera
   const handleManualShutter = () => {
@@ -1538,7 +1694,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     }
   };
 
-  // File Picker selected handler
+  // File Picker selected handler (Stores photo for review without sending to n8n yet)
   const handlePhotoFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1548,14 +1704,33 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
     setLastCapturedAisle(targetAisle);
 
-    const isRetake = retakeBayKey === targetAisle;
-    if (isRetake) {
-      setRetakeBayKey(null);
-      setShowPostCapturePrompt(false);
-      setStep('POSM');
-    } else {
-      setShowPostCapturePrompt(true);
-    }
+    setAisleSessions((prev) => {
+      const s = prev[targetAisle];
+      return {
+        ...prev,
+        [targetAisle]: {
+          ...(s || {
+            key: targetAisle,
+            label: targetAisle,
+            naturalDimensions: { width: 800, height: 800 },
+            rawCounts: {},
+            counts: {},
+            originalAiCounts: {},
+            totalFacings: null,
+            boxes: [],
+            rawBoxes: [],
+            n8nStatus: null,
+            analysisStartTime: null,
+            analysisDurationSeconds: 0
+          }),
+          status: 'idle',
+          capturedFile: file,
+          capturedPhotoUrl: objectUrl,
+          capturedFileName: file.name,
+          errorMessage: undefined
+        }
+      };
+    });
 
     // Measure exact natural image dimensions
     const probe = new Image();
@@ -1576,32 +1751,60 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     };
     probe.src = objectUrl;
 
-    startAsyncBayAnalysis(targetAisle, file, objectUrl);
+    setRetakeBayKey(null);
+    setShowPostCapturePrompt(true);
     e.target.value = '';
   };
 
-  // Debug Demo Sample Shelf
+  // Debug Demo Sample Shelf (Stores demo photo without triggering n8n yet)
   const handleUseDemoSample = () => {
     const targetAisle = currentAisle;
     setLastCapturedAisle(targetAisle);
 
-    const isRetake = retakeBayKey === targetAisle;
-    if (isRetake) {
-      setRetakeBayKey(null);
-      setShowPostCapturePrompt(false);
-      setStep('POSM');
-    } else {
-      setShowPostCapturePrompt(true);
-    }
+    setAisleSessions((prev) => {
+      const s = prev[targetAisle];
+      return {
+        ...prev,
+        [targetAisle]: {
+          ...(s || {
+            key: targetAisle,
+            label: targetAisle,
+            naturalDimensions: { width: 800, height: 800 },
+            rawCounts: {},
+            counts: {},
+            originalAiCounts: {},
+            totalFacings: null,
+            boxes: [],
+            rawBoxes: [],
+            n8nStatus: null,
+            analysisStartTime: null,
+            analysisDurationSeconds: 0
+          }),
+          status: 'idle',
+          capturedFile: null,
+          capturedPhotoUrl: fallbackShelfPhoto,
+          capturedFileName: `sample_${category.toLowerCase()}.jpg`,
+          errorMessage: undefined
+        }
+      };
+    });
 
-    startAsyncBayAnalysis(targetAisle, null, fallbackShelfPhoto);
+    setRetakeBayKey(null);
+    setShowPostCapturePrompt(true);
   };
 
-  // Flexible Dynamic Bay Addition (Can be 1, 2, 5, or 10+ bays)
+  // Flexible Dynamic Bay Addition (Transmits confirmed bay to n8n, then adds next bay)
   const handleAddNewBay = () => {
     setShowPostCapturePrompt(false);
     autoCaptureTriggeredRef.current = false;
     levelHoldStartTimeRef.current = null;
+
+    // Transmit the confirmed bay to n8n workflow only now
+    const confirmedBayKey = lastCapturedAisle || currentAisle;
+    const confirmedSession = aisleSessions[confirmedBayKey];
+    if (confirmedSession && confirmedSession.capturedPhotoUrl && confirmedSession.status === 'idle') {
+      startAsyncBayAnalysis(confirmedBayKey, confirmedSession.capturedFile, confirmedSession.capturedPhotoUrl);
+    }
 
     setAisleSessions((prev) => {
       const keys = Object.keys(prev);
@@ -1647,9 +1850,17 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     });
   };
 
-  // 1. Tapping "Done shooting" enters the POSM step
+  // 1. Tapping "Proceed to POSM Form" confirms all captured photos and transmits them to n8n
   const handleDoneShooting = () => {
     setShowPostCapturePrompt(false);
+
+    // Transmit all captured bays that haven't been processed yet to n8n
+    Object.values(aisleSessions).forEach((session) => {
+      if (session.capturedPhotoUrl && session.status === 'idle') {
+        startAsyncBayAnalysis(session.key, session.capturedFile, session.capturedPhotoUrl);
+      }
+    });
+
     setStep('POSM');
   };
 
@@ -2253,7 +2464,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       )}
 
       {/* ================= STEP 1: CAPTURE ================= */}
-      {step === 'CAPTURE' && (
+      {step === 'CAPTURE' && !showPostCapturePrompt && (
         <div className="flex-1 flex flex-col justify-between py-1 space-y-2 overflow-hidden">
           {/* Camera Guidance Viewfinder & Auto-Capture (Snapchat-style Live Video Feed) */}
           <div 
@@ -2423,114 +2634,175 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             )}
 
             {/* Post-Capture Inline Bay Prompt Overlay */}
-            {showPostCapturePrompt && (
-              <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md flex flex-col items-center justify-between p-4 text-center animate-fade-in overflow-y-auto">
-                <div className="w-full max-w-sm flex flex-col items-center space-y-3 my-auto py-2">
-                  <div className="flex items-center gap-2 text-emerald-400 bg-emerald-950/80 border border-emerald-500/50 px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                    <CheckCircle2 size={16} className="text-emerald-400" />
-                    <span>Image Taken &bull; {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'}</span>
-                  </div>
-
-                  {/* Captured Photo Preview as taken */}
-                  {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl && (
-                    <div className="relative w-full max-h-[50vh] h-48 sm:h-60 my-1 rounded-2xl overflow-hidden border-2 border-emerald-500/60 shadow-2xl bg-black/90 flex items-center justify-center">
-                      <img
-                        src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
-                        alt="Captured Photo Preview"
-                        className="w-full h-full object-contain"
-                      />
-                      <div className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-emerald-500/40 text-[10px] font-mono text-emerald-300 shadow-md">
-                        {aisleSessions[lastCapturedAisle]?.capturedFileName || 'photo.jpg'}
-                      </div>
-                    </div>
-                  )}
-
-                  <p className="text-xs text-emerald-200/90 font-medium px-2">
-                    Bay photo captured successfully! n8n AI analysis is running in the background.
-                  </p>
-
-                  {/* Action Options */}
-                  <div className="w-full max-w-xs space-y-2.5 pt-2">
-                    <button
-                      type="button"
-                      onClick={handleAddNewBay}
-                      className="w-full py-3.5 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.98] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer hover:brightness-110 transition-all"
-                    >
-                      <Plus size={18} className="stroke-[2.5]" />
-                      <span>+ Add a Bay / Scan Next Bay</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleDoneShooting}
-                      className="w-full py-3.5 bg-[#132219] hover:bg-[#1b3024] border border-emerald-600/70 active:scale-[0.98] text-emerald-200 font-bold text-xs uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-lg"
-                    >
-                      <CheckCircle2 size={18} className="text-emerald-400" />
-                      <span>Shelf Completed &bull; Proceed to POSM Form</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* (Moved to full-screen dedicated review component below) */}
           </div>
 
-          {/* Mobile-friendly Bottom Shutter Bar Deck */}
-          <div className="shrink-0 space-y-2 pt-2 pb-6 sm:pb-3 px-3 mt-1 bg-gradient-to-t from-black via-black/95 to-black/80 backdrop-blur-md rounded-t-3xl border-t border-emerald-900/60 shadow-2xl z-20 select-none">
-            {/* Visual grip bar hint for mobile viewports */}
-            <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1" />
+          {/* Mobile-friendly Bottom Shutter Bar Deck (Only shown during active camera shooting) */}
+          {!showPostCapturePrompt && (
+            <div className="shrink-0 space-y-2 pt-2 pb-6 sm:pb-3 px-3 mt-1 bg-gradient-to-t from-black via-black/95 to-black/80 backdrop-blur-md rounded-t-3xl border-t border-emerald-900/60 shadow-2xl z-20 select-none">
+              {/* Visual grip bar hint for mobile viewports */}
+              <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1" />
 
-            <div className="grid grid-cols-2 gap-3">
-              {/* Primary 1: Shutter Button (Always functional & mobile-optimized) */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Primary 1: Shutter Button (Always functional & mobile-optimized) */}
+                <button
+                  type="button"
+                  onClick={handleManualShutter}
+                  className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                >
+                  <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                    <Camera size={16} className="text-white stroke-[2.5]" />
+                  </div>
+                  <span>Shoot {currentSession?.label || 'Bay 1'}</span>
+                </button>
+
+                {/* Primary 2: Device Gallery / Library Upload */}
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  className={`h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                    isDark
+                      ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
+                      : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
+                  }`}
+                >
+                  <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
+                    <Upload size={15} className="text-emerald-400" />
+                  </div>
+                  <span>Gallery</span>
+                </button>
+              </div>
+
+              {/* Bottom auxiliary link: Done Shooting or Sample Shelf (debug only) */}
+              <div className="flex items-center justify-between px-2 pt-0.5 text-[11px]">
+                {capturedAisles.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={handleDoneShooting}
+                    className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/40"
+                  >
+                    <CheckCircle2 size={12} className="text-emerald-400" />
+                    <span>Shelf Completed &bull; Proceed to POSM ({capturedAisles.length} captured)</span>
+                  </button>
+                ) : <div />}
+
+                {isDebugMode && (
+                  <button
+                    type="button"
+                    onClick={handleUseDemoSample}
+                    className="text-emerald-500 hover:text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                  >
+                    <span>Sample {category} ({currentSession?.label || 'Bay 1'})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Dedicated Post-Capture Full-Height Photo Review Screen */}
+      {step === 'CAPTURE' && showPostCapturePrompt && (
+        <div className="flex-1 flex flex-col justify-between overflow-hidden animate-fade-in py-1 space-y-2.5 select-none">
+          {/* Status Header: Clean, uncluttered, professional */}
+          <div className="shrink-0 flex items-center justify-between px-1.5 pt-0.5">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 animate-pulse" />
+              <span className="text-xs font-bold text-white tracking-wide">
+                {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'} Captured
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-emerald-400/90 font-mono bg-black/60 px-2.5 py-0.5 rounded-full border border-emerald-800/40">
+                1x Standard HD
+              </span>
               <button
                 type="button"
-                onClick={handleManualShutter}
-                className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                onClick={() => setIsFullScreenOpen(true)}
+                className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                title="Fullscreen Preview"
               >
-                <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                  <Camera size={16} className="text-white stroke-[2.5]" />
-                </div>
-                <span>Shoot {currentSession?.label || 'Bay 1'}</span>
-              </button>
-
-              {/* Primary 2: Device Gallery / Library Upload */}
-              <button
-                type="button"
-                onClick={() => galleryInputRef.current?.click()}
-                className={`h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
-                  isDark
-                    ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
-                    : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
-                }`}
-              >
-                <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                  <Upload size={15} className="text-emerald-400" />
-                </div>
-                <span>Gallery</span>
+                <Maximize2 size={13} />
               </button>
             </div>
+          </div>
 
-            {/* Bottom auxiliary link: Done Shooting or Sample Shelf (debug only) */}
-            <div className="flex items-center justify-between px-2 pt-0.5 text-[11px]">
-              {capturedAisles.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={handleDoneShooting}
-                  className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/40"
-                >
-                  <CheckCircle2 size={12} className="text-emerald-400" />
-                  <span>Shelf Completed &bull; Proceed to POSM ({capturedAisles.length} captured)</span>
-                </button>
-              ) : <div />}
+          {/* Large, High-Fidelity Photo Preview Frame */}
+          <div
+            onClick={() => setIsFullScreenOpen(true)}
+            className="relative flex-1 min-h-[320px] rounded-2xl overflow-hidden border border-emerald-500/40 bg-black/95 flex items-center justify-center shadow-2xl cursor-pointer group"
+          >
+            {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl ? (
+              <img
+                src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
+                alt="Captured Shelf Preview"
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <div className="text-slate-400 text-xs font-medium">No photo available</div>
+            )}
 
-              {isDebugMode && (
-                <button
-                  type="button"
-                  onClick={handleUseDemoSample}
-                  className="text-emerald-500 hover:text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer"
-                >
-                  <span>Sample {category} ({currentSession?.label || 'Bay 1'})</span>
-                </button>
-              )}
+            {/* Discreet Filename & Resolution Tag */}
+            <div className="absolute bottom-2.5 left-2.5 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] text-slate-300 font-mono border border-white/10 shadow-md">
+              {aisleSessions[lastCapturedAisle]?.capturedFileName || 'shelf-photo.jpg'}
+            </div>
+
+            {/* Tap to zoom tooltip hint */}
+            <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md px-2 py-1 rounded-md text-[10px] text-slate-200 opacity-75 group-hover:opacity-100 transition-opacity flex items-center gap-1 border border-white/10 shadow-md">
+              <Maximize2 size={11} />
+              <span>Tap to zoom</span>
+            </div>
+          </div>
+
+          {/* Pre-transmission Photo Review Status Bar */}
+          <div className="shrink-0 px-3.5 py-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+              <div className="flex flex-col text-left">
+                <span className="text-[11px] font-bold text-emerald-200">
+                  Photo Captured &bull; Ready for Review
+                </span>
+                <span className="text-[10px] text-emerald-400/80">
+                  Proceed or + Add a Bay to process with n8n AI workflow
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] text-emerald-300 font-mono bg-black/50 px-2.5 py-0.5 rounded border border-emerald-800/40">
+              Ready
+            </span>
+          </div>
+
+          {/* Clean, Human-Centric Action Deck */}
+          <div className="shrink-0 space-y-2 pt-1 pb-2">
+            {/* Primary Action Button: Proceed to POSM Form */}
+            <button
+              type="button"
+              onClick={handleDoneShooting}
+              className="w-full h-12 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 hover:brightness-110 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all border border-emerald-400/40"
+            >
+              <CheckCircle2 size={16} />
+              <span>Proceed to POSM Form</span>
+            </button>
+
+            {/* Secondary Actions: Retake Picture or Add Next Bay */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleRetakeBay(lastCapturedAisle)}
+                className="h-11 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/50 active:scale-[0.98] text-rose-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+              >
+                <RefreshCw size={13} className="text-rose-400" />
+                <span>Retake Picture</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAddNewBay}
+                className="h-11 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/50 active:scale-[0.98] text-emerald-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+              >
+                <Plus size={14} className="text-emerald-400" />
+                <span>+ Add a Bay</span>
+              </button>
             </div>
           </div>
         </div>
