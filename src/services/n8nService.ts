@@ -1003,7 +1003,62 @@ export async function sendAuditToN8n(
     };
   };
 
-  // Attempt 1: Multipart Form-Data to Primary Endpoint
+  // Attempt 0: Server-Side n8n Proxy (Eliminates browser iframe CORS restrictions entirely)
+  try {
+    const proxyController = new AbortController();
+    const proxyTimeoutId = setTimeout(() => proxyController.abort(), timeoutMs);
+
+    const proxyResponse = await fetch('/api/n8n/proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUrl: primaryEndpoint,
+        base64: rawBase64,
+        fileName,
+        mimeType: jpegBlob.type || 'image/jpeg',
+        metadata: {
+          outlet_id: metadata.outletId,
+          outlet_name: metadata.outletName,
+          account_name: metadata.accountName || metadata.outletName,
+          outlet_code: metadata.outletCode || metadata.outletId,
+          category: metadata.category,
+          rep_name: metadata.repName,
+          rep_id: metadata.repId,
+          total_facings: metadata.totalFacings ?? 0,
+          primary_share_pct: metadata.primarySharePct ?? 0,
+          share_of_shelf_pct: metadata.shareOfShelfPct ?? metadata.primarySharePct ?? 0,
+          share_of_shelf_label: metadata.shareOfShelfLabel || 'QFI SOS',
+          counts_json: JSON.stringify(metadata.counts || {}),
+          original_ai_counts_json: JSON.stringify(metadata.originalAiCounts || metadata.counts || {}),
+          discrepancy_log: metadata.discrepancyLog || 'No manual overrides (AI counts accepted)',
+          unmapped_remark: metadata.unmappedRemark || '',
+          latitude: metadata.latitude ?? 25.2854,
+          longitude: metadata.longitude ?? 51.5310,
+          location_source: metadata.locationSource || 'device_gps',
+          price_tag_ok: metadata.priceTagOk,
+          posm_shelf_sticker: metadata.posmShelfSticker,
+          posm_wobblers: metadata.posmWobblers,
+          needs_review: metadata.needsReview,
+          timestamp: metadata.timestamp,
+          app_url: 'https://mt-app-v-sf1.vercel.app/'
+        }
+      }),
+      signal: proxyController.signal
+    });
+
+    clearTimeout(proxyTimeoutId);
+
+    if (proxyResponse.ok) {
+      console.info('[sendAuditToN8n] Successfully received analysis from n8n via server proxy');
+      return await processFetchResponse(proxyResponse, primaryEndpoint);
+    } else {
+      console.warn(`[sendAuditToN8n] Server proxy returned HTTP ${proxyResponse.status}, trying fallback connection...`);
+    }
+  } catch (proxyErr: any) {
+    console.warn('[sendAuditToN8n] Server proxy note (falling back to direct):', proxyErr?.message);
+  }
+
+  // Attempt 1: Direct Multipart Form-Data to Primary / Test Endpoint
   const endpointsToTry = [primaryEndpoint];
   if (testEndpoint !== primaryEndpoint) {
     endpointsToTry.push(testEndpoint);

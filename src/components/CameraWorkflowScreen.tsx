@@ -1124,23 +1124,23 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         constraintTiers.push(
           {
             video: {
-              deviceId: { exact: bestBackDevice.deviceId },
-              width: { ideal: 3840, min: 1920 },
-              height: { ideal: 2160, min: 1080 }
+              deviceId: { ideal: bestBackDevice.deviceId },
+              width: { ideal: 3840 },
+              height: { ideal: 2160 }
             },
             audio: false
           },
           {
             video: {
-              deviceId: { exact: bestBackDevice.deviceId },
-              width: { ideal: 1920, min: 1280 },
-              height: { ideal: 1080, min: 720 }
+              deviceId: { ideal: bestBackDevice.deviceId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
             },
             audio: false
           },
           {
             video: {
-              deviceId: { exact: bestBackDevice.deviceId }
+              deviceId: { ideal: bestBackDevice.deviceId }
             },
             audio: false
           }
@@ -1156,22 +1156,21 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 3840, min: 1920 },
-            height: { ideal: 2160, min: 1080 }
+            width: { ideal: 3840 },
+            height: { ideal: 2160 }
           },
           audio: false
         },
         {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1920, min: 1280 },
-            height: { ideal: 1080, min: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
           },
           audio: false
         },
         { video: { facingMode: { ideal: 'environment' } }, audio: false },
-        { video: { facingMode: 'environment' }, audio: false },
-        { video: { facingMode: { exact: 'environment' } }, audio: false }
+        { video: { facingMode: 'environment' }, audio: false }
       );
     } else {
       console.warn('facingMode constraint is not listed in supportedConstraints by this browser.');
@@ -1284,14 +1283,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       setCameraErrorNotice(null);
       console.groupEnd();
     } else {
-      console.error('❌ All WebRTC camera constraints failed. Last Error:', lastError);
+      console.warn('Live WebRTC camera stream note:', lastError?.message || lastError);
       console.groupEnd();
       setCameraStreamActive(false);
 
       if (lastError?.name === 'NotAllowedError' || lastError?.name === 'PermissionDeniedError') {
         setCameraErrorNotice('Camera access denied by browser or device permission policy. Tap below to re-request permission or allow camera in browser site settings.');
-      } else if (lastError?.name === 'NotFoundError' || lastError?.name === 'DevicesNotFoundError') {
-        setCameraErrorNotice('No camera hardware detected on device.');
+      } else if (lastError?.name === 'NotFoundError' || lastError?.name === 'DevicesNotFoundError' || lastError?.message?.includes('not found')) {
+        setCameraErrorNotice('No camera hardware detected on device. You can snap using the native camera app or upload from gallery.');
       } else if (lastError?.name === 'NotReadableError' || lastError?.name === 'TrackStartError') {
         setCameraErrorNotice('Camera is currently in use by another application.');
       } else if (lastError?.name === 'OverconstrainedError') {
@@ -1323,7 +1322,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       }
       setCameraStreamActive(false);
     };
-  }, [step, startCameraStream]);
+  }, [step, currentAisle, startCameraStream]);
 
   // Motion & Orientation sensors for Level line & Auto-Capture
   useEffect(() => {
