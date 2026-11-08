@@ -2379,6 +2379,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     return activePhotoDisplay;
   }, [displayAnnotatedPhoto, imgErrorLevel, activePhotoDisplay]);
 
+  // Lightbox Image resolution:
+  // When in CAPTURE step, ALWAYS display the photo the user actually captured!
+  const currentLightboxImage = useMemo(() => {
+    if (step === 'CAPTURE') {
+      const capturedBay = aisleSessions[lastCapturedAisle] || aisleSessions[currentAisle];
+      if (capturedBay?.capturedPhotoUrl) {
+        return capturedBay.capturedPhotoUrl;
+      }
+    }
+    return resolvedImgSrc || fallbackShelfPhoto;
+  }, [step, aisleSessions, lastCapturedAisle, currentAisle, resolvedImgSrc, fallbackShelfPhoto]);
+
   // Elapsed analysis seconds formatted quietly (multiples of 5s)
   const getQuietElapsedText = (session?: AisleSession) => {
     if (!session?.analysisStartTime) return 'Analysing… (5s)';
@@ -3870,7 +3882,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       )}
 
       {/* Full Screen Image Lightbox Modal with Pan & Zoom */}
-      {isFullScreenOpen && resolvedImgSrc && (
+      {isFullScreenOpen && currentLightboxImage && (
         <div 
           className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between overflow-hidden select-none animate-fade-in"
           role="dialog"
@@ -3881,26 +3893,30 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-black/90 border-b border-emerald-900/60 shrink-0 z-30 gap-2">
             <div className="flex items-center gap-2 truncate pr-1">
               <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[120px] sm:max-w-xs">
-                {resultsAisleView === 'ALL'
+                {step === 'CAPTURE'
+                  ? `${category} • ${aisleSessions[lastCapturedAisle]?.label || currentSession?.label || 'Bay 1'} (Photo Preview)`
+                  : resultsAisleView === 'ALL'
                   ? `${category} Panorama (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
                   : `${category} • ${viewSession?.label || 'Bay'}`}
               </span>
               <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-lg border border-emerald-500/40 shrink-0 hidden xs:inline">
-                {showRawPhotoComparison ? 'Raw' : 'AI'}
+                {step === 'CAPTURE' ? 'Original Photo' : (showRawPhotoComparison ? 'Raw' : 'AI')}
               </span>
             </div>
 
             {/* Action & Zoom Controls */}
             <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Toggle Raw / Annotated */}
-              <button
-                type="button"
-                onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-                className="px-2 sm:px-2.5 py-1 text-[11px] font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white active:scale-95 transition-all cursor-pointer"
-                title="Toggle between AI annotated and raw view"
-              >
-                {showRawPhotoComparison ? 'AI' : 'Raw'}
-              </button>
+              {/* Toggle Raw / Annotated (Only on Results Tab) */}
+              {step === 'RESULTS' && (
+                <button
+                  type="button"
+                  onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
+                  className="px-2 sm:px-2.5 py-1 text-[11px] font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white active:scale-95 transition-all cursor-pointer"
+                  title="Toggle between AI annotated and raw view"
+                >
+                  {showRawPhotoComparison ? 'AI' : 'Raw'}
+                </button>
+              )}
 
               {/* Zoom Out */}
               <button
@@ -3965,140 +3981,142 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               style={{ transform: `scale(${zoomScale})` }}
             >
               <img
-                src={resolvedImgSrc}
+                src={currentLightboxImage}
                 alt="Enlarged shelf preview"
                 className="max-h-[82vh] max-w-[96vw] object-contain shadow-2xl rounded-xl"
                 draggable={false}
               />
-              {/* Duplicate Bottles Overlay in Lightbox */}
-              <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                {(() => {
-                  const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
-                  const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
+              {/* Duplicate Bottles Overlay in Lightbox (Only in RESULTS step) */}
+              {step === 'RESULTS' && (
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                  {(() => {
+                    const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
+                    const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
 
-                  const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
-                  const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
+                    const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
+                    const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
 
-                  return (
-                    <>
-                      {/* Visual Seam Guide based on active bay index */}
-                      {resultsAisleView !== 'ALL' && (() => {
-                        const bayIndex = completedAisles.indexOf(resultsAisleView);
-                        const hasLeftSeam = bayIndex > 0;
-                        const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
-                        return (
-                          <>
-                            {hasLeftSeam && (
-                              <div 
-                                style={{ width: `${seamTolerance * 100}%` }}
-                                className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
-                              />
-                            )}
-                            {hasRightSeam && (
-                              <div 
-                                style={{ width: `${seamTolerance * 100}%` }}
-                                className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
-                              />
-                            )}
-                          </>
-                        );
-                      })()}
-
-                      {/* Stitched Seam Divider Line for ALL Tab */}
-                      {isAllView && completedAisles.length > 1 && (() => {
-                        let acc = 0;
-                        return completedAisles.slice(0, -1).map((k, idx) => {
-                          acc += bayWidths[idx];
-                          const linePct = (acc / totalWidth) * 100;
+                    return (
+                      <>
+                        {/* Visual Seam Guide based on active bay index */}
+                        {resultsAisleView !== 'ALL' && (() => {
+                          const bayIndex = completedAisles.indexOf(resultsAisleView);
+                          const hasLeftSeam = bayIndex > 0;
+                          const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
                           return (
-                            <div 
-                              key={`lb-panorama-seam-${k}`}
-                              style={{ left: `${linePct}%` }}
-                              className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none"
-                            />
+                            <>
+                              {hasLeftSeam && (
+                                <div 
+                                  style={{ width: `${seamTolerance * 100}%` }}
+                                  className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
+                                />
+                              )}
+                              {hasRightSeam && (
+                                <div 
+                                  style={{ width: `${seamTolerance * 100}%` }}
+                                  className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
+                                />
+                              )}
+                            </>
                           );
-                        });
-                      })()}
+                        })()}
 
-                      {/* Duplicate Bottle Highlights for all active bays */}
-                      {baysToRender.map((bayKey) => {
-                        const bayIndex = completedAisles.indexOf(bayKey);
-                        if (bayIndex < 0) return null;
+                        {/* Stitched Seam Divider Line for ALL Tab */}
+                        {isAllView && completedAisles.length > 1 && (() => {
+                          let acc = 0;
+                          return completedAisles.slice(0, -1).map((k, idx) => {
+                            acc += bayWidths[idx];
+                            const linePct = (acc / totalWidth) * 100;
+                            return (
+                              <div 
+                                key={`lb-panorama-seam-${k}`}
+                                style={{ left: `${linePct}%` }}
+                                className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none"
+                              />
+                            );
+                          });
+                        })()}
 
-                        const session = aisleSessions[bayKey];
-                        const bayW = session?.naturalDimensions?.width || 800;
-                        const bayH = session?.naturalDimensions?.height || 1280;
+                        {/* Duplicate Bottle Highlights for all active bays */}
+                        {baysToRender.map((bayKey) => {
+                          const bayIndex = completedAisles.indexOf(bayKey);
+                          if (bayIndex < 0) return null;
 
-                        let leftOffset = 0;
-                        for (let i = 0; i < bayIndex; i++) {
-                          leftOffset += bayWidths[i];
-                        }
+                          const session = aisleSessions[bayKey];
+                          const bayW = session?.naturalDimensions?.width || 800;
+                          const bayH = session?.naturalDimensions?.height || 1280;
 
-                        const mapCoords = (x: number, y: number, w: number, h: number) => {
-                          if (isAllView) {
-                            const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
+                          let leftOffset = 0;
+                          for (let i = 0; i < bayIndex; i++) {
+                            leftOffset += bayWidths[i];
+                          }
+
+                          const mapCoords = (x: number, y: number, w: number, h: number) => {
+                            if (isAllView) {
+                              const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
+                              return {
+                                leftPct: (boxLeftPx / totalWidth) * 100,
+                                topPct: (y / bayH) * 100,
+                                widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
+                                heightPct: (h / bayH) * 100
+                              };
+                            }
                             return {
-                              leftPct: (boxLeftPx / totalWidth) * 100,
+                              leftPct: (x / bayW) * 100,
                               topPct: (y / bayH) * 100,
-                              widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
+                              widthPct: (w / bayW) * 100,
                               heightPct: (h / bayH) * 100
                             };
-                          }
-                          return {
-                            leftPct: (x / bayW) * 100,
-                            topPct: (y / bayH) * 100,
-                            widthPct: (w / bayW) * 100,
-                            heightPct: (h / bayH) * 100
                           };
-                        };
 
-                        const report = duplicateReports[bayKey];
-                        if (!report?.hasDuplicates) return null;
+                          const report = duplicateReports[bayKey];
+                          if (!report?.hasDuplicates) return null;
 
-                        return report.duplicates.map((dup) => {
-                          const { leftPct, topPct, widthPct, heightPct } = mapCoords(
-                            dup.x,
-                            dup.y,
-                            dup.width || 40,
-                            dup.height || 80
-                          );
-                          const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
+                          return report.duplicates.map((dup) => {
+                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
+                              dup.x,
+                              dup.y,
+                              dup.width || 40,
+                              dup.height || 80
+                            );
+                            const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
 
-                          return (
-                            <button
-                              key={`lightbox-${dup.boxId}`}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
-                              }}
-                              style={{
-                                left: `${Math.max(0, Math.min(95, leftPct))}%`,
-                                top: `${Math.max(0, Math.min(95, topPct))}%`,
-                                width: `${Math.max(3, Math.min(30, widthPct))}%`,
-                                height: `${Math.max(4, Math.min(50, heightPct))}%`,
-                              }}
-                              className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup ${
-                                isRemoved
-                                  ? 'opacity-40 hover:opacity-90 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
-                                  : 'opacity-75 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
-                              }`}
-                              title={`Tap to toggle duplicate for ${dup.brand}`}
-                            >
-                              <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
-                                <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
-                              </div>
-                              <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
-                                {isRemoved ? 'Removed' : 'Duplicate'}
-                              </span>
-                            </button>
-                          );
-                        });
-                      })}
-                    </>
-                  );
-                })()}
-              </div>
+                            return (
+                              <button
+                                key={`lightbox-${dup.boxId}`}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
+                                }}
+                                style={{
+                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
+                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
+                                  width: `${Math.max(3, Math.min(30, widthPct))}%`,
+                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
+                                }}
+                                className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup ${
+                                  isRemoved
+                                    ? 'opacity-40 hover:opacity-90 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
+                                    : 'opacity-75 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
+                                }`}
+                                title={`Tap to toggle duplicate for ${dup.brand}`}
+                              >
+                                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+                                  <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
+                                </div>
+                                <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
+                                  {isRemoved ? 'Removed' : 'Duplicate'}
+                                </span>
+                              </button>
+                            );
+                          });
+                        })}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -4114,9 +4132,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0">
-              <span className="font-bold text-[#4ADE80] text-xs">
-                {primaryLabel}: {primarySharePct}% &bull; {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}f
-              </span>
+              {step === 'CAPTURE' ? (
+                <span className="font-mono text-emerald-300 text-xs bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-800/40">
+                  {aisleSessions[lastCapturedAisle]?.capturedFileName || 'captured_photo.jpg'}
+                </span>
+              ) : (
+                <span className="font-bold text-[#4ADE80] text-xs">
+                  {primaryLabel}: {primarySharePct}% &bull; {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}f
+                </span>
+              )}
 
               {/* Bottom Quick Normal View Button for Easy Thumb Reach */}
               <button
