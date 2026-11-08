@@ -109,6 +109,7 @@ export interface AisleSessionData {
   naturalDimensions?: { width: number; height: number };
   removedDuplicates?: DuplicateMatch[];
   n8nStatus?: any;
+  rightEdgeGhostUrl?: string | null;
   timestamp?: string;
 }
 

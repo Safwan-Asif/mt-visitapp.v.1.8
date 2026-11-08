@@ -56,6 +56,53 @@ export function formatDiscrepancyLog(
   return discrepancies.join('; ');
 }
 
+/**
+ * Helper to slice the rightmost percentage strip (default 15%) of a captured shelf photo.
+ * Used for live viewfinder "ghost" onion-skin alignment when shooting adjacent bays.
+ */
+export function extractRightOverlapStrip(
+  imageUrl: string, 
+  overlapPct: number = 0.15
+): Promise<string> {
+  return new Promise((resolve) => {
+    if (!imageUrl) {
+      resolve('');
+      return;
+    }
+    const img = new Image();
+    if (!imageUrl.startsWith('data:') && !imageUrl.startsWith('blob:')) {
+      img.crossOrigin = 'anonymous';
+    }
+    img.onload = () => {
+      try {
+        const nw = img.naturalWidth || 800;
+        const nh = img.naturalHeight || 800;
+        const pct = Math.max(0.08, Math.min(0.30, overlapPct || 0.15));
+        const stripW = Math.max(10, Math.round(nw * pct));
+        const startX = nw - stripW;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = stripW;
+        canvas.height = nh;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve('');
+          return;
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, startX, 0, stripW, nh, 0, 0, stripW, nh);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) {
+        console.warn('Ghost strip extraction note:', e);
+        resolve('');
+      }
+    };
+    img.onerror = () => resolve('');
+    img.src = imageUrl;
+  });
+}
+
 export interface NormalizedN8nAuditOutput {
   success: boolean;
   annotated_image?: string;
@@ -877,6 +924,39 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   const [duplicateReviewStatus, setDuplicateReviewStatus] = useState<'pending' | 'removed' | 'kept'>('pending');
   const [isDuplicatePanelExpanded, setIsDuplicatePanelExpanded] = useState<boolean>(true);
   const [removedDuplicateBoxIds, setRemovedDuplicateBoxIds] = useState<Set<string>>(new Set());
+
+  // Ghost Alignment Overlay State for Next Bay (10-15% Right Slice of Previous Bay)
+  const [ghostOverlayUrl, setGhostOverlayUrl] = useState<string | null>(null);
+  const [showGhostOverlay, setShowGhostOverlay] = useState<boolean>(true);
+
+  // Previous bay session calculation for ghost overlay (Bay 2 uses Bay 1, Bay 3 uses Bay 2, etc.)
+  const allBayKeys = useMemo(() => Object.keys(aisleSessions), [aisleSessions]);
+  const currentBayIndex = useMemo(() => allBayKeys.indexOf(currentAisle), [allBayKeys, currentAisle]);
+  const previousBayKey = currentBayIndex > 0 ? allBayKeys[currentBayIndex - 1] : null;
+  const previousBaySession = previousBayKey ? aisleSessions[previousBayKey] : null;
+
+  // Dynamically extract the right 10-15% strip of the preceding bay as a ghost preview
+  useEffect(() => {
+    if (step !== 'CAPTURE') {
+      setGhostOverlayUrl(null);
+      return;
+    }
+
+    if (previousBaySession?.capturedPhotoUrl) {
+      let isMounted = true;
+      extractRightOverlapStrip(previousBaySession.capturedPhotoUrl, seamTolerance || 0.15)
+        .then((dataUrl) => {
+          if (isMounted) {
+            setGhostOverlayUrl(dataUrl || null);
+          }
+        });
+      return () => {
+        isMounted = false;
+      };
+    } else {
+      setGhostOverlayUrl(null);
+    }
+  }, [step, currentAisle, previousBaySession?.capturedPhotoUrl, seamTolerance]);
 
   // Image letterbox-free bounding rect tracking in Shelf Preview
   const shelfContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1798,6 +1878,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setShowPostCapturePrompt(false);
     autoCaptureTriggeredRef.current = false;
     levelHoldStartTimeRef.current = null;
+    setShowGhostOverlay(true);
 
     // Transmit the confirmed bay to n8n workflow only now
     const confirmedBayKey = lastCapturedAisle || currentAisle;
@@ -2508,6 +2589,38 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             {/* Soft edge darkening scrim */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
 
+            {/* Live Ghost Preview Overlay of Previous Bay Right Seam (Onion-Skin Alignment) */}
+            {ghostOverlayUrl && showGhostOverlay && (
+              <div 
+                style={{ width: `${seamTolerance * 100}%` }}
+                className="absolute inset-y-0 left-0 pointer-events-none z-15 overflow-hidden border-r-2 border-dashed border-emerald-400/90 shadow-2xl animate-fade-in"
+              >
+                {/* Semi-transparent ghost image with smooth screen blend */}
+                <img 
+                  src={ghostOverlayUrl}
+                  alt="Previous bay alignment ghost"
+                  className="w-full h-full object-cover opacity-50 mix-blend-screen filter contrast-125 brightness-110"
+                />
+
+                {/* Soft gradient darkening & alignment tint */}
+                <div className="absolute inset-0 bg-gradient-to-r from-emerald-950/40 via-transparent to-emerald-500/25 pointer-events-none" />
+
+                {/* Top Alignment Tag */}
+                <div className="absolute top-12 left-1 right-1 flex flex-col items-center">
+                  <span className="text-[8px] font-black uppercase tracking-wider text-emerald-300 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-emerald-400/50 shadow-md text-center leading-tight">
+                    Align {previousBaySession?.label || 'Bay 1'} Edge
+                  </span>
+                </div>
+
+                {/* Bottom Overlap Badge */}
+                <div className="absolute bottom-12 left-1 right-1 flex flex-col items-center">
+                  <span className="text-[7.5px] font-bold text-white bg-emerald-900/85 backdrop-blur-sm px-1.5 py-0.5 rounded border border-emerald-500/40 text-center">
+                    {Math.round(seamTolerance * 100)}% Ghost
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Camera Guidance: Level Line & Vertical Seam Markers (Drawn directly over live video) */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10">
               {/* Top Viewfinder Banner */}
@@ -2515,26 +2628,52 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-black/75 px-2.5 py-1 rounded-lg border border-emerald-500/40 backdrop-blur-md">
                   Target: {category} &bull; {currentSession?.label || 'Bay 1'}
                 </span>
-                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 backdrop-blur-md ${
-                  isLevel 
-                    ? 'text-emerald-400 bg-black/75 border-emerald-500/50' 
-                    : 'text-rose-400 bg-black/75 border-rose-500/50'
-                }`}>
-                  {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
-                </span>
+
+                <div className="flex items-center gap-1.5">
+                  {/* Ghost Guide Toggle Button (when adjacent bay exists) */}
+                  {ghostOverlayUrl && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowGhostOverlay((prev) => !prev);
+                      }}
+                      className={`px-2 py-0.5 rounded-lg border text-[9px] font-bold flex items-center gap-1 backdrop-blur-md transition-all cursor-pointer ${
+                        showGhostOverlay
+                          ? 'bg-emerald-500/25 border-emerald-400/60 text-emerald-300 shadow-sm'
+                          : 'bg-black/75 border-slate-600 text-slate-400'
+                      }`}
+                      title="Toggle Ghost Alignment Preview on/off"
+                    >
+                      <Layers size={10} />
+                      <span>Ghost {showGhostOverlay ? 'ON' : 'OFF'}</span>
+                    </button>
+                  )}
+
+                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 backdrop-blur-md ${
+                    isLevel 
+                      ? 'text-emerald-400 bg-black/75 border-emerald-500/50' 
+                      : 'text-rose-400 bg-black/75 border-rose-500/50'
+                  }`}>
+                    {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
+                  </span>
+                </div>
               </div>
 
               {/* Two Vertical Seam Overlap Zones (dynamically reflects seamTolerance) */}
-              <div 
-                style={{ width: `${seamTolerance * 100}%` }}
-                className="absolute top-10 bottom-10 left-0 bg-amber-500/15 border-r-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
-                title={`Left Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
-              >
-                <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
-                  Overlap
-                </span>
-                <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
-              </div>
+              {(!ghostOverlayUrl || !showGhostOverlay) && (
+                <div 
+                  style={{ width: `${seamTolerance * 100}%` }}
+                  className="absolute top-10 bottom-10 left-0 bg-amber-500/15 border-r-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
+                  title={`Left Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
+                >
+                  <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
+                    Overlap
+                  </span>
+                  <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
+                </div>
+              )}
+
               <div 
                 style={{ width: `${seamTolerance * 100}%` }}
                 className="absolute top-10 bottom-10 right-0 bg-amber-500/15 border-l-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
@@ -2571,8 +2710,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
               {/* Bottom Guidance Cue */}
               <div className="w-full flex items-center justify-center pointer-events-auto">
-                <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md">
-                  Keep 1 column of overlap inside the amber zone &bull; Tap shutter to snap
+                <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md text-center max-w-sm truncate">
+                  {ghostOverlayUrl && showGhostOverlay
+                    ? `Match shelf bottles on left with the ${previousBaySession?.label || 'Bay 1'} ghost • Tap shutter`
+                    : 'Keep 1 column of overlap inside the amber zone • Tap shutter to snap'}
                 </span>
               </div>
             </div>
