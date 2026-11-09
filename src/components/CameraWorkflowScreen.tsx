@@ -385,11 +385,14 @@ export function computeBayCrops(baysInOrder: AisleSession[]): Record<string, { s
 
 /** Rectangle of an image of size iw×ih fitted (object-contain) inside cw×ch. */
 function fitRect(cw: number, ch: number, iw: number, ih: number) {
-  if (!cw || !ch || !iw || !ih) return { left: 0, top: 0, width: cw, height: ch };
-  const scale = Math.min(cw / iw, ch / ih);
-  const width = iw * scale;
-  const height = ih * scale;
-  return { left: (cw - width) / 2, top: (ch - height) / 2, width, height };
+  const safeCw = cw > 0 ? cw : (typeof window !== 'undefined' ? window.innerWidth : 360);
+  const safeCh = ch > 0 ? ch : (typeof window !== 'undefined' ? window.innerHeight : 480);
+  const safeIw = iw > 0 ? iw : 3;
+  const safeIh = ih > 0 ? ih : 4;
+  const scale = Math.min(safeCw / safeIw, safeCh / safeIh);
+  const width = safeIw * scale;
+  const height = safeIh * scale;
+  return { left: (safeCw - width) / 2, top: (safeCh - height) / 2, width, height };
 }
 
 /**
@@ -1576,6 +1579,36 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       setShowAlignmentCheck(false);
       setPendingSeam(null);
       pendingDataUrlRef.current = dataUrl;
+
+      // Immediately persist captured photo into aisleSessions state so ghost guide and results preview work seamlessly
+      setAisleSessions((prev) => {
+        const existing = prev[targetAisle] || {
+          key: targetAisle,
+          label: `Bay ${Object.keys(prev).length + 1}`,
+          status: 'idle',
+          naturalDimensions: dims || { width: 800, height: 800 },
+          rawCounts: {},
+          counts: {},
+          originalAiCounts: {},
+          totalFacings: null,
+          boxes: [],
+          rawBoxes: [],
+          n8nStatus: null,
+          analysisStartTime: null,
+          analysisDurationSeconds: 0
+        };
+        return {
+          ...prev,
+          [targetAisle]: {
+            ...existing,
+            capturedFile: file || existing.capturedFile || null,
+            capturedPhotoUrl: dataUrl,
+            capturedFileName: file?.name || existing.capturedFileName || `${targetAisle}_capture.jpg`,
+            ...(dims ? { naturalDimensions: dims } : {})
+          }
+        };
+      });
+
       setPendingCapture({
         bayKey: targetAisle,
         file,
@@ -1680,7 +1713,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   };
 
   // Auto-capture frame execution from WebRTC video stream
-  const handleAutoCaptureTrigger = useCallback(() => {
+  const handleAutoCaptureTrigger = useCallback(async () => {
     if (!videoRef.current || !cameraStreamActive) {
       cameraInputRef.current?.click();
       return;
@@ -1688,8 +1721,32 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
     try {
       const video = videoRef.current;
-      const w = video.videoWidth || 1280;
-      const h = video.videoHeight || 720;
+      const stream = video.srcObject as MediaStream | null;
+      const track = stream?.getVideoTracks?.()?.[0];
+
+      // Attempt hardware ImageCapture API if supported for uncompressed sensor resolution
+      if (track && (window as any).ImageCapture) {
+        try {
+          const imageCapture = new (window as any).ImageCapture(track);
+          const blob = await imageCapture.takePhoto();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result as string);
+            r.readAsDataURL(blob);
+          });
+          const img = new Image();
+          img.onload = () => {
+            beginBayPreview(currentAisle, null, dataUrl, { width: img.naturalWidth, height: img.naturalHeight });
+          };
+          img.src = dataUrl;
+          return;
+        } catch (icErr) {
+          console.warn('Hardware ImageCapture note, using high-clarity canvas snapshot:', icErr);
+        }
+      }
+
+      const w = video.videoWidth || 1920;
+      const h = video.videoHeight || 1080;
       if (w === 0 || h === 0) {
         cameraInputRef.current?.click();
         return;
@@ -1706,7 +1763,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(video, 0, 0, w, h);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
 
       beginBayPreview(currentAisle, null, dataUrl, { width: canvas.width, height: canvas.height });
     } catch (err) {
@@ -1726,13 +1783,25 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     }
   };
 
-  // File Picker selected handler
+  // File Picker selected handler: reads full-resolution image data from device gallery/camera app
   const handlePhotoFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const objectUrl = URL.createObjectURL(file);
-    beginBayPreview(currentAisle, file, objectUrl, null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (!dataUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        beginBayPreview(currentAisle, file, dataUrl, { width: img.naturalWidth, height: img.naturalHeight });
+      };
+      img.onerror = () => {
+        beginBayPreview(currentAisle, file, dataUrl, null);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
     e.target.value = '';
   };
 
@@ -2447,31 +2516,46 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     );
   };
 
-  // Image source resolution for RESULTS tab
-  const activePhotoDisplay = resultsAisleView === 'ALL'
-    ? (capturedBaySessions.length > 1
-        ? (stitchedPanoramaUrl || (completedAisles[0] ? aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
-        : (completedAisles[0] ? aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
-    : viewSession?.capturedPhotoUrl || fallbackShelfPhoto;
+  // Image source resolution for RESULTS tab (guarantees a valid image is shown and never blank)
+  const activePhotoDisplay = useMemo(() => {
+    if (resultsAisleView === 'ALL') {
+      if (capturedBaySessions.length > 1) {
+        return stitchedPanoramaUrl || (capturedAisles[0] ? aisleSessions[capturedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto;
+      }
+      return (capturedAisles[0] ? aisleSessions[capturedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto;
+    }
+    return viewSession?.capturedPhotoUrl || viewSession?.annotatedPhotoUrl || (capturedAisles[0] ? aisleSessions[capturedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto;
+  }, [resultsAisleView, capturedBaySessions, stitchedPanoramaUrl, capturedAisles, aisleSessions, viewSession, fallbackShelfPhoto]);
 
-  const displayAnnotatedPhoto = showRawPhotoComparison
-    ? activePhotoDisplay
-    : resultsAisleView === 'ALL'
-    ? (capturedBaySessions.length > 1
-        ? (stitchedPanoramaUrl || (completedAisles[0] ? aisleSessions[completedAisles[0]]?.annotatedPhotoUrl || aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
-        : (completedAisles[0] ? aisleSessions[completedAisles[0]]?.annotatedPhotoUrl || aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
-    : viewSession?.annotatedPhotoUrl || viewSession?.capturedPhotoUrl || fallbackShelfPhoto;
+  const displayAnnotatedPhoto = useMemo(() => {
+    if (showRawPhotoComparison) return activePhotoDisplay;
+    if (resultsAisleView === 'ALL') {
+      if (capturedBaySessions.length > 1) {
+        return stitchedPanoramaUrl || (capturedAisles[0] ? aisleSessions[capturedAisles[0]]?.annotatedPhotoUrl || aisleSessions[capturedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto;
+      }
+      return (capturedAisles[0] ? aisleSessions[capturedAisles[0]]?.annotatedPhotoUrl || aisleSessions[capturedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto;
+    }
+    return viewSession?.annotatedPhotoUrl || viewSession?.capturedPhotoUrl || fallbackShelfPhoto;
+  }, [showRawPhotoComparison, activePhotoDisplay, resultsAisleView, capturedBaySessions, stitchedPanoramaUrl, capturedAisles, aisleSessions, viewSession, fallbackShelfPhoto]);
 
   const resolvedImgSrc = useMemo(() => {
-    if (!displayAnnotatedPhoto) return '';
-    // If it's a stitched data URL or blob, use directly
-    if (displayAnnotatedPhoto.startsWith('data:') || displayAnnotatedPhoto.startsWith('blob:')) {
-      return displayAnnotatedPhoto;
+    const rawSrc = displayAnnotatedPhoto || activePhotoDisplay || fallbackShelfPhoto;
+    if (!rawSrc) return fallbackShelfPhoto;
+
+    // Directly return base64 Data URLs, blob URLs, and local workspace image paths
+    if (
+      rawSrc.startsWith('data:') || 
+      rawSrc.startsWith('blob:') || 
+      rawSrc.startsWith('/') ||
+      rawSrc.startsWith('assets/')
+    ) {
+      return rawSrc;
     }
-    if (imgErrorLevel === 0) return toDirectDriveImageUrl(displayAnnotatedPhoto);
-    if (imgErrorLevel === 1) return toAlternativeDriveImageUrl(displayAnnotatedPhoto);
-    return activePhotoDisplay;
-  }, [displayAnnotatedPhoto, imgErrorLevel, activePhotoDisplay]);
+
+    if (imgErrorLevel === 0) return toDirectDriveImageUrl(rawSrc) || rawSrc;
+    if (imgErrorLevel === 1) return toAlternativeDriveImageUrl(rawSrc) || rawSrc;
+    return rawSrc || fallbackShelfPhoto;
+  }, [displayAnnotatedPhoto, activePhotoDisplay, imgErrorLevel, fallbackShelfPhoto]);
 
   // Lightbox Image resolution:
   // When in CAPTURE step, ALWAYS display the photo the user actually captured!
@@ -2615,23 +2699,29 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             {/* Previous-bay guide: the right edge of the last bay, faded over the left of the frame.
                 Lining it up keeps the overlap consistent and makes the overlap measurement reliable. */}
             {ghostGuideUrl && (() => {
-              const frame = cameraStreamActive && videoDims.w
+              const baseW = cameraStreamActive && videoDims.w && viewfinderSize.w ? viewfinderSize.w : 320;
+              const baseH = cameraStreamActive && videoDims.h && viewfinderSize.h ? viewfinderSize.h : 480;
+              const frame = cameraStreamActive && videoDims.w && viewfinderSize.w
                 ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
-                : { left: 0, top: 0, width: viewfinderSize.w, height: viewfinderSize.h };
+                : { left: 0, top: 0, width: baseW, height: baseH };
+              const overlayWidth = Math.max(80, Math.round((frame.width || baseW) * GHOST_GUIDE_FRAC));
+
               return (
                 <div
-                  className="absolute overflow-hidden pointer-events-none z-[5] border-r-2 border-dashed border-amber-400/90"
-                  style={{ left: frame.left, top: frame.top, width: frame.width * GHOST_GUIDE_FRAC, height: frame.height }}
+                  className="absolute top-0 bottom-0 left-0 overflow-hidden pointer-events-none z-[15] border-r-2 border-dashed border-amber-400 bg-amber-500/10 shadow-xl"
+                  style={{ width: `${overlayWidth}px` }}
                 >
                   <img
                     src={ghostGuideUrl}
-                    alt=""
-                    className="absolute top-0 right-0 h-full max-w-none opacity-45"
-                    style={{ width: frame.width, objectFit: 'fill' }}
+                    alt="Previous bay overlay guide"
+                    className="absolute top-0 right-0 h-full max-w-none opacity-65 filter brightness-110 contrast-110"
+                    style={{ width: `${Math.max(300, frame.width || baseW)}px`, objectFit: 'fill' }}
                   />
-                  <span className="absolute bottom-12 left-1 right-1 text-center text-[9px] font-black uppercase tracking-tight text-amber-200 bg-black/80 px-1 py-0.5 rounded border border-amber-500/40">
-                    Line up with {aisleSessions[ghostGuideBayKey!]?.label || 'previous bay'}
-                  </span>
+                  <div className="absolute top-12 left-1 right-1 bg-black/90 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/90 shadow-md flex items-center justify-center text-center">
+                    <span className="text-[9px] font-black uppercase tracking-tight text-amber-300">
+                      Align with {aisleSessions[ghostGuideBayKey!]?.label || 'Bay 1'}
+                    </span>
+                  </div>
                 </div>
               );
             })()}
@@ -2764,7 +2854,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               const prevKey = previousCapturedBayKey(pc.bayKey);
               const prevSession = prevKey ? aisleSessions[prevKey] : null;
               const prevLabel = prevSession?.label || 'previous bay';
-              const frame = fitRect(viewfinderSize.w, viewfinderSize.h, pc.width || 3, pc.height || 4);
+              const containerW = viewfinderSize.w > 0 ? viewfinderSize.w : (viewfinderRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 360));
+              const containerH = viewfinderSize.h > 0 ? viewfinderSize.h : (viewfinderRef.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 480));
+              const frame = fitRect(containerW, containerH, pc.width || 3, pc.height || 4);
               const seam = pendingSeam;
               const ovPct = seam ? seam.overlapFracRight * 100 : 0;
               const cutPct = seam ? seam.cutFracRight * 100 : 0;

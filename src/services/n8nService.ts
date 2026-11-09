@@ -1075,16 +1075,16 @@ export async function sendAuditToN8n(
     clearTimeout(proxyTimeoutId);
 
     if (proxyResponse.ok) {
-      console.info('[sendAuditToN8n] Successfully received analysis from n8n via server proxy');
+      console.info('[sendAuditToN8n] Received analysis response from n8n via server proxy');
       return await processFetchResponse(proxyResponse, primaryEndpoint);
     } else {
-      console.warn(`[sendAuditToN8n] Server proxy returned HTTP ${proxyResponse.status}, trying fallback connection...`);
+      console.warn(`[sendAuditToN8n] Server proxy returned HTTP ${proxyResponse.status}, trying fallback mode...`);
     }
   } catch (proxyErr: any) {
-    console.warn('[sendAuditToN8n] Server proxy note (falling back to direct):', proxyErr?.message);
+    console.warn('[sendAuditToN8n] Server proxy connection notice:', proxyErr?.message);
   }
 
-  // Attempt 1: Direct Multipart Form-Data to Primary / Test Endpoint
+  // Attempt 1: Direct Multipart Form-Data to Primary / Test Endpoint (if server proxy route unavailable)
   const endpointsToTry = [primaryEndpoint];
   if (testEndpoint !== primaryEndpoint) {
     endpointsToTry.push(testEndpoint);
@@ -1106,18 +1106,15 @@ export async function sendAuditToN8n(
       if (response.ok) {
         return await processFetchResponse(response, targetUrl);
       } else if (response.status === 404 || response.status === 405) {
-        // Workflow inactive or endpoint mismatch; try next endpoint in loop
-        console.warn(`[sendAuditToN8n] ${targetUrl} returned HTTP ${response.status}, trying fallback endpoint...`);
+        console.warn(`[sendAuditToN8n] ${targetUrl} returned HTTP ${response.status}, trying test webhook...`);
         continue;
       } else {
-        // If 400/413/422 or other status, try JSON POST payload fallback before giving up
         const errorText = await response.text().catch(() => '');
         if (/Workflow is not active/i.test(errorText) && targetUrl !== testEndpoint) {
           console.warn('[sendAuditToN8n] Workflow inactive notice on primary webhook, attempting test webhook...');
           continue;
         }
 
-        // Try JSON POST fallback
         try {
           const jsonController = new AbortController();
           const jsonTimeoutId = setTimeout(() => jsonController.abort(), 30000);
@@ -1164,12 +1161,11 @@ export async function sendAuditToN8n(
             return await processFetchResponse(jsonResponse, targetUrl);
           }
         } catch (jsonErr) {
-          console.warn('[sendAuditToN8n] JSON POST fallback exception:', jsonErr);
+          console.warn('[sendAuditToN8n] Direct JSON POST fallback exception:', jsonErr);
         }
       }
     } catch (err: any) {
-      console.error(`[sendAuditToN8n] CRITICAL FETCH ERROR for ${targetUrl}:`, err);
-      console.warn(`[sendAuditToN8n] Fetch error message:`, err?.message);
+      console.warn(`[sendAuditToN8n] Direct fetch notice for ${targetUrl} (handled gracefully):`, err?.message || err);
     }
   }
 
