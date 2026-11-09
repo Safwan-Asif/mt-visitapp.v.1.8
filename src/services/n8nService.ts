@@ -50,6 +50,14 @@ export interface N8nPayloadMetadata {
   posmWobblers: boolean;
   needsReview?: boolean;
   timestamp: string;
+  /** Overlap with the previous bay. n8n drops boxes whose centre is left of cutFrac × image width. */
+  seam?: {
+    previousBay: string;
+    cutFrac: number;
+    overlapFrac: number;
+    confidence: string;
+    method: string;
+  };
 }
 
 export interface N8nTransmissionResult {
@@ -901,6 +909,15 @@ export async function sendAuditToN8n(
   formData.append('timestamp', metadata.timestamp);
   formData.append('device_platform', 'mobile_web');
   formData.append('app_url', 'https://mt-app-v-sf1.vercel.app/');
+  formData.append('bay_key', metadata.aisle || '');
+  formData.append('bay_label', metadata.aisleLabel || '');
+  if (metadata.seam && metadata.seam.cutFrac > 0) {
+    formData.append('seam_cut_frac', metadata.seam.cutFrac.toFixed(4));
+    formData.append('seam_overlap_frac', metadata.seam.overlapFrac.toFixed(4));
+    formData.append('seam_previous_bay', metadata.seam.previousBay);
+    formData.append('seam_confidence', metadata.seam.confidence);
+    formData.append('seam_method', metadata.seam.method);
+  }
 
   const payloadSummary = {
     endpoint: primaryEndpoint,
@@ -1040,7 +1057,16 @@ export async function sendAuditToN8n(
           posm_wobblers: metadata.posmWobblers,
           needs_review: metadata.needsReview,
           timestamp: metadata.timestamp,
-          app_url: 'https://mt-app-v-sf1.vercel.app/'
+          app_url: 'https://mt-app-v-sf1.vercel.app/',
+          bay_key: metadata.aisle || '',
+          bay_label: metadata.aisleLabel || '',
+          ...(metadata.seam && metadata.seam.cutFrac > 0 ? {
+            seam_cut_frac: metadata.seam.cutFrac.toFixed(4),
+            seam_overlap_frac: metadata.seam.overlapFrac.toFixed(4),
+            seam_previous_bay: metadata.seam.previousBay,
+            seam_confidence: metadata.seam.confidence,
+            seam_method: metadata.seam.method
+          } : {})
         }
       }),
       signal: proxyController.signal

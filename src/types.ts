@@ -108,6 +108,15 @@ export interface AisleSessionData {
   rawBoxes?: any[];
   naturalDimensions?: { width: number; height: number };
   removedDuplicates?: DuplicateMatch[];
+  seam?: {
+    leftBayKey: string;
+    rightBayKey: string;
+    overlapFracRight: number;
+    cutFracLeft: number;
+    cutFracRight: number;
+    confidence: string;
+    method: string;
+  };
   n8nStatus?: any;
   rightEdgeGhostUrl?: string | null;
   timestamp?: string;

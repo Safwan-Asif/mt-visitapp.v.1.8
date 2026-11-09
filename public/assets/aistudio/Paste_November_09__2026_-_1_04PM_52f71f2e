@@ -1,0 +1,2793 @@
+diff --git a/README.md b/README.md
+index ce867b7..dbeb6df 100644
+--- a/README.md
++++ b/README.md
+@@ -41,3 +41,22 @@ The included `vercel.json` ensures:
+ - **SPA Rewrites**: All paths rewrite to `/index.html` preventing 404 errors on deep page refreshes.
+ - **Immutable Asset Caching**: High-performance HTTP caching for hashed Vite assets (`/assets/*`).
+ - **Clean Bundling**: Hashed image assets (Edible Oil, Flour, Pasta shelves) bundled into `dist/assets/`.
++
++---
++
++## Bay Overlap De-duplication (multi-bay shelves)
++
++Reps shoot bays left to right, so the right edge of Bay N reappears at the left edge of Bay N+1. Each bottle is counted by exactly one bay:
++
++1. **Guide while shooting** – from Bay 2 on, the right 30% of the previous bay is shown faded on the left of the viewfinder. The viewfinder shows the full frame that will be saved (no hidden edges). Level-triggered auto-capture is off while the guide is shown.
++2. **Review before upload** – nothing is sent to n8n/Roboflow until the rep taps **Upload**. For Bay 2+, the app measures the overlap with the previous photo on the phone (`src/services/seamAlignment.ts`, ~150 ms, no extra Roboflow calls), shades it, and draws a **count line** in the middle of it. The rep can drag the overlap edge and tap **Check** to overlay the previous bay. Low-confidence measurements ask the rep to set the edge.
++3. **Counting** – Bay N keeps bottles whose box centre is left of its count line; Bay N+1 keeps bottles right of it. Bottles in the overlap are whole in both photos, so the cut never slices a bottle. Applied on POSM submit; on the Results bay tabs, red ✕ boxes are counted in the neighbouring bay (tap to count here too), green boxes are restored.
++4. **Records** – the Sheets discrepancy log gets an `[Overlap: Bay 1|Bay 2: 28% overlap (auto/high), 4 counted once]` note; `originalAiCounts` is the AI count after overlap removal, so only real rep edits appear as manual overrides. Each bay's `seam` is saved with the audit.
++
++### n8n (optional, recommended)
++
++Bay 2+ uploads include `bay_key`, `seam_cut_frac`, `seam_overlap_frac`, `seam_previous_bay`, `seam_confidence` and `seam_method`. The updated **Parse CV Output & Facing Counts** node in `n8n-mt-visit-audit-workflow.json` drops boxes left of `seam_cut_frac × image width` from `counts`, flags them (`excluded_by_seam`), and returns `counts_before_seam` + `seam_applied`. The app works with or without this node change.
++
++### Tuning
++
++Confidence thresholds and the guide width live at the top of `src/services/seamAlignment.ts` (`SCORE_*`, `MARGIN_*`, `GHOST_GUIDE_FRAC`). Tune them against real bay pairs with hand counts.
+diff --git a/n8n-mt-visit-audit-workflow.json b/n8n-mt-visit-audit-workflow.json
+index 79d40e3..93fe37b 100644
+--- a/n8n-mt-visit-audit-workflow.json
++++ b/n8n-mt-visit-audit-workflow.json
+@@ -145,7 +145,7 @@
+     },
+     {
+       "parameters": {
+-        "jsCode": "// Extract CV model predictions and original request payload\nconst webhookData = $('Webhook Trigger (Multipart)').first().json.body || $('Webhook Trigger (Multipart)').first().json;\nconst cvResponse = $input.first().json;\n\n// Image geometry (defaulting to 1920x1080 if not returned by inference model)\nconst imgWidth = cvResponse.image?.width || 1920;\nconst imgHeight = cvResponse.image?.height || 1080;\n\n// Brand color mapping matching QFI corporate visual identity\nconst BRAND_COLORS = {\n  'YARA': '#4B0082',\n  'ADEERA': '#16A34A',\n  'OTHER': '#DC2626',\n  'ZAIN': '#2563EB',\n  'AL RAI': '#059669',\n  'DAWI': '#9333EA'\n};\n\n// Initialize counts\nconst counts = {\n  'YARA': 0,\n  'ZAIN': 0,\n  'AL RAI': 0,\n  'ADEERA': 0,\n  'DAWI': 0,\n  'OTHER': 0\n};\n\nconst predictions = cvResponse.predictions || [];\nconst boxes = [];\n\n// Process each bounding box detected by the Computer Vision model\npredictions.forEach((pred, index) => {\n  const rawClass = (pred.class || 'OTHER').toUpperCase();\n  const matchedBrand = Object.keys(counts).includes(rawClass) ? rawClass : 'OTHER';\n  \n  counts[matchedBrand] = (counts[matchedBrand] || 0) + 1;\n\n  const left = Math.round(pred.x - pred.width / 2);\n  const top = Math.round(pred.y - pred.height / 2);\n  const width = Math.round(pred.width);\n  const height = Math.round(pred.height);\n\n  boxes.push({\n    id: `box-${index + 1}`,\n    brand: matchedBrand,\n    confidence: Number((pred.confidence || 0.99).toFixed(2)),\n    x: left,\n    y: top,\n    width: width,\n    height: height,\n    color: BRAND_COLORS[matchedBrand] || '#DC2626',\n    thickness: 5,\n    fontSize: 18,\n    labelBackground: BRAND_COLORS[matchedBrand] || '#DC2626',\n    label: matchedBrand\n  });\n});\n\nconst totalFacings = Object.values(counts).reduce((a, b) => a + b, 0);\nconst needsReview = predictions.some(p => (p.confidence || 1) < 0.65);\n\nconst replyText = `QFI Shelf Audit\\nTotal facings: ${totalFacings}\\nYARA: ${counts['YARA']}\\nZAIN: ${counts['ZAIN']}\\nAL RAI: ${counts['AL RAI']}\\nADEERA: ${counts['ADEERA']}\\nDAWI: ${counts['DAWI']}\\nOTHER: ${counts['OTHER']}\\nNeeds review: ${needsReview ? 'Yes' : 'No'}`;\n\nreturn [{\n  json: {\n    success: true,\n    chatId: 8223336613,\n    replyText,\n    total_facings: totalFacings,\n    counts,\n    boxes,\n    needs_review: needsReview,\n    annotation_style: {\n      thickness: 5,\n      fontSize: 18,\n      solidLabelBackground: true,\n      labelContent: 'brand only'\n    }\n  }\n}];"
++        "jsCode": "// Extract CV model predictions and original request payload\nconst webhookData = $('Webhook Trigger (Multipart)').first().json.body || $('Webhook Trigger (Multipart)').first().json;\nconst cvResponse = $input.first().json;\n\n// Image geometry (defaulting to 1920x1080 if not returned by inference model)\nconst imgWidth = cvResponse.image?.width || 1920;\nconst imgHeight = cvResponse.image?.height || 1080;\n\n// Brand color mapping matching QFI corporate visual identity\nconst BRAND_COLORS = {\n  'YARA': '#4B0082',\n  'ADEERA': '#16A34A',\n  'OTHER': '#DC2626',\n  'ZAIN': '#2563EB',\n  'AL RAI': '#059669',\n  'DAWI': '#9333EA'\n};\n\n// Initialize counts\nconst counts = {\n  'YARA': 0,\n  'ZAIN': 0,\n  'AL RAI': 0,\n  'ADEERA': 0,\n  'DAWI': 0,\n  'OTHER': 0\n};\n\nconst predictions = cvResponse.predictions || [];\nconst boxes = [];\n\n// Bay overlap (sent by the app for Bay 2+): the left part of this photo up to the count line\n// was already counted in the previous bay. Boxes whose centre is left of the line are returned\n// flagged and are NOT counted. seam_cut_frac is a fraction of the image width.\nconst seamCutFrac = Number(webhookData.seam_cut_frac);\nconst seamActive = Number.isFinite(seamCutFrac) && seamCutFrac > 0 && seamCutFrac < 1;\nconst seamCutX = seamActive ? seamCutFrac * imgWidth : 0;\nconst countsBeforeSeam = { ...counts };\nlet excludedBySeam = 0;\n\n// Process each bounding box detected by the Computer Vision model\npredictions.forEach((pred, index) => {\n  const rawClass = (pred.class || 'OTHER').toUpperCase();\n  const matchedBrand = Object.keys(counts).includes(rawClass) ? rawClass : 'OTHER';\n  \n  countsBeforeSeam[matchedBrand] = (countsBeforeSeam[matchedBrand] || 0) + 1;\n  const excluded = seamActive && pred.x < seamCutX; // pred.x is the box centre\n  if (excluded) excludedBySeam++;\n  else counts[matchedBrand] = (counts[matchedBrand] || 0) + 1;\n\n  const left = Math.round(pred.x - pred.width / 2);\n  const top = Math.round(pred.y - pred.height / 2);\n  const width = Math.round(pred.width);\n  const height = Math.round(pred.height);\n\n  boxes.push({\n    id: `box-${index + 1}`,\n    brand: matchedBrand,\n    confidence: Number((pred.confidence || 0.99).toFixed(2)),\n    x: left,\n    y: top,\n    width: width,\n    height: height,\n    color: BRAND_COLORS[matchedBrand] || '#DC2626',\n    thickness: 5,\n    fontSize: 18,\n    labelBackground: BRAND_COLORS[matchedBrand] || '#DC2626',\n    label: matchedBrand,\n    excluded_by_seam: excluded\n  });\n});\n\nconst totalFacings = Object.values(counts).reduce((a, b) => a + b, 0);\nconst needsReview = predictions.some(p => (p.confidence || 1) < 0.65);\nconst seamLine = seamActive ? `\\nOverlap with ${webhookData.seam_previous_bay || 'previous bay'}: ${excludedBySeam} counted there` : '';\n\nconst replyText = `QFI Shelf Audit\\nTotal facings: ${totalFacings}\\nYARA: ${counts['YARA']}\\nZAIN: ${counts['ZAIN']}\\nAL RAI: ${counts['AL RAI']}\\nADEERA: ${counts['ADEERA']}\\nDAWI: ${counts['DAWI']}\\nOTHER: ${counts['OTHER']}\\nNeeds review: ${needsReview ? 'Yes' : 'No'}${seamLine}`;\n\nreturn [{\n  json: {\n    success: true,\n    chatId: 8223336613,\n    replyText,\n    total_facings: totalFacings,\n    counts,\n    boxes,\n    needs_review: needsReview,\n    bay_key: webhookData.bay_key || null,\n    seam_applied: seamActive,\n    seam_cut_frac: seamActive ? seamCutFrac : null,\n    counts_before_seam: countsBeforeSeam,\n    excluded_by_seam: excludedBySeam,\n    // Only report the size when the model returned it (the app trusts this for box placement)\n    ...(cvResponse.image?.width && cvResponse.image?.height ? { image: { width: cvResponse.image.width, height: cvResponse.image.height } } : {}),\n    annotation_style: {\n      thickness: 5,\n      fontSize: 18,\n      solidLabelBackground: true,\n      labelContent: 'brand only'\n    }\n  }\n}];"
+       },
+       "name": "Parse CV Output & Facing Counts",
+       "type": "n8n-nodes-base.code",
+diff --git a/src/components/CameraWorkflowScreen.tsx b/src/components/CameraWorkflowScreen.tsx
+index b00e196..bb0042a 100644
+--- a/src/components/CameraWorkflowScreen.tsx
++++ b/src/components/CameraWorkflowScreen.tsx
+@@ -26,6 +26,13 @@ import {
+   toAlternativeDriveImageUrl
+ } from '../services/googleSheetsService';
+ import { getAuditCoordinates, GeoLocationResult } from '../services/geolocationService';
++import {
++  SeamInfo,
++  buildSeam,
++  estimateSeam,
++  computeSeamExclusions,
++  GHOST_GUIDE_FRAC
++} from '../services/seamAlignment';
+ import { useTheme } from '../ThemeContext';
+ import { LiveLocationBadge } from './LiveLocationBadge';
+ 
+@@ -66,6 +73,10 @@ export interface NormalizedN8nAuditOutput {
+   boxes: any[];
+   meta?: any;
+   dimensions?: { width: number; height: number };
++  /** True only when n8n reported the image size (not guessed from box extents). */
++  dimensionsExplicit?: boolean;
++  /** True when n8n already dropped the boxes left of the seam (seam-aware parse node). */
++  seamApplied?: boolean;
+ }
+ 
+ /**
+@@ -108,7 +119,13 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
+     totalFacings = Number(target.total_facings);
+   }
+ 
+-  const rawCounts = (target?.counts && typeof target.counts === 'object') ? target.counts : {};
++  // A seam-aware n8n returns de-duplicated `counts` plus `counts_before_seam`. The app applies
++  // the seam itself (so the rep can review and restore bottles), so it starts from the full counts.
++  const seamApplied = Boolean(target?.seam_applied);
++  const countsSource = seamApplied && target?.counts_before_seam && typeof target.counts_before_seam === 'object'
++    ? target.counts_before_seam
++    : target?.counts;
++  const rawCounts = (countsSource && typeof countsSource === 'object') ? countsSource : {};
+   const catKey = category || 'Edible Oil';
+   const standardBrands = CATEGORY_BRANDS[catKey] || ['YARA', 'ZAIN', 'ADEERA', 'AL RAI', 'DAWI', 'OTHER'];
+ 
+@@ -131,7 +148,7 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
+     }
+   }
+ 
+-  if (totalFacings === 0 && target?.total_facings === undefined && target?.totalFacings === undefined) {
++  if (seamApplied || (totalFacings === 0 && target?.total_facings === undefined && target?.totalFacings === undefined)) {
+     totalFacings = Object.values(counts).reduce((acc, v) => acc + (v ?? 0), 0);
+   }
+ 
+@@ -172,6 +189,8 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
+     height = height || rawObj?.imagemediametadata?.height || rawObj?.imageMediaMetadata?.height || rawObj?.image?.height || rawObj?.meta?.height;
+   }
+ 
++  const dimensionsExplicit = Boolean(width && height);
++
+   // Fallback: deduce from max bounding box extent if boxes exist
+   if ((!width || !height) && boxes.length > 0) {
+     const maxBoxX = Math.max(...boxes.map((b: any) => (b.x || 0) + (b.width || 0)));
+@@ -191,7 +210,9 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
+     replyText,
+     boxes,
+     meta: target?.meta,
+-    dimensions: width && height ? { width: Number(width), height: Number(height) } : undefined
++    dimensions: width && height ? { width: Number(width), height: Number(height) } : undefined,
++    dimensionsExplicit,
++    seamApplied
+   };
+ }
+ 
+@@ -215,6 +236,12 @@ export interface AisleSession {
+   boxes: BoundingBox[];
+   rawBoxes: any[];
+   removedDuplicates?: DuplicateMatch[];
++  /** Seam with the previous (left) bay — measured on capture, confirmed by the rep before upload. */
++  seam?: SeamInfo | null;
++  /** True when the photo was taken with the previous-bay guide visible in the viewfinder. */
++  shotWithGuide?: boolean;
++  /** AI counts after the overlap with neighbouring bays is removed (baseline for the discrepancy log). */
++  seamAdjustedCounts?: Record<string, number>;
+   n8nStatus: any;
+   analysisStartTime: number | null;
+   analysisDurationSeconds: number;
+@@ -222,300 +249,85 @@ export interface AisleSession {
+ }
+ 
+ // ============================================================================
+-// CROSS-BAY DUPLICATE DETECTION FOR OVERLAPPING SHELF PHOTOS
++// CROSS-BAY OVERLAP DE-DUPLICATION (measured seams — see services/seamAlignment.ts)
+ // ============================================================================
+ 
+-/**
+- * Default strip percentage for adjacent bay seam overlap (default 15% = 0.15, range 8%–35%).
+- * Compares boundary regions using Consensus Horizontal Translation Clustering.
+- */
+-export const DEFAULT_STRIP_PCT = 0.15;
+-export const STRIP_PCT = DEFAULT_STRIP_PCT;
++/** Box ids from n8n ("box-1", "box-2", …) repeat in every bay, so ids are namespaced per bay. */
++export const bayBoxId = (bayKey: string, box: any, index: number) =>
++  `${bayKey}:${String(box?.id ?? `idx-${index}`)}`;
+ 
+-/**
+- * Vertical alignment tolerance multiplier (default 50% = 0.50).
+- * Two shelf items are considered matching if the difference between their normalized center Y coordinates
+- * is within 50% of the maximum normalized height of the two boxes:
+- * Math.abs(rightNormCenterY - leftNormCenterY) <= Math.max(rightNormH, leftNormH) * Y_TOLERANCE
+- */
+-export const Y_TOLERANCE = 0.50;
++/** Frame width the bay's boxes are expressed in. */
++const bayFrameWidth = (bay: AisleSession) => bay.naturalDimensions?.width || 800;
+ 
+ /**
+- * COORDINATE SYSTEM DETERMINATION & NORMALIZATION:
+- * Confirmed from real n8n webhook implementation (n8n-mt-visit-audit-workflow.json, lines 148-168):
+- *
+- *   const left = Math.round(pred.x - pred.width / 2);
+- *   const top = Math.round(pred.y - pred.height / 2);
+- *   const width = Math.round(pred.width);
+- *   const height = Math.round(pred.height);
+- *   boxes.push({ id: `box-${index + 1}`, brand: matchedBrand, x: left, y: top, width, height, ... });
+- *
+- * Findings:
+- * 1. box.x and box.y delivered in webhook responses are TOP-LEFT CORNERS, NOT box centres.
+- * 2. Cameras can deliver different resolutions per bay (e.g. 720x1280 vs 960x1280).
+- *    To ensure robust matching, we normalize all bounding boxes into unit fractions [0.0, 1.0]
+- *    using each bay's own measured resolution:
+- *      normCenterX = (box.x + box.width / 2) / bayWidth
+- *      normCenterY = (box.y + box.height / 2) / bayHeight
+- * 3. Boundary Sorting: Left bay sorted right-to-left (outer edge first); Right bay sorted left-to-right (outer edge first).
+- * 4. Horizontal Pan Displacement: deltaX = normCenterX_left - normCenterX_right.
+- *    All true duplicate bottles across shelf tiers share the same physical camera shift.
+- * 5. Consensus Clustering: Automatically rejects repeating brand bottles deeper in the bay whose displacement deviates from the seam.
+- * 6. Single-bottle fallback for split/crop tests.
++ * Builds per-bay reports of boxes that belong to the neighbouring bay, using the
++ * dividing line in the middle of each measured overlap. Bays must be in
++ * left-to-right order. A bay only gets a left seam if it was shot right after its
++ * left neighbour (the seam's leftBayKey must match).
+  */
++export function buildSeamDuplicateReports(baysInOrder: AisleSession[]): Record<string, BayDuplicateReport> {
++  const reports: Record<string, BayDuplicateReport> = {};
++  baysInOrder.forEach((bay) => {
++    reports[bay.key] = { bayKey: bay.key, bayLabel: bay.label, hasDuplicates: false, duplicates: [] };
++  });
+ 
+-/**
+- * Detects duplicate bottle detections occurring at the overlapping boundaries
+- * of adjacent bays captured left-to-right using Edge-Anchored Consensus Translation Clustering.
+- *
+- * Takes sessions in aisle order, evaluates adjacent pairs, and flags duplicate boxes
+- * on the RIGHT bay only so facings are not inflated.
+- *
+- * Returns a Record<string, BayDuplicateReport> keyed by bayKey.
+- */
+-interface BottleBoxNorm {
+-  raw: any;
+-  normX: number;
+-  normRight: number;
+-  normCenterX: number;
+-  normCenterY: number;
+-  normW: number;
+-  normH: number;
+-  brand: string;
++  const seamBays = baysInOrder.map((bay) => ({
++    key: bay.key,
++    label: bay.label,
++    boxes: (bay.rawBoxes && bay.rawBoxes.length > 0 ? bay.rawBoxes : bay.boxes || []).map((b: any, i: number) => ({
++      ...b,
++      __id: bayBoxId(bay.key, b, i)
++    })),
++    frameWidth: bayFrameWidth(bay),
++    seam: bay.seam || null
++  }));
++
++  for (const ex of computeSeamExclusions(seamBays)) {
++    const box = ex.box;
++    const report = reports[ex.bayKey];
++    report.duplicates.push({
++      boxId: box.__id,
++      brand: ex.brand,
++      x: typeof box.x === 'number' ? box.x : 0,
++      y: typeof box.y === 'number' ? box.y : 0,
++      width: typeof box.width === 'number' ? box.width : 0,
++      height: typeof box.height === 'number' ? box.height : 0,
++      confidence: box.confidence,
++      matchedWithBoxId: '',
++      leftBayKey: ex.side === 'left-edge' ? ex.otherBayKey : ex.bayKey,
++      rightBayKey: ex.side === 'left-edge' ? ex.bayKey : ex.otherBayKey
++    });
++    report.hasDuplicates = true;
++  }
++  return reports;
+ }
+ 
+ /**
+- * Detects duplicate bottle detections occurring at adjacent bay seams using
+- * OUTER EDGE BOTTLE ALIGNMENT (Row-by-Row 1st/2nd Edge Bottle Matching).
+- *
+- * 1. Groups bottles in Bay 1 and Bay 2 into horizontal shelf tiers/rows by normCenterY.
+- * 2. On each shelf tier:
+- *    - Left Bay (Bay 1): Selects the 1 rightmost bottle (max normCenterX).
+- *    - Right Bay (Bay 2): Selects the 1st leftmost bottle (min normCenterX) AND 2nd leftmost bottle.
+- * 3. Compares the 1st (and 2nd) leftmost bottle of Bay 2 against the rightmost bottle of Bay 1 on that tier.
+- * 4. Flags matched bottles in Bay 2 as duplicates.
+- *
+- * Zero sliders required, zero reliance on photo width percentages, 100% automated & tamper-proof.
++ * Visible slice of each bay in the joined panorama (fractions of photo width):
++ * each bay is shown from its left count line to its right count line, so the
++ * panorama has no repeated shelf area.
+  */
+-export function detectCrossBayDuplicates(
+-  aisleSessions: any[] | Record<string, any>,
+-  seamTolerance: number = DEFAULT_STRIP_PCT,
+-  yTolerance: number = Y_TOLERANCE
+-): Record<string, BayDuplicateReport> {
+-  const sessionsList = Array.isArray(aisleSessions)
+-    ? aisleSessions
+-    : Object.values(aisleSessions);
+-
+-  // Filter to captured bays in aisle order
+-  const capturedBays = sessionsList.filter(
+-    (b) => Boolean(b.capturedPhotoUrl || b.annotatedPhotoUrl || b.status === 'done')
+-  );
+-
+-  const reports: Record<string, BayDuplicateReport> = {};
+-
+-  // Initialize empty report for every captured bay
+-  capturedBays.forEach((bay) => {
+-    reports[bay.key] = {
+-      bayKey: bay.key,
+-      bayLabel: bay.label,
+-      hasDuplicates: false,
+-      duplicates: []
+-    };
++export function computeBayCrops(baysInOrder: AisleSession[]): Record<string, { start: number; end: number }> {
++  const crops: Record<string, { start: number; end: number }> = {};
++  baysInOrder.forEach((bay, i) => {
++    const prev = baysInOrder[i - 1];
++    const next = baysInOrder[i + 1];
++    const leftSeam = prev && bay.seam && bay.seam.leftBayKey === prev.key ? bay.seam : null;
++    const rightSeam = next && next.seam && next.seam.leftBayKey === bay.key ? next.seam : null;
++    const start = leftSeam ? leftSeam.cutFracRight : 0;
++    const end = rightSeam ? rightSeam.cutFracLeft : 1;
++    crops[bay.key] = end - start > 0.05 ? { start, end } : { start: 0, end: 1 };
+   });
++  return crops;
++}
+ 
+-  if (capturedBays.length < 2) {
+-    return reports;
+-  }
+-
+-  // Iterate over adjacent pairs of bays: (Bay 1, Bay 2), (Bay 2, Bay 3), etc.
+-  for (let i = 0; i < capturedBays.length - 1; i++) {
+-    const leftBay = capturedBays[i];
+-    const rightBay = capturedBays[i + 1];
+-
+-    const leftBoxes: any[] = leftBay.boxes && leftBay.boxes.length > 0 
+-      ? leftBay.boxes 
+-      : (leftBay.rawBoxes || []);
+-    const rightBoxes: any[] = rightBay.boxes && rightBay.boxes.length > 0 
+-      ? rightBay.boxes 
+-      : (rightBay.rawBoxes || []);
+-
+-    if (leftBoxes.length === 0 || rightBoxes.length === 0) continue;
+-
+-    // Use specific bay naturalDimensions; fall back to max coordinate extent if available
+-    const leftBayWidth = leftBay.naturalDimensions?.width || Math.max(...leftBoxes.map((b) => (b.x || 0) + (b.width || 0)), 720);
+-    const leftBayHeight = leftBay.naturalDimensions?.height || Math.max(...leftBoxes.map((b) => (b.y || 0) + (b.height || 0)), 1280);
+-
+-    const rightBayWidth = rightBay.naturalDimensions?.width || Math.max(...rightBoxes.map((b) => (b.x || 0) + (b.width || 0)), 960);
+-    const rightBayHeight = rightBay.naturalDimensions?.height || Math.max(...rightBoxes.map((b) => (b.y || 0) + (b.height || 0)), 1280);
+-
+-    // Normalize left bay boxes
+-    const leftNormalized: BottleBoxNorm[] = leftBoxes.map((b) => {
+-      const w = b.width || 40;
+-      const h = b.height || 80;
+-      const x = b.x ?? 0;
+-      const y = b.y ?? 0;
+-      const centerX = x + w / 2;
+-      const centerY = y + h / 2;
+-      return {
+-        raw: b,
+-        normX: x / leftBayWidth,
+-        normRight: (x + w) / leftBayWidth,
+-        normCenterX: centerX / leftBayWidth,
+-        normCenterY: centerY / leftBayHeight,
+-        normW: w / leftBayWidth,
+-        normH: h / leftBayHeight,
+-        brand: (b.brand || b.label || 'OTHER').toUpperCase().trim()
+-      };
+-    });
+-
+-    // Normalize right bay boxes
+-    const rightNormalized: BottleBoxNorm[] = rightBoxes.map((b) => {
+-      const w = b.width || 40;
+-      const h = b.height || 80;
+-      const x = b.x ?? 0;
+-      const y = b.y ?? 0;
+-      const centerX = x + w / 2;
+-      const centerY = y + h / 2;
+-      return {
+-        raw: b,
+-        normX: x / rightBayWidth,
+-        normRight: (x + w) / rightBayWidth,
+-        normCenterX: centerX / rightBayWidth,
+-        normCenterY: centerY / rightBayHeight,
+-        normW: w / rightBayWidth,
+-        normH: h / rightBayHeight,
+-        brand: (b.brand || b.label || 'OTHER').toUpperCase().trim()
+-      };
+-    });
+-
+-    const rightReport = reports[rightBay.key] || {
+-      bayKey: rightBay.key,
+-      bayLabel: rightBay.label,
+-      hasDuplicates: false,
+-      duplicates: []
+-    };
+-
+-    // Group Left Bay and Right Bay boxes into horizontal shelf tiers by normCenterY
+-    interface ShelfRowGroup {
+-      avgCenterY: number;
+-      leftBoxes: BottleBoxNorm[];
+-      rightBoxes: BottleBoxNorm[];
+-    }
+-
+-    const shelfRows: ShelfRowGroup[] = [];
+-
+-    // Group left bay boxes into rows
+-    for (const lBox of leftNormalized) {
+-      let placed = false;
+-      for (const row of shelfRows) {
+-        if (Math.abs(lBox.normCenterY - row.avgCenterY) <= 0.09) {
+-          row.leftBoxes.push(lBox);
+-          row.avgCenterY = row.leftBoxes.reduce((sum, b) => sum + b.normCenterY, 0) / row.leftBoxes.length;
+-          placed = true;
+-          break;
+-        }
+-      }
+-      if (!placed) {
+-        shelfRows.push({
+-          avgCenterY: lBox.normCenterY,
+-          leftBoxes: [lBox],
+-          rightBoxes: []
+-        });
+-      }
+-    }
+-
+-    // Assign right bay boxes to the closest shelf row
+-    for (const rBox of rightNormalized) {
+-      let bestRow: ShelfRowGroup | null = null;
+-      let minDiff = 0.09;
+-      for (const row of shelfRows) {
+-        const diff = Math.abs(rBox.normCenterY - row.avgCenterY);
+-        if (diff < minDiff) {
+-          minDiff = diff;
+-          bestRow = row;
+-        }
+-      }
+-      if (bestRow) {
+-        bestRow.rightBoxes.push(rBox);
+-      } else {
+-        shelfRows.push({
+-          avgCenterY: rBox.normCenterY,
+-          leftBoxes: [],
+-          rightBoxes: [rBox]
+-        });
+-      }
+-    }
+-
+-    const matchedRightBoxIds = new Set<string>();
+-
+-    // For each shelf row, compare Bay 1's rightmost bottle against Bay 2's 1st and 2nd leftmost bottles
+-    for (const row of shelfRows) {
+-      if (row.leftBoxes.length === 0 || row.rightBoxes.length === 0) continue;
+-
+-      // Sort left row boxes right-to-left (rightmost first)
+-      row.leftBoxes.sort((a, b) => b.normCenterX - a.normCenterX);
+-      // Sort right row boxes left-to-right (leftmost first)
+-      row.rightBoxes.sort((a, b) => a.normCenterX - b.normCenterX);
+-
+-      const rightmostLeftBox = row.leftBoxes[0];
+-      const leftmostRight1 = row.rightBoxes[0];
+-      const leftmostRight2 = row.rightBoxes.length > 1 ? row.rightBoxes[1] : null;
+-
+-      // Helper to check brand match
+-      const checkBrandMatch = (b1: BottleBoxNorm, b2: BottleBoxNorm) => {
+-        return b1.brand === b2.brand ||
+-          (b1.brand === 'OTHER' && b2.brand !== 'OTHER') ||
+-          (b2.brand === 'OTHER' && b1.brand !== 'OTHER');
+-      };
+-
+-      // Helper to record duplicate
+-      const addDuplicate = (rBoxNorm: BottleBoxNorm, lBoxNorm: BottleBoxNorm) => {
+-        const rightBox = rBoxNorm.raw;
+-        const leftBox = lBoxNorm.raw;
+-
+-        const rightX = typeof rightBox.x === 'number' ? rightBox.x : (typeof rightBox.left === 'number' ? rightBox.left : Math.round(rBoxNorm.normX * rightBayWidth));
+-        const rightY = typeof rightBox.y === 'number' ? rightBox.y : (typeof rightBox.top === 'number' ? rightBox.top : Math.round((rBoxNorm.normCenterY - rBoxNorm.normH / 2) * rightBayHeight));
+-
+-        const leftX = typeof leftBox.x === 'number' ? leftBox.x : (typeof leftBox.left === 'number' ? leftBox.left : Math.round(lBoxNorm.normX * leftBayWidth));
+-        const leftY = typeof leftBox.y === 'number' ? leftBox.y : (typeof leftBox.top === 'number' ? leftBox.top : Math.round((lBoxNorm.normCenterY - lBoxNorm.normH / 2) * leftBayHeight));
+-
+-        const rightId = String(rightBox.id || `rbox-${rightX}-${rightY}`);
+-        if (matchedRightBoxIds.has(rightId)) return;
+-        matchedRightBoxIds.add(rightId);
+-
+-        const leftId = String(leftBox.id || `lbox-${leftX}-${leftY}`);
+-        const resolvedBrand = rBoxNorm.brand !== 'OTHER' ? rBoxNorm.brand : lBoxNorm.brand;
+-
+-        rightReport.duplicates.push({
+-          boxId: rightId,
+-          brand: resolvedBrand,
+-          x: rightX,
+-          y: rightY,
+-          width: rightBox.width || rightBox.w || Math.round(rBoxNorm.normW * rightBayWidth),
+-          height: rightBox.height || rightBox.h || Math.round(rBoxNorm.normH * rightBayHeight),
+-          confidence: rightBox.confidence,
+-          matchedWithBoxId: leftId,
+-          leftBayKey: leftBay.key,
+-          rightBayKey: rightBay.key
+-        });
+-        rightReport.hasDuplicates = true;
+-      };
+-
+-      // 1st Check: Does Bay 1's rightmost bottle match Bay 2's 1st leftmost bottle?
+-      if (leftmostRight1 && checkBrandMatch(rightmostLeftBox, leftmostRight1)) {
+-        addDuplicate(leftmostRight1, rightmostLeftBox);
+-      } 
+-      // 2nd Check: Heavy overlap fallback — does Bay 1's rightmost bottle match Bay 2's 2nd leftmost bottle?
+-      else if (leftmostRight2 && checkBrandMatch(rightmostLeftBox, leftmostRight2)) {
+-        addDuplicate(leftmostRight1, rightmostLeftBox);
+-        addDuplicate(leftmostRight2, rightmostLeftBox);
+-      }
+-    }
+-
+-    reports[rightBay.key] = rightReport;
+-  }
+-
+-  return reports;
++/** Rectangle of an image of size iw×ih fitted (object-contain) inside cw×ch. */
++function fitRect(cw: number, ch: number, iw: number, ih: number) {
++  if (!cw || !ch || !iw || !ih) return { left: 0, top: 0, width: cw, height: ch };
++  const scale = Math.min(cw / iw, ch / ih);
++  const width = iw * scale;
++  const height = ih * scale;
++  return { left: (cw - width) / 2, top: (ch - height) / 2, width, height };
+ }
+ 
+ /**
+@@ -527,7 +339,8 @@ export function detectCrossBayDuplicates(
+  */
+ export async function stitchBayPanorama(
+   bays: AisleSession[],
+-  forceRaw: boolean = false
++  forceRaw: boolean = false,
++  crops: Record<string, { start: number; end: number }> = {}
+ ): Promise<string> {
+   const validBays = bays.filter(
+     (b) => Boolean(b.capturedPhotoUrl || b.annotatedPhotoUrl)
+@@ -588,11 +401,14 @@ export async function stitchBayPanorama(
+     const targetHeight = Math.min(1200, Math.max(600, maxHeight));
+ 
+     // Scale both width and height by the same factor (targetHeight / meta.height) to preserve aspect ratio
++    // Each bay is drawn only between its count lines (crop), so overlapping shelf area appears once.
+     const scaledSegments = bayImageMeta.map((meta) => {
++      const crop = crops[meta.bay.key] || { start: 0, end: 1 };
+       const scale = targetHeight / (meta.height || targetHeight);
+-      const scaledWidth = Math.round((meta.width || 800) * scale);
++      const scaledWidth = Math.max(1, Math.round((meta.width || 800) * (crop.end - crop.start) * scale));
+       return {
+         ...meta,
++        crop,
+         scaledWidth,
+         scaledHeight: targetHeight
+       };
+@@ -615,7 +431,9 @@ export async function stitchBayPanorama(
+     // Draw each bay segment left-to-right in aisle order
+     let currentX = 0;
+     scaledSegments.forEach((seg, index) => {
+-      ctx.drawImage(seg.img, currentX, 0, seg.scaledWidth, seg.scaledHeight);
++      const srcX = seg.crop.start * seg.width;
++      const srcW = (seg.crop.end - seg.crop.start) * seg.width;
++      ctx.drawImage(seg.img, srcX, 0, srcW, seg.height, currentX, 0, seg.scaledWidth, seg.scaledHeight);
+ 
+       // Draw thin vertical dashed dividers at each seam
+       if (index > 0) {
+@@ -857,8 +675,50 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+   const [newBrandName, setNewBrandName] = useState<string>('');
+   const [newBrandCount, setNewBrandCount] = useState<number>(2);
+ 
++  // Upload-on-confirm: a captured photo waits here until the rep taps Upload.
++  // For Bay 2+, the overlap with the previous bay is measured and shown for confirmation.
++  const [pendingCapture, setPendingCapture] = useState<{
++    bayKey: string;
++    file: File | null;
++    dataUrl: string;
++    width: number;
++    height: number;
++    shotWithGuide: boolean;
++    isRetake: boolean;
++  } | null>(null);
++  const [pendingSeam, setPendingSeam] = useState<SeamInfo | null>(null);
++  const [isMeasuringSeam, setIsMeasuringSeam] = useState<boolean>(false);
++  const [showAlignmentCheck, setShowAlignmentCheck] = useState<boolean>(false);
++  const previewFrameRef = useRef<HTMLDivElement | null>(null);
++  const pendingDataUrlRef = useRef<string | null>(null);
++  const isDraggingSeamRef = useRef<boolean>(false);
++
++  // Viewfinder geometry: the live video is shown uncropped (object-contain) so the
++  // preview matches the saved photo exactly; the guide is positioned on that frame.
++  const viewfinderRef = useRef<HTMLDivElement | null>(null);
++  const [viewfinderSize, setViewfinderSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
++  const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
++  // Blocks level-triggered auto-capture while the rep is lining up the guide or reviewing a photo.
++  const captureBlockedRef = useRef<boolean>(false);
++  useEffect(() => {
++    if (step !== 'CAPTURE') return;
++    const el = viewfinderRef.current;
++    if (!el) return;
++    const update = () => setViewfinderSize({ w: el.clientWidth, h: el.clientHeight });
++    update();
++    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
++    ro?.observe(el);
++    window.addEventListener('resize', update);
++    return () => {
++      ro?.disconnect();
++      window.removeEventListener('resize', update);
++    };
++  }, [step]);
++
++  // Latest auto-capture function (the sensor listener is bound once per step, so it must not hold a stale closure).
++  const autoCaptureFnRef = useRef<() => void>(() => {});
++
+   // Cross-Bay Duplicate Detection States
+-  const [seamTolerance, setSeamTolerance] = useState<number>(DEFAULT_STRIP_PCT);
+   const [duplicateReports, setDuplicateReports] = useState<Record<string, BayDuplicateReport>>({});
+   const [duplicateReviewStatus, setDuplicateReviewStatus] = useState<'pending' | 'removed' | 'kept'>('pending');
+   const [isDuplicatePanelExpanded, setIsDuplicatePanelExpanded] = useState<boolean>(true);
+@@ -1105,9 +965,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+       if (level && isMotionLow) {
+         if (!levelHoldStartTimeRef.current) {
+           levelHoldStartTimeRef.current = now;
+-        } else if (now - levelHoldStartTimeRef.current >= 500 && !autoCaptureTriggeredRef.current) {
++        } else if (now - levelHoldStartTimeRef.current >= 500 && !autoCaptureTriggeredRef.current && !captureBlockedRef.current) {
+           autoCaptureTriggeredRef.current = true;
+-          handleAutoCaptureTrigger();
++          autoCaptureFnRef.current();
+         }
+       } else {
+         levelHoldStartTimeRef.current = null;
+@@ -1169,6 +1029,32 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     return capturedAisles.every((k) => aisleSessions[k]?.status === 'done');
+   }, [capturedAisles, aisleSessions]);
+ 
++  /** Nearest earlier bay (in shooting order) that has a photo — the left neighbour for the seam. */
++  const previousCapturedBayKey = useCallback((bayKey: string): string | null => {
++    const idx = bayKeys.indexOf(bayKey);
++    for (let i = idx - 1; i >= 0; i--) {
++      if (aisleSessions[bayKeys[i]]?.capturedPhotoUrl) return bayKeys[i];
++    }
++    return null;
++  }, [bayKeys, aisleSessions]);
++
++  const nextCapturedBayKey = useCallback((bayKey: string): string | null => {
++    const idx = bayKeys.indexOf(bayKey);
++    if (idx < 0) return null;
++    for (let i = idx + 1; i < bayKeys.length; i++) {
++      if (aisleSessions[bayKeys[i]]?.capturedPhotoUrl) return bayKeys[i];
++    }
++    return null;
++  }, [bayKeys, aisleSessions]);
++
++  // Previous bay whose right edge is shown as a faded guide while shooting the current bay
++  const ghostGuideBayKey = step === 'CAPTURE' && !pendingCapture ? previousCapturedBayKey(currentAisle) : null;
++  const ghostGuideUrl = ghostGuideBayKey ? aisleSessions[ghostGuideBayKey]?.capturedPhotoUrl || null : null;
++
++  useEffect(() => {
++    captureBlockedRef.current = Boolean(pendingCapture) || Boolean(ghostGuideUrl);
++  }, [pendingCapture, ghostGuideUrl]);
++
+   // Standard brands list
+   const standardBrands = CATEGORY_BRANDS[category] || ['YARA', 'ZAIN', 'ADEERA', 'AL RAI', 'DAWI', 'OTHER'];
+   const allBrandKeys = useMemo(() => {
+@@ -1204,7 +1090,12 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     const res: Record<string, number> = {};
+     for (const b of allBrandKeys) {
+       res[b] = completedAisles.reduce(
+-        (sum, k) => sum + (aisleSessions[k]?.originalAiCounts[b] ?? aisleSessions[k]?.counts[b] ?? 0),
++        (sum, k) =>
++          sum +
++          (aisleSessions[k]?.seamAdjustedCounts?.[b] ??
++            aisleSessions[k]?.originalAiCounts[b] ??
++            aisleSessions[k]?.counts[b] ??
++            0),
+         0
+       );
+     }
+@@ -1275,7 +1166,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     let isMounted = true;
+     setIsStitchingPanorama(true);
+ 
+-    stitchBayPanorama(capturedBaySessions, showRawPhotoComparison)
++    const crops = duplicateReviewStatus === 'removed' ? computeBayCrops(capturedBaySessions) : {};
++    stitchBayPanorama(capturedBaySessions, showRawPhotoComparison, crops)
+       .then((dataUrl) => {
+         if (isMounted) {
+           setStitchedPanoramaUrl(dataUrl);
+@@ -1294,11 +1186,16 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     return () => {
+       isMounted = false;
+     };
+-  }, [step, capturedBaySessions, stitchedPanoramaUrl, showRawPhotoComparison]);
++  }, [step, capturedBaySessions, stitchedPanoramaUrl, showRawPhotoComparison, duplicateReviewStatus]);
+ 
+   // 2. Overlapping Async Upload & Analysis Handler (Runs in background without touching POSM)
+   const startAsyncBayAnalysis = useCallback(
+-    async (targetAisle: string, file: File | null, dataUrl: string) => {
++    async (
++      targetAisle: string,
++      file: File | null,
++      dataUrl: string,
++      seamOpts: { seam?: SeamInfo | null; shotWithGuide?: boolean; captureDims?: { width: number; height: number } } = {}
++    ) => {
+       const startTime = Date.now();
+ 
+       // Immediately set status to analysing
+@@ -1324,6 +1221,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+           capturedFile: file,
+           capturedPhotoUrl: dataUrl,
+           capturedFileName: file?.name || `${targetAisle}_capture.jpg`,
++          ...(seamOpts.captureDims ? { naturalDimensions: seamOpts.captureDims } : {}),
++          seam: seamOpts.seam ?? null,
++          shotWithGuide: Boolean(seamOpts.shotWithGuide),
+           analysisStartTime: startTime,
+           errorMessage: undefined
+         }
+@@ -1357,10 +1257,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+             posmShelfSticker,
+             posmWobblers,
+             needsReview: false,
+-            timestamp: new Date().toISOString()
++            timestamp: new Date().toISOString(),
++            seam: seamOpts.seam
++              ? {
++                  previousBay: seamOpts.seam.leftBayKey,
++                  cutFrac: seamOpts.seam.cutFracRight,
++                  overlapFrac: seamOpts.seam.overlapFracRight,
++                  confidence: seamOpts.seam.confidence,
++                  method: seamOpts.seam.method
++                }
++              : undefined
+           },
+           90000,
+-          { width: 800, height: 800 }
++          seamOpts.captureDims || { width: 800, height: 800 }
+         );
+ 
+         const normalized = normalizeN8nAuditResponse(
+@@ -1372,7 +1281,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+ 
+         setAisleSessions((prev) => {
+           const currentPrev = prev[targetAisle];
+-          const newDimensions = normalized.dimensions || currentPrev?.naturalDimensions || { width: 800, height: 800 };
++          // Box coordinates are in the uploaded photo's pixels. Keep the measured capture size
++          // unless n8n explicitly reports the image size (guessed sizes would misplace the count line).
++          const newDimensions = (normalized.dimensionsExplicit && normalized.dimensions)
++            || seamOpts.captureDims
++            || currentPrev?.naturalDimensions
++            || normalized.dimensions
++            || { width: 800, height: 800 };
+           return {
+             ...prev,
+             [targetAisle]: {
+@@ -1439,6 +1354,125 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     setStep('CAPTURE');
+   };
+ 
++  /**
++   * Every capture (camera, gallery, sample) lands here. Nothing is uploaded yet:
++   * the rep reviews the photo — and for Bay 2+ the measured overlap — then taps Upload.
++   */
++  const beginBayPreview = useCallback(
++    (targetAisle: string, file: File | null, dataUrl: string, dims: { width: number; height: number } | null) => {
++      const isRetake = retakeBayKey === targetAisle;
++      const prevKey = previousCapturedBayKey(targetAisle);
++      const prevUrl = prevKey ? aisleSessions[prevKey]?.capturedPhotoUrl : null;
++      const shotWithGuide = Boolean(prevUrl) && !file; // live camera shots of Bay 2+ show the guide
++
++      setLastCapturedAisle(targetAisle);
++      setShowPostCapturePrompt(false);
++      setShowAlignmentCheck(false);
++      setPendingSeam(null);
++      pendingDataUrlRef.current = dataUrl;
++      setPendingCapture({
++        bayKey: targetAisle,
++        file,
++        dataUrl,
++        width: dims?.width || 0,
++        height: dims?.height || 0,
++        shotWithGuide,
++        isRetake
++      });
++
++      const finishMeasure = (w: number, h: number) => {
++        if (w && h) {
++          setPendingCapture((p) => (p && p.dataUrl === dataUrl ? { ...p, width: w, height: h } : p));
++        }
++        if (!prevKey || !prevUrl) {
++          setIsMeasuringSeam(false);
++          return;
++        }
++        setIsMeasuringSeam(true);
++        estimateSeam(prevUrl, dataUrl, prevKey, targetAisle, { shotWithGuide })
++          .then((seam) => {
++            if (pendingDataUrlRef.current === dataUrl) setPendingSeam(seam);
++          })
++          .finally(() => {
++            if (pendingDataUrlRef.current === dataUrl) setIsMeasuringSeam(false);
++          });
++      };
++
++      if (dims?.width && dims?.height) {
++        finishMeasure(dims.width, dims.height);
++      } else {
++        const probe = new Image();
++        probe.onload = () => finishMeasure(probe.naturalWidth, probe.naturalHeight);
++        probe.onerror = () => finishMeasure(0, 0);
++        probe.src = dataUrl;
++      }
++    },
++    [retakeBayKey, previousCapturedBayKey, aisleSessions]
++  );
++
++  /** Rep tapped Upload: store the confirmed seam and send the photo for analysis. */
++  const handleConfirmUpload = () => {
++    if (!pendingCapture) return;
++    const { bayKey, file, dataUrl, width, height, shotWithGuide, isRetake } = pendingCapture;
++    const captureDims = width && height ? { width, height } : undefined;
++
++    startAsyncBayAnalysis(bayKey, file, dataUrl, { seam: pendingSeam, shotWithGuide, captureDims });
++
++    // If a middle bay was re-shot, the seam of the bay to its right is stale: re-measure it.
++    const nextKey = nextCapturedBayKey(bayKey);
++    const nextUrl = nextKey ? aisleSessions[nextKey]?.capturedPhotoUrl : null;
++    if (nextKey && nextUrl) {
++      const nextShotWithGuide = Boolean(aisleSessions[nextKey]?.shotWithGuide);
++      estimateSeam(dataUrl, nextUrl, bayKey, nextKey, { shotWithGuide: nextShotWithGuide }).then((seam) => {
++        setAisleSessions((prev) => (prev[nextKey] ? { ...prev, [nextKey]: { ...prev[nextKey], seam } } : prev));
++      });
++    }
++
++    pendingDataUrlRef.current = null;
++    setPendingCapture(null);
++    setPendingSeam(null);
++    setShowAlignmentCheck(false);
++
++    if (isRetake) {
++      setRetakeBayKey(null);
++      setShowPostCapturePrompt(false);
++      setStep('POSM');
++    } else {
++      setShowPostCapturePrompt(true);
++    }
++  };
++
++  /** Rep rejected the photo: discard it and return to the camera for the same bay. */
++  const handleDiscardPending = () => {
++    pendingDataUrlRef.current = null;
++    setPendingCapture(null);
++    setPendingSeam(null);
++    setIsMeasuringSeam(false);
++    setShowAlignmentCheck(false);
++    autoCaptureTriggeredRef.current = false;
++    levelHoldStartTimeRef.current = null;
++  };
++
++  /** Rep dragged the overlap edge in the preview (fraction of the new photo's width). */
++  const handleSeamDrag = (clientX: number) => {
++    const frame = previewFrameRef.current;
++    if (!frame || !pendingCapture) return;
++    const rect = frame.getBoundingClientRect();
++    const frac = Math.max(0, Math.min(0.8, (clientX - rect.left) / rect.width));
++    const prevKey = previousCapturedBayKey(pendingCapture.bayKey);
++    if (!prevKey) return;
++    setPendingSeam((cur) => {
++      const ratio = cur?.widthRatio ?? 1;
++      return buildSeam(prevKey, pendingCapture.bayKey, frac, ratio, {
++        score: cur?.score ?? 0,
++        confidence: cur?.confidence ?? 'none',
++        method: 'manual',
++        scale: cur?.scale ?? 1,
++        dyFrac: cur?.dyFrac ?? 0
++      });
++    });
++  };
++
+   // Auto-capture frame execution from WebRTC video stream
+   const handleAutoCaptureTrigger = useCallback(() => {
+     if (!videoRef.current || !cameraStreamActive) return;
+@@ -1453,41 +1487,16 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+ 
+-      const targetAisle = currentAisle;
+-      setLastCapturedAisle(targetAisle);
+-
+-      // Record true snapshot dimensions immediately
+-      setAisleSessions((prev) => {
+-        const s = prev[targetAisle];
+-        if (!s) return prev;
+-        return {
+-          ...prev,
+-          [targetAisle]: {
+-            ...s,
+-            naturalDimensions: { width: canvas.width, height: canvas.height }
+-          }
+-        };
+-      });
+-
+-      // If returning from retake, jump directly back to POSM
+-      const isRetake = retakeBayKey === targetAisle;
+-      if (isRetake) {
+-        setRetakeBayKey(null);
+-        setShowPostCapturePrompt(false);
+-        setStep('POSM');
+-      } else {
+-        setShowPostCapturePrompt(true);
+-      }
+-
+-      // Start upload & analysis immediately for this bay
+-      startAsyncBayAnalysis(targetAisle, null, dataUrl);
++      beginBayPreview(currentAisle, null, dataUrl, { width: canvas.width, height: canvas.height });
+     } catch (err) {
+       console.warn('Auto-capture canvas snapshot note:', err);
+     }
+-  }, [cameraStreamActive, currentAisle, startAsyncBayAnalysis, retakeBayKey]);
++  }, [cameraStreamActive, currentAisle, beginBayPreview]);
++  autoCaptureFnRef.current = handleAutoCaptureTrigger;
+ 
+   // Manual Shutter Click handler: snaps live video frame inside app or starts stream
+   const handleManualShutter = () => {
++    if (pendingCapture) return;
+     if (cameraStreamActive && videoRef.current) {
+       handleAutoCaptureTrigger();
+     } else {
+@@ -1499,59 +1508,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+   const handlePhotoFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+     const file = e.target.files?.[0];
+     if (!file) return;
+-
+     const objectUrl = URL.createObjectURL(file);
+-    const targetAisle = currentAisle;
+-
+-    setLastCapturedAisle(targetAisle);
+-
+-    const isRetake = retakeBayKey === targetAisle;
+-    if (isRetake) {
+-      setRetakeBayKey(null);
+-      setShowPostCapturePrompt(false);
+-      setStep('POSM');
+-    } else {
+-      setShowPostCapturePrompt(true);
+-    }
+-
+-    // Measure exact natural image dimensions
+-    const probe = new Image();
+-    probe.onload = () => {
+-      if (probe.naturalWidth && probe.naturalHeight) {
+-        setAisleSessions((prev) => {
+-          const s = prev[targetAisle];
+-          if (!s) return prev;
+-          return {
+-            ...prev,
+-            [targetAisle]: {
+-              ...s,
+-              naturalDimensions: { width: probe.naturalWidth, height: probe.naturalHeight }
+-            }
+-          };
+-        });
+-      }
+-    };
+-    probe.src = objectUrl;
+-
+-    startAsyncBayAnalysis(targetAisle, file, objectUrl);
++    beginBayPreview(currentAisle, file, objectUrl, null);
+     e.target.value = '';
+   };
+ 
+   // Debug Demo Sample Shelf
+   const handleUseDemoSample = () => {
+-    const targetAisle = currentAisle;
+-    setLastCapturedAisle(targetAisle);
+-
+-    const isRetake = retakeBayKey === targetAisle;
+-    if (isRetake) {
+-      setRetakeBayKey(null);
+-      setShowPostCapturePrompt(false);
+-      setStep('POSM');
+-    } else {
+-      setShowPostCapturePrompt(true);
+-    }
+-
+-    startAsyncBayAnalysis(targetAisle, null, fallbackShelfPhoto);
++    beginBayPreview(currentAisle, null, fallbackShelfPhoto, null);
+   };
+ 
+   // Flexible Dynamic Bay Addition (Can be 1, 2, 5, or 10+ bays)
+@@ -1611,68 +1575,82 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+   };
+ 
+   // 2. Submitting POSM: gated on all captured bays reaching status === 'done'
+-  // Runs Cross-Bay Duplicate Detection ONCE on entering RESULTS, before panorama builds and before compliance comparison
++  // Applies the measured bay seams (each bottle counted by exactly one bay) on entering RESULTS.
+   const handlePosmSubmit = () => {
+     if (!allCapturedDone || erroredAisles.length > 0) return;
++    applySeamDeduplication();
++    setStep('RESULTS');
++    setResultsAisleView('ALL');
++  };
+ 
+-    // Detect duplicates across adjacent bay seams using First Complete Column Sequence Alignment
+-    const reports = detectCrossBayDuplicates(aisleSessions, seamTolerance);
+-    setDuplicateReports(reports);
++  /**
++   * Deducts every box that belongs to a neighbouring bay (per the confirmed seams).
++   * Anything deducted earlier — by seams or by manual taps — is restored first, so
++   * running this again (e.g. after going back to POSM) never double-deducts.
++   */
++  const applySeamDeduplication = () => {
++    const ordered = bayKeys.map((k) => aisleSessions[k]).filter((s) => s && s.status === 'done');
++    const rawReports = buildSeamDuplicateReports(ordered);
++    const reports: Record<string, BayDuplicateReport> = {};
++    Object.entries(rawReports).forEach(([k, r]) => {
++      reports[k] = { ...r, duplicates: r.duplicates.map((d) => ({ ...d, brand: canonicalizeBrand(d.brand, category) })) };
++    });
+ 
+-    // Auto-deduct verified column seam duplicates for an automated, tamper-proof rep experience
++    const previouslyRemoved = removedDuplicateBoxIds;
++    const previousReports = duplicateReports;
+     const newlyRemovedIds = new Set<string>();
++
+     setAisleSessions((prev) => {
+       const updated = { ...prev };
++      const counts: Record<string, Record<string, number>> = {};
++      const getCounts = (k: string) => (counts[k] ??= { ...(updated[k]?.counts || {}) });
++
++      // 1. Restore earlier deductions
++      Object.values(previousReports).forEach((rep) => {
++        rep.duplicates.forEach((d) => {
++          if (!previouslyRemoved.has(d.boxId) || !updated[rep.bayKey]) return;
++          const c = getCounts(rep.bayKey);
++          c[d.brand] = (c[d.brand] || 0) + 1;
++        });
++      });
+ 
+-      Object.entries(reports).forEach(([bayKey, report]) => {
+-        if (!report.hasDuplicates || report.duplicates.length === 0) return;
+-        const session = updated[bayKey];
+-        if (!session) return;
+-
+-        const nextCounts = { ...session.counts };
+-        const nextRawCounts = { ...session.rawCounts };
+-
+-        report.duplicates.forEach((d) => {
++      // 2. Deduct boxes owned by the neighbouring bay
++      Object.values(reports).forEach((rep) => {
++        rep.duplicates.forEach((d) => {
+           newlyRemovedIds.add(d.boxId);
+-          if (nextCounts[d.brand] !== undefined && nextCounts[d.brand] > 0) {
+-            nextCounts[d.brand] -= 1;
+-          }
+-          if (nextRawCounts[d.brand] !== undefined && nextRawCounts[d.brand] > 0) {
+-            nextRawCounts[d.brand] -= 1;
+-          }
++          const c = getCounts(rep.bayKey);
++          if ((c[d.brand] || 0) > 0) c[d.brand] -= 1;
+         });
++      });
+ 
+-        const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
+-
+-        updated[bayKey] = {
++      Object.entries(counts).forEach(([k, c]) => {
++        const session = updated[k];
++        updated[k] = {
+           ...session,
+-          counts: nextCounts,
+-          rawCounts: nextRawCounts,
+-          totalFacings: nextTotal,
+-          removedDuplicates: report.duplicates
++          counts: c,
++          totalFacings: Object.values(c).reduce((a, b) => a + (b ?? 0), 0),
++          removedDuplicates: reports[k]?.duplicates || []
+         };
+       });
+ 
++      // AI counts after seam removal = baseline for the discrepancy log (rep edits are measured against it)
++      ordered.forEach((s) => {
++        const orig = updated[s.key]?.originalAiCounts || {};
++        const adjusted: Record<string, number> = { ...orig };
++        (reports[s.key]?.duplicates || []).forEach((d) => {
++          if ((adjusted[d.brand] || 0) > 0) adjusted[d.brand] -= 1;
++        });
++        updated[s.key] = { ...updated[s.key], seamAdjustedCounts: adjusted };
++      });
++
+       return updated;
+     });
+ 
++    setDuplicateReports(reports);
+     setRemovedDuplicateBoxIds(newlyRemovedIds);
+     setDuplicateReviewStatus('removed');
+     setIsDuplicatePanelExpanded(false);
+-
+-    setStep('RESULTS');
+-    setResultsAisleView('ALL');
+-  };
+-
+-  // Re-evaluates duplicate detection with a custom seamTolerance (e.g. 0.10, 0.15, 0.20, 0.25, 0.30)
+-  const handleUpdateSeamTolerance = (newTolerance: number) => {
+-    setSeamTolerance(newTolerance);
+-    const reports = detectCrossBayDuplicates(aisleSessions, newTolerance);
+-    setDuplicateReports(reports);
+-    if (duplicateReviewStatus === 'removed') {
+-      setDuplicateReviewStatus('pending');
+-      setRemovedDuplicateBoxIds(new Set());
+-    }
++    setStitchedPanoramaUrl(null);
+   };
+ 
+   // 1-Tap Toggle for any box on the active bay to add or remove it as a duplicate
+@@ -1682,16 +1660,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+       const session = prev[bayKey];
+       if (!session) return prev;
+       const nextCounts = { ...session.counts };
+-      const nextRawCounts = { ...session.rawCounts };
+ 
+       if (isCurrentlyRemoved) {
+-        // Unmark duplicate: add 1 facing back
++        // Restore: add 1 facing back
+         nextCounts[boxBrand] = (nextCounts[boxBrand] || 0) + 1;
+-        nextRawCounts[boxBrand] = (nextRawCounts[boxBrand] || 0) + 1;
+       } else {
+         // Mark as duplicate: deduct 1 facing
+         if (nextCounts[boxBrand] && nextCounts[boxBrand] > 0) nextCounts[boxBrand] -= 1;
+-        if (nextRawCounts[boxBrand] && nextRawCounts[boxBrand] > 0) nextRawCounts[boxBrand] -= 1;
+       }
+ 
+       const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
+@@ -1700,7 +1675,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+         [bayKey]: {
+           ...session,
+           counts: nextCounts,
+-          rawCounts: nextRawCounts,
+           totalFacings: nextTotal
+         }
+       };
+@@ -1719,11 +1693,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+     setDuplicateReports((prev) => {
+       const rep = prev[bayKey];
+       if (!rep) return prev;
++      // Restored boxes stay in the report (shown as "Counted") so the rep can tap them again.
+       const exists = rep.duplicates.some((d) => d.boxId === boxId);
+-      let nextDups = [...rep.duplicates];
+-      if (isCurrentlyRemoved && exists) {
+-        nextDups = nextDups.filter((d) => d.boxId !== boxId);
+-      } else if (!isCurrentlyRemoved && !exists) {
++      const nextDups = [...rep.duplicates];
++      if (!isCurrentlyRemoved && !exists) {
+         nextDups.push({
+           boxId,
+           brand: boxBrand,
+@@ -1750,62 +1723,56 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+ 
+   // Cross-Bay Duplicates Summary
+   const totalDuplicatesCount = useMemo(() => {
+-    return Object.values(duplicateReports).reduce((sum, r) => sum + r.duplicates.length, 0);
+-  }, [duplicateReports]);
+-
+-  const baysWithDuplicates = useMemo(() => {
+-    return Object.values(duplicateReports).filter((r) => r.hasDuplicates && r.duplicates.length > 0);
+-  }, [duplicateReports]);
++    return Object.values(duplicateReports).reduce(
++      (sum, r) => sum + r.duplicates.filter((d) => removedDuplicateBoxIds.has(d.boxId)).length,
++      0
++    );
++  }, [duplicateReports, removedDuplicateBoxIds]);
++
++  /** One row per bay join, for the results summary. */
++  const seamSummaries = useMemo(() => {
++    const ordered = completedAisles.map((k) => aisleSessions[k]).filter(Boolean);
++    return ordered.slice(1).map((bay, i) => {
++      const left = ordered[i];
++      const seam = bay.seam && bay.seam.leftBayKey === left.key ? bay.seam : null;
++      const excluded = [
++        ...(duplicateReports[left.key]?.duplicates || []).filter((d) => d.rightBayKey === bay.key),
++        ...(duplicateReports[bay.key]?.duplicates || []).filter((d) => d.leftBayKey === left.key)
++      ].filter((d) => removedDuplicateBoxIds.has(d.boxId)).length;
++      return { leftKey: left.key, leftLabel: left.label, rightKey: bay.key, rightLabel: bay.label, seam, excluded };
++    });
++  }, [completedAisles, aisleSessions, duplicateReports, removedDuplicateBoxIds]);
+ 
+-  // "Remove duplicates" handler: subtracts duplicates from that bay's counts & rawCounts,
+-  // marks removed box IDs in state, and recalculates totals and compliance
+-  const handleRemoveDuplicates = () => {
++  // "Keep all": restores every deducted bottle and turns the seam cut off
++  const handleKeepAllDuplicates = () => {
+     setAisleSessions((prev) => {
+       const updated = { ...prev };
+-      const newlyRemovedIds = new Set(removedDuplicateBoxIds);
+-
+-      Object.entries(duplicateReports).forEach(([bayKey, report]) => {
+-        if (!report.hasDuplicates || report.duplicates.length === 0) return;
+-        const session = updated[bayKey];
++      Object.values(duplicateReports).forEach((rep) => {
++        const session = updated[rep.bayKey];
+         if (!session) return;
+-
+-        const nextCounts = { ...session.counts };
+-        const nextRawCounts = { ...session.rawCounts };
+-
+-        report.duplicates.forEach((d) => {
+-          newlyRemovedIds.add(d.boxId);
+-          // Decrement count for the duplicate brand on this bay
+-          if (nextCounts[d.brand] !== undefined && nextCounts[d.brand] > 0) {
+-            nextCounts[d.brand] -= 1;
+-          }
+-          if (nextRawCounts[d.brand] !== undefined && nextRawCounts[d.brand] > 0) {
+-            nextRawCounts[d.brand] -= 1;
+-          }
++        const c = { ...session.counts };
++        rep.duplicates.forEach((d) => {
++          if (removedDuplicateBoxIds.has(d.boxId)) c[d.brand] = (c[d.brand] || 0) + 1;
+         });
+-
+-        const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
+-
+-        updated[bayKey] = {
++        updated[rep.bayKey] = {
+           ...session,
+-          counts: nextCounts,
+-          rawCounts: nextRawCounts,
+-          totalFacings: nextTotal,
+-          removedDuplicates: [...(session.removedDuplicates || []), ...report.duplicates]
++          counts: c,
++          totalFacings: Object.values(c).reduce((a, b) => a + (b ?? 0), 0),
++          removedDuplicates: [],
++          seamAdjustedCounts: undefined
+         };
+       });
+-
+-      setRemovedDuplicateBoxIds(newlyRemovedIds);
+       return updated;
+     });
+-
+-    setDuplicateReviewStatus('removed');
++    setRemovedDuplicateBoxIds(new Set());
++    setDuplicateReviewStatus('kept');
+     setIsDuplicatePanelExpanded(false);
++    setStitchedPanoramaUrl(null);
+   };
+ 
+-  // "Keep all" handler: leaves counts untouched and dismisses the duplicate review
+-  const handleKeepAllDuplicates = () => {
+-    setDuplicateReviewStatus('kept');
+-    setIsDuplicatePanelExpanded(false);
++  // "Re-apply": counts each bottle once again using the seams
++  const handleRemoveDuplicates = () => {
++    applySeamDeduplication();
+   };
+ 
+   // 6. Proportional Delta Distribution on ALL Tab
+@@ -1974,7 +1941,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+         boundingBoxes: s.boxes,
+         rawBoxes: s.rawBoxes,
+         naturalDimensions: s.naturalDimensions,
+-        removedDuplicates: s.removedDuplicates || (duplicateReviewStatus === 'removed' ? duplicateReports[key]?.duplicates : undefined) || [],
++        removedDuplicates: (duplicateReports[key]?.duplicates || []).filter((d) => removedDuplicateBoxIds.has(d.boxId)),
++        seam: s.seam || undefined,
+         timestamp: new Date().toISOString()
+       };
+     });
+@@ -1989,8 +1957,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+       .join(', ');
+ 
+     const currentDiscrepancyLog = formatDiscrepancyLog(combinedOrigCounts, combinedCounts);
+-    const dupNote = duplicateReviewStatus === 'removed' && totalDuplicatesCount > 0
+-      ? ` [${totalDuplicatesCount} cross-bay overlap duplicate(s) removed]`
++    const seamNote = seamSummaries
++      .map((j) => {
++        const pct = j.seam ? Math.round(j.seam.overlapFracRight * 100) : 0;
++        const how = j.seam ? `${j.seam.method}/${j.seam.confidence}` : 'no seam';
++        return `${j.leftLabel}|${j.rightLabel}: ${pct}% overlap (${how}), ${j.excluded} counted once`;
++      })
++      .join('; ');
++    const dupNote = seamSummaries.length > 0
++      ? ` [Overlap: ${duplicateReviewStatus === 'kept' ? 'rep kept all detections; ' : ''}${seamNote}]`
+       : '';
+     const fullDiscrepancyLog = `[${completedAisles.length} Bay(s): ${baySummaryStr}]${dupNote} ${currentDiscrepancyLog}`;
+ 
+@@ -2100,6 +2075,130 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+   };
+ 
+   // Image source resolution for RESULTS tab
++  /**
++   * Count-line overlays on the results photo.
++   * - ALL tab: joined panorama (each bay cropped at its count lines) with a divider at every join.
++   * - Bay tab: shaded areas that belong to the neighbouring bay + every bottle that bay doesn't
++   *   count (red) or that the rep restored (green). Tap toggles.
++   */
++  const renderSeamOverlays = (inLightbox: boolean) => {
++    const ordered = completedAisles.map((k) => aisleSessions[k]).filter(Boolean);
++    const seamsOn = duplicateReviewStatus === 'removed';
++    const crops = seamsOn ? computeBayCrops(ordered) : {};
++    const isAllView = resultsAisleView === 'ALL' && ordered.length > 1;
++
++    if (isAllView) {
++      const segW = ordered.map((b) => {
++        const c = crops[b.key] || { start: 0, end: 1 };
++        const w = b.naturalDimensions?.width || 800;
++        const h = b.naturalDimensions?.height || 800;
++        return (c.end - c.start) * (w / h);
++      });
++      const total = segW.reduce((a, v) => a + v, 0) || 1;
++      let acc = 0;
++      return ordered.slice(0, -1).map((b, idx) => {
++        acc += segW[idx];
++        const next = ordered[idx + 1];
++        const hasSeam = seamsOn && next.seam && next.seam.leftBayKey === b.key;
++        return (
++          <div
++            key={`${inLightbox ? 'lb-' : ''}join-${b.key}`}
++            style={{ left: `${(acc / total) * 100}%` }}
++            className={`absolute top-0 bottom-0 w-0 border-r-2 border-dashed z-0 pointer-events-none ${hasSeam ? 'border-emerald-400/90' : 'border-amber-400/80'}`}
++          >
++            {!inLightbox && (
++              <span className="absolute top-1 -translate-x-1/2 text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded border border-emerald-500/30 whitespace-nowrap">
++                {hasSeam ? `Count line ${b.label} | ${next.label}` : `${b.label} | ${next.label}`}
++              </span>
++            )}
++          </div>
++        );
++      });
++    }
++
++    const bayKey = resultsAisleView === 'ALL' ? ordered[0]?.key : resultsAisleView;
++    const bayIndex = ordered.findIndex((b) => b.key === bayKey);
++    if (bayIndex < 0) return null;
++    const session = ordered[bayIndex];
++    const prev = ordered[bayIndex - 1];
++    const next = ordered[bayIndex + 1];
++    const leftSeam = prev && session.seam && session.seam.leftBayKey === prev.key ? session.seam : null;
++    const rightSeam = next && next.seam && next.seam.leftBayKey === session.key ? next.seam : null;
++    const bayW = session.naturalDimensions?.width || 800;
++    const bayH = session.naturalDimensions?.height || 1280;
++    const report = duplicateReports[session.key];
++
++    return (
++      <>
++        {leftSeam && (
++          <div
++            style={{ width: `${leftSeam.cutFracRight * 100}%` }}
++            className={`absolute top-0 bottom-0 left-0 border-r-2 border-dashed pointer-events-none flex flex-col justify-end p-1 z-0 ${
++              seamsOn ? 'border-emerald-400/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
++            }`}
++          >
++            {!inLightbox && (
++              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-end border border-emerald-500/30 whitespace-nowrap">
++                Counted in {prev.label}
++              </span>
++            )}
++          </div>
++        )}
++        {rightSeam && (
++          <div
++            style={{ width: `${(1 - rightSeam.cutFracLeft) * 100}%` }}
++            className={`absolute top-0 bottom-0 right-0 border-l-2 border-dashed pointer-events-none flex flex-col justify-end p-1 z-0 ${
++              seamsOn ? 'border-emerald-400/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
++            }`}
++          >
++            {!inLightbox && (
++              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-start border border-emerald-500/30 whitespace-nowrap">
++                Counted in {next.label}
++              </span>
++            )}
++          </div>
++        )}
++        {(report?.duplicates || []).map((dup) => {
++          const isRemoved = removedDuplicateBoxIds.has(dup.boxId);
++          const leftPct = (dup.x / bayW) * 100;
++          const topPct = (dup.y / bayH) * 100;
++          const widthPct = ((dup.width || 40) / bayW) * 100;
++          const heightPct = ((dup.height || 80) / bayH) * 100;
++          if (!dup.width && !dup.height && !dup.x && !dup.y) return null; // manually added without geometry
++          return (
++            <button
++              key={`${inLightbox ? 'lb-' : ''}dup-${dup.boxId}`}
++              type="button"
++              onClick={(e) => {
++                e.stopPropagation();
++                handleToggleBoxDuplicate(dup.boxId, session.key, dup.brand);
++              }}
++              style={{
++                left: `${Math.max(0, Math.min(99, leftPct))}%`,
++                top: `${Math.max(0, Math.min(99, topPct))}%`,
++                width: `${Math.max(1.5, widthPct)}%`,
++                height: `${Math.max(2, heightPct)}%`
++              }}
++              className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 z-10 ${
++                isRemoved
++                  ? 'bg-red-950/40 border-2 border-red-500 opacity-80'
++                  : 'bg-emerald-500/20 border-2 border-dashed border-emerald-400 opacity-90'
++              }`}
++              title={isRemoved ? `${dup.brand}: counted in the neighbouring bay. Tap to count here too.` : `${dup.brand}: counted here. Tap to stop counting.`}
++              aria-label={`${isRemoved ? 'Count' : 'Stop counting'} ${dup.brand} bottle`}
++            >
++              {isRemoved && (
++                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
++                  <div className="w-[140%] h-[2px] bg-red-500 rotate-[-45deg]" />
++                </div>
++              )}
++</button>
++          );
++        })}
++      </>
++    );
++  };
++
+   const activePhotoDisplay = resultsAisleView === 'ALL'
+     ? (capturedBaySessions.length > 1
+         ? (stitchedPanoramaUrl || (completedAisles[0] ? aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
+@@ -2214,18 +2313,28 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+         <div className="flex-1 flex flex-col justify-between py-1 space-y-2 overflow-hidden">
+           {/* Camera Guidance Viewfinder & Auto-Capture (Snapchat-style Live Video Feed) */}
+           <div 
++            ref={viewfinderRef}
+             onClick={() => {
+-              if (!cameraStreamActive) startCameraStream();
++              if (!cameraStreamActive && !pendingCapture) startCameraStream();
+             }}
+             className="relative flex-1 rounded-3xl border border-emerald-900/60 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group cursor-pointer"
+           >
+             {/* Live WebRTC Video Stream (Fills viewfinder) */}
++            {/* object-contain: the viewfinder shows exactly the frame that will be saved (no hidden edges) */}
+             <video
+               ref={videoRef}
+               playsInline
+               muted
+               autoPlay
+-              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
++              onLoadedMetadata={(e) => {
++                const v = e.currentTarget;
++                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
++              }}
++              onResize={(e) => {
++                const v = e.currentTarget;
++                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
++              }}
++              className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+                 cameraStreamActive ? 'opacity-100' : 'opacity-0'
+               }`}
+             />
+@@ -2242,6 +2351,30 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+             {/* Soft edge darkening scrim */}
+             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
+ 
++            {/* Previous-bay guide: the right edge of the last bay, faded over the left of the frame.
++                Lining it up keeps the overlap consistent and makes the overlap measurement reliable. */}
++            {ghostGuideUrl && (() => {
++              const frame = cameraStreamActive && videoDims.w
++                ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
++                : { left: 0, top: 0, width: viewfinderSize.w, height: viewfinderSize.h };
++              return (
++                <div
++                  className="absolute overflow-hidden pointer-events-none z-[5] border-r-2 border-dashed border-amber-400/90"
++                  style={{ left: frame.left, top: frame.top, width: frame.width * GHOST_GUIDE_FRAC, height: frame.height }}
++                >
++                  <img
++                    src={ghostGuideUrl}
++                    alt=""
++                    className="absolute top-0 right-0 h-full max-w-none opacity-45"
++                    style={{ width: frame.width, objectFit: 'fill' }}
++                  />
++                  <span className="absolute bottom-12 left-1 right-1 text-center text-[9px] font-black uppercase tracking-tight text-amber-200 bg-black/80 px-1 py-0.5 rounded border border-amber-500/40">
++                    Line up with {aisleSessions[ghostGuideBayKey!]?.label || 'previous bay'}
++                  </span>
++                </div>
++              );
++            })()}
++
+             {/* Camera Guidance: Level Line & Vertical Seam Markers (Drawn directly over live video) */}
+             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10">
+               {/* Top Viewfinder Banner */}
+@@ -2258,28 +2391,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+                 </span>
+               </div>
+ 
+-              {/* Two Vertical Seam Overlap Zones (dynamically reflects seamTolerance) */}
+-              <div 
+-                style={{ width: `${seamTolerance * 100}%` }}
+-                className="absolute top-10 bottom-10 left-0 bg-amber-500/15 border-r-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
+-                title={`Left Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
+-              >
+-                <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
+-                  Overlap
+-                </span>
+-                <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
+-              </div>
+-              <div 
+-                style={{ width: `${seamTolerance * 100}%` }}
+-                className="absolute top-10 bottom-10 right-0 bg-amber-500/15 border-l-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
+-                title={`Right Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
+-              >
+-                <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
+-                  Overlap
+-                </span>
+-                <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
+-              </div>
+-
+               {/* Horizontal Level Line drawn across live camera view */}
+               <div className="relative w-full flex items-center justify-center my-auto z-10">
+                 <div 
+@@ -2306,7 +2417,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+               {/* Bottom Guidance Cue */}
+               <div className="w-full flex items-center justify-center pointer-events-auto">
+                 <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md">
+-                  Keep 1 column of overlap inside the amber zone &bull; Tap shutter to snap
++                  {ghostGuideUrl
++                    ? 'Line up the faded strip with the shelf • Tap shutter to snap'
++                    : 'Hold level • Tap shutter to snap'}
+                 </span>
+               </div>
+             </div>
+@@ -2379,6 +2492,163 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+               </div>
+             )}
+ 
++            {/* Review-before-upload: nothing is sent to Roboflow until the rep taps Upload.
++                For Bay 2+, the measured overlap with the previous bay is shaded; the rep can drag its edge. */}
++            {pendingCapture && (() => {
++              const pc = pendingCapture;
++              const label = aisleSessions[pc.bayKey]?.label || 'Bay';
++              const prevKey = previousCapturedBayKey(pc.bayKey);
++              const prevSession = prevKey ? aisleSessions[prevKey] : null;
++              const prevLabel = prevSession?.label || 'previous bay';
++              const frame = fitRect(viewfinderSize.w, viewfinderSize.h, pc.width || 3, pc.height || 4);
++              const seam = pendingSeam;
++              const ovPct = seam ? seam.overlapFracRight * 100 : 0;
++              const cutPct = seam ? seam.cutFracRight * 100 : 0;
++              const needsCheck = Boolean(prevKey) && !isMeasuringSeam && (!seam || seam.method !== 'manual') &&
++                (!seam || seam.confidence === 'low' || seam.confidence === 'none');
++              const confidenceText: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' };
++
++              return (
++                <div
++                  className="absolute inset-0 z-40 bg-black"
++                  onClick={(e) => e.stopPropagation()}
++                >
++                  {/* Photo frame (exactly the photo, no letterbox) */}
++                  <div
++                    ref={previewFrameRef}
++                    className="absolute overflow-hidden touch-none select-none"
++                    style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}
++                    onPointerMove={(e) => {
++                      if (isDraggingSeamRef.current) handleSeamDrag(e.clientX);
++                    }}
++                    onPointerUp={() => { isDraggingSeamRef.current = false; }}
++                    onPointerCancel={() => { isDraggingSeamRef.current = false; }}
++                  >
++                    <img src={pc.dataUrl} alt={`${label} preview`} className="absolute inset-0 w-full h-full" style={{ objectFit: 'fill' }} draggable={false} />
++
++                    {prevKey && seam && !isMeasuringSeam && (
++                      <>
++                        {/* Overlap area (already photographed in the previous bay) */}
++                        <div
++                          className="absolute top-0 bottom-0 left-0 overflow-hidden bg-amber-500/25 pointer-events-none"
++                          style={{ width: `${ovPct}%` }}
++                        >
++                          {showAlignmentCheck && prevSession?.capturedPhotoUrl && (
++                            <img
++                              src={prevSession.capturedPhotoUrl}
++                              alt=""
++                              className="absolute max-w-none opacity-60"
++                              style={{
++                                width: `${(100 / Math.max(0.05, ovPct / 100)) / seam.widthRatio}%`,
++                                right: 0,
++                                top: `calc(50% - ${seam.dyFrac * 100}%)`,
++                                transform: 'translateY(-50%)'
++                              }}
++                            />
++                          )}
++                        </div>
++                        {/* Count line: left of it belongs to the previous bay */}
++                        <div
++                          className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400 pointer-events-none"
++                          style={{ left: `${cutPct}%` }}
++                        >
++                          <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-black text-emerald-200 bg-black/80 px-1 py-0.5 rounded border border-emerald-500/50">
++                            Count line
++                          </span>
++                        </div>
++                        {/* Draggable overlap edge */}
++                        <div
++                          role="slider"
++                          aria-label={`Where ${prevLabel} ends`}
++                          aria-valuenow={Math.round(ovPct)}
++                          aria-valuemin={0}
++                          aria-valuemax={80}
++                          className="absolute top-0 bottom-0 w-11 -ml-[22px] flex items-center justify-center cursor-ew-resize touch-none"
++                          style={{ left: `${ovPct}%` }}
++                          onPointerDown={(e) => {
++                            isDraggingSeamRef.current = true;
++                            (e.currentTarget.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId);
++                            handleSeamDrag(e.clientX);
++                          }}
++                        >
++                          <div className="h-full w-[3px] bg-amber-400 shadow shadow-black" />
++                          <div className="absolute w-7 h-12 rounded-lg bg-amber-400 text-black text-[11px] font-black flex items-center justify-center shadow-lg">
++                            ⟷
++                          </div>
++                          <span className="absolute bottom-24 whitespace-nowrap text-[9px] font-black text-amber-200 bg-black/85 px-1.5 py-0.5 rounded border border-amber-500/50">
++                            {prevLabel} ends here
++                          </span>
++                        </div>
++                      </>
++                    )}
++                  </div>
++
++                  {/* Header */}
++                  <div className="absolute top-0 left-0 right-0 p-2 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between pointer-events-none">
++                    <span className="text-[11px] font-black uppercase tracking-wider text-white">{label} &bull; Review before upload</span>
++                    {prevKey && isMeasuringSeam && (
++                      <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
++                        <Loader2 size={12} className="animate-spin" /> Measuring overlap…
++                      </span>
++                    )}
++                  </div>
++
++                  {/* Footer: status + actions */}
++                  <div className="absolute bottom-0 left-0 right-0 p-2.5 space-y-2 bg-gradient-to-t from-black/95 via-black/85 to-transparent">
++                    {prevKey && seam && !isMeasuringSeam && (
++                      <div className={`text-[11px] rounded-xl px-2.5 py-1.5 border ${
++                        needsCheck ? 'bg-amber-500/15 border-amber-500/50 text-amber-200' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
++                      }`}>
++                        {needsCheck ? (
++                          <span className="flex items-start gap-1.5">
++                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
++                            <span>Couldn't measure the overlap reliably. Drag the amber edge to where {prevLabel}'s photo ends, or set it to the far left if there's no overlap.</span>
++                          </span>
++                        ) : (
++                          <span>
++                            Overlap with {prevLabel}: <strong>{Math.round(ovPct)}%</strong>
++                            {seam.method === 'manual' ? ' (set by you)' : ` · ${confidenceText[seam.confidence]} confidence`}
++                            . Bottles left of the count line are counted in {prevLabel}.
++                          </span>
++                        )}
++                      </div>
++                    )}
++                    <div className="flex items-center gap-2">
++                      <button
++                        type="button"
++                        onClick={handleDiscardPending}
++                        className="h-11 px-3 rounded-2xl border border-slate-600 bg-slate-900/90 text-slate-200 font-bold text-xs flex items-center gap-1.5 active:scale-95 cursor-pointer"
++                      >
++                        <RefreshCw size={14} />
++                        <span>Retake</span>
++                      </button>
++                      {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
++                        <button
++                          type="button"
++                          onClick={() => setShowAlignmentCheck((v) => !v)}
++                          className={`h-11 px-3 rounded-2xl border font-bold text-xs active:scale-95 cursor-pointer ${
++                            showAlignmentCheck ? 'bg-amber-500 text-black border-amber-300' : 'bg-slate-900/90 text-amber-200 border-amber-600/60'
++                          }`}
++                          title={`Overlay ${prevLabel} on the overlap to check the alignment`}
++                        >
++                          {showAlignmentCheck ? 'Hide check' : 'Check'}
++                        </button>
++                      )}
++                      <button
++                        type="button"
++                        onClick={handleConfirmUpload}
++                        disabled={isMeasuringSeam}
++                        className="flex-1 h-11 rounded-2xl bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-[0.98] cursor-pointer"
++                      >
++                        <Upload size={15} />
++                        <span>Upload {label}</span>
++                      </button>
++                    </div>
++                  </div>
++                </div>
++              );
++            })()}
++
+             {/* Post-Capture Inline Bay Prompt Overlay */}
+             {showPostCapturePrompt && (
+               <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center space-y-3 animate-fade-in">
+@@ -2390,7 +2660,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+                     {aisleSessions[lastCapturedAisle]?.label || 'Bay'} Captured!
+                   </h3>
+                   <p className="text-[11px] text-emerald-300/80 mt-0.5">
+-                    Analysis is running in the background. What's next?
++                    Uploaded — analysis is running in the background. What's next?
+                   </p>
+                 </div>
+ 
+@@ -2434,7 +2704,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+               <button
+                 type="button"
+                 onClick={() => galleryInputRef.current?.click()}
+-                className={`h-12 border active:scale-[0.98] font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
++                disabled={Boolean(pendingCapture)}
++                className={`h-12 border disabled:opacity-40 active:scale-[0.98] font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                   isDark
+                     ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-800/70 shadow-sm'
+                     : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20 shadow-xs'
+@@ -2801,206 +3072,79 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+             </button>
+           </div>
+ 
+-          {/* Cross-Bay Duplicate Detections: Always Available when 2+ Bays exist */}
+-          {completedAisles.length >= 2 && (
+-            <div className="pb-1.5 shrink-0 animate-fade-in">
+-              {duplicateReviewStatus === 'pending' ? (
+-                <div className="space-y-1.5">
+-                  <button
+-                    type="button"
+-                    onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
+-                    className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 transition-all cursor-pointer shadow-sm group"
+-                  >
+-                    <div className="flex items-center gap-2 truncate">
+-                      <span className="relative flex h-2 w-2">
+-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+-                      </span>
+-                      <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+-                      <span className="text-xs font-black truncate">
+-                        {baysWithDuplicates.length > 0
+-                          ? (baysWithDuplicates.length === 1
+-                              ? `${totalDuplicatesCount} overlapping detection${totalDuplicatesCount > 1 ? 's' : ''} on ${baysWithDuplicates[0].bayLabel}`
+-                              : `${totalDuplicatesCount} overlapping detections across ${baysWithDuplicates.length} bays`)
+-                          : `Seam Overlap Controls (${Math.round(seamTolerance * 100)}%) • 0 duplicates detected`}
+-                      </span>
+-                    </div>
+-                    <div className="flex items-center gap-1 text-[11px] font-bold text-amber-200 shrink-0">
+-                      <span>{isDuplicatePanelExpanded ? 'Hide Controls' : 'Seam Controls'}</span>
+-                      {isDuplicatePanelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+-                    </div>
+-                  </button>
+-
+-                  {/* Expanded Duplicate Review & Seam Controls Panel */}
+-                  {isDuplicatePanelExpanded && (
+-                    <div className="p-3 rounded-2xl bg-black/95 border border-amber-500/40 shadow-xl space-y-2.5 backdrop-blur-md animate-fade-in text-left">
+-                      <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+-                        <div>
+-                          <h4 className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+-                            <Layers size={13} />
+-                            Overlapping Seam &amp; Live Controls
+-                          </h4>
+-                          <p className="text-[10px] text-amber-200/90 mt-0.5">
+-                            Comparing <strong>Bay 1 [Right {Math.round(seamTolerance * 100)}%]</strong> ⟷ <strong>Bay 2 [Left {Math.round(seamTolerance * 100)}%]</strong> across adjacent shelf seams.
+-                          </p>
+-                        </div>
+-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+-                          +{totalDuplicatesCount} facings
+-                        </span>
+-                      </div>
+-
+-                      {/* Interactive Seam Tolerance Controls */}
+-                      <div className="p-2.5 rounded-xl bg-[#0e1913] border border-emerald-900/60 space-y-2">
+-                        <div className="flex items-center justify-between text-[11px]">
+-                          <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+-                            <span>Seam Overlap Strip:</span>
+-                            <span className="font-mono text-amber-300 font-black bg-amber-500/25 px-2 py-0.5 rounded border border-amber-500/40 text-xs">
+-                              {Math.round(seamTolerance * 100)}%
+-                            </span>
+-                          </span>
+-                          <span className="text-[10px] text-emerald-400/80 font-semibold">
+-                            (Drag or tap preset to auto-recalculate)
+-                          </span>
+-                        </div>
+-
+-                        {/* Quick Presets */}
+-                        <div className="flex items-center justify-between gap-1">
+-                          {[0.10, 0.15, 0.20, 0.25, 0.30].map((pct) => (
+-                            <button
+-                              key={pct}
+-                              type="button"
+-                              onClick={() => handleUpdateSeamTolerance(pct)}
+-                              className={`flex-1 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+-                                Math.abs(seamTolerance - pct) < 0.01
+-                                  ? 'bg-amber-500 text-black shadow-md font-black scale-105 ring-1 ring-amber-300'
+-                                  : 'bg-black/60 text-slate-300 hover:text-white hover:bg-slate-800 border border-emerald-950'
+-                              }`}
+-                            >
+-                              {Math.round(pct * 100)}%
+-                            </button>
+-                          ))}
+-                        </div>
+-
+-                        {/* Slider */}
+-                        <div className="flex items-center gap-2 pt-0.5">
+-                          <span className="text-[10px] text-slate-400 font-mono font-bold">8%</span>
+-                          <input
+-                            type="range"
+-                            min="0.08"
+-                            max="0.35"
+-                            step="0.01"
+-                            value={seamTolerance}
+-                            onChange={(e) => handleUpdateSeamTolerance(parseFloat(e.target.value))}
+-                            className="flex-1 accent-amber-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+-                            title="Adjust seam overlap width percentage"
+-                          />
+-                          <span className="text-[10px] text-slate-400 font-mono font-bold">35%</span>
+-                        </div>
+-                      </div>
+-
+-                      {/* 1-Tap Toggle Tip */}
+-                      <div className="text-[10px] text-emerald-300/90 bg-emerald-950/60 border border-emerald-800/60 rounded-xl px-2.5 py-1.5 flex items-center justify-between">
+-                        <span>💡 <strong>1-Tap Manual Override:</strong> Tap any bottle box on the photo preview below to toggle duplicate on/off</span>
+-                      </div>
+-
+-                      {/* Duplicates Grouped by Bay and Brand */}
+-                      {baysWithDuplicates.length > 0 ? (
+-                        <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar pr-0.5">
+-                          {baysWithDuplicates.map((report) => {
+-                            const brandMap: Record<string, number> = {};
+-                            report.duplicates.forEach((d) => {
+-                              brandMap[d.brand] = (brandMap[d.brand] || 0) + 1;
+-                            });
+-
+-                            return (
+-                              <div key={report.bayKey} className="p-2 rounded-xl bg-[#132219]/90 border border-emerald-900/60">
+-                                <div className="flex items-center justify-between text-xs font-black text-white pb-1 border-b border-emerald-900/40">
+-                                  <span className="flex items-center gap-1.5">
+-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+-                                    {report.bayLabel}
+-                                  </span>
+-                                  <span className="text-[10px] font-bold text-amber-400">
+-                                    {report.duplicates.length} duplicate{report.duplicates.length > 1 ? 's' : ''} detected
+-                                  </span>
+-                                </div>
+-                                <div className="pt-1.5 space-y-1">
+-                                  {Object.entries(brandMap).map(([brand, count]) => {
+-                                    const brandColor = BRAND_COLORS[brand] || '#10B981';
+-                                    return (
+-                                      <div key={brand} className="flex items-center justify-between text-[11px] text-slate-200 px-1.5 py-0.5 rounded bg-black/40">
+-                                        <div className="flex items-center gap-1.5">
+-                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: brandColor }} />
+-                                          <span className="font-bold text-white">{brand}</span>
+-                                        </div>
+-                                        <span className="text-[10px] text-rose-300 font-bold">
+-                                          +{count} facing{count > 1 ? 's' : ''} added
+-                                        </span>
+-                                      </div>
+-                                    );
+-                                  })}
+-                                </div>
+-                              </div>
+-                            );
+-                          })}
+-                        </div>
+-                      ) : (
+-                        <div className="p-2.5 rounded-xl bg-[#132219]/60 border border-emerald-900/40 text-center text-emerald-300/80 text-[11px]">
+-                          No duplicate bottles detected at {Math.round(seamTolerance * 100)}% seam overlap. Drag slider above or tap any bottle to manually toggle duplicate.
+-                        </div>
+-                      )}
+-
+-                      {/* Actions: Remove duplicates & Keep all */}
+-                      <div className="grid grid-cols-2 gap-2 pt-1">
+-                        <button
+-                          type="button"
+-                          onClick={handleRemoveDuplicates}
+-                          className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:brightness-110 active:scale-95 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-rose-950/40"
+-                        >
+-                          <Check size={14} className="stroke-[3]" />
+-                          <span>Remove duplicates</span>
+-                        </button>
+-
+-                        <button
+-                          type="button"
+-                          onClick={handleKeepAllDuplicates}
+-                          className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
+-                        >
+-                          <X size={14} />
+-                          <span>Keep all</span>
+-                        </button>
+-                      </div>
+-                    </div>
+-                  )}
+-                </div>
+-              ) : duplicateReviewStatus === 'removed' ? (
+-                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold shadow-sm">
+-                  <div className="flex items-center gap-2 truncate">
+-                    <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
++          {/* Bay overlap summary: each bottle in an overlap is counted by one bay only */}
++          {seamSummaries.length > 0 && (() => {
++            const isFlagged = (j: typeof seamSummaries[number]) =>
++              !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
++            const flaggedCount = seamSummaries.filter(isFlagged).length;
++            const kept = duplicateReviewStatus === 'kept';
++            const confidenceLabel = (j: typeof seamSummaries[number]) => {
++              if (!j.seam) return 'No overlap set';
++              if (j.seam.method === 'manual') return 'Set by rep';
++              return { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' }[j.seam.confidence];
++            };
++            return (
++              <div className="pb-1.5 shrink-0 animate-fade-in space-y-1.5">
++                <button
++                  type="button"
++                  onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
++                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
++                    kept
++                      ? 'bg-slate-800/80 border-slate-700 text-slate-300'
++                      : flaggedCount > 0
++                      ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
++                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
++                  }`}
++                >
++                  <span className="flex items-center gap-2 truncate">
++                    {flaggedCount > 0 && !kept ? <AlertTriangle size={13} className="shrink-0" /> : <Layers size={13} className="shrink-0" />}
+                     <span className="truncate">
+-                      AI Outer Edge Seam Alignment: {totalDuplicatesCount > 0 ? `${totalDuplicatesCount} seam duplicate facing(s) automatically deducted` : 'No seam duplicates detected'}
++                      {kept
++                        ? 'Overlap removal off: all detections kept'
++                        : flaggedCount > 0
++                        ? `Check ${flaggedCount} bay join${flaggedCount > 1 ? 's' : ''} · ${totalDuplicatesCount} counted once`
++                        : `${totalDuplicatesCount} bottle${totalDuplicatesCount === 1 ? '' : 's'} in bay overlaps counted once`}
+                     </span>
+-                  </div>
+-                  <span className="text-[10px] uppercase font-mono font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+-                    Automated
+                   </span>
+-                </div>
+-              ) : (
+-                <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-400 text-xs font-medium">
+-                  <div className="flex items-center gap-1.5 truncate">
+-                    <Layers size={13} className="shrink-0" />
+-                    <span>Kept all detections ({totalDuplicatesCount} overlap{totalDuplicatesCount > 1 ? 's' : ''})</span>
++                  <span className="flex items-center gap-1 text-[11px] shrink-0">
++                    Details {isDuplicatePanelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
++                  </span>
++                </button>
++
++                {isDuplicatePanelExpanded && (
++                  <div className="p-2.5 rounded-2xl bg-black/90 border border-emerald-900/60 space-y-2 text-left">
++                    {seamSummaries.map((j) => (
++                      <div
++                        key={`${j.leftKey}-${j.rightKey}`}
++                        className={`flex items-center justify-between text-[11px] px-2 py-1.5 rounded-lg border ${
++                          isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100'
++                        }`}
++                      >
++                        <span className="font-bold">
++                          {j.leftLabel} ⟷ {j.rightLabel}
++                          <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
++                        </span>
++                        <span className="flex items-center gap-1.5 shrink-0">
++                          {!kept && <span className="font-mono">{j.excluded} once</span>}
++                          <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded-full border border-current/40">{confidenceLabel(j)}</span>
++                        </span>
++                      </div>
++                    ))}
++                    <p className="text-[10px] text-emerald-300/80">
++                      Open a bay tab to see its count lines. <span className="text-red-400 font-bold">Red ✕</span> = counted in the neighbouring bay (tap to count here too). <span className="text-emerald-300 font-bold">Green</span> = counted here (tap to undo).
++                    </p>
++                    <button
++                      type="button"
++                      onClick={kept ? handleRemoveDuplicates : handleKeepAllDuplicates}
++                      className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] uppercase tracking-wider cursor-pointer active:scale-[0.98]"
++                    >
++                      {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
++                    </button>
+                   </div>
+-                  <button
+-                    type="button"
+-                    onClick={handleRemoveDuplicates}
+-                    className="text-[10px] text-amber-400 hover:text-amber-300 underline cursor-pointer ml-2 shrink-0 font-bold"
+-                  >
+-                    Remove
+-                  </button>
+-                </div>
+-              )}
+-            </div>
+-          )}
++                )}
++              </div>
++            );
++          })()}
+ 
+           {/* 3. Shelf Image Preview (Panorama on ALL tab, individual photo on BAY tabs, tap to swap Raw/Annotated) */}
+           <div 
+@@ -3047,187 +3191,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+                     }
+               }
+             >
+-              {(() => {
+-                const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
+-                const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
+-
+-                const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
+-                const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
+-
+-                return (
+-                  <>
+-                    {/* Visual Seam Overlap Line Indicators */}
+-                    {resultsAisleView !== 'ALL' && (() => {
+-                      const bayIndex = completedAisles.indexOf(resultsAisleView);
+-                      const hasLeftSeam = bayIndex > 0;
+-                      const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
+-
+-                      return (
+-                        <>
+-                          {hasLeftSeam && (
+-                            <div 
+-                              style={{ width: `${seamTolerance * 100}%` }}
+-                              className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none flex flex-col justify-end p-1 z-0"
+-                            >
+-                              <span className="text-[8px] font-mono font-bold text-amber-300 bg-black/85 px-1 py-0.5 rounded shadow self-end border border-amber-500/30 whitespace-nowrap">
+-                                Left Seam {Math.round(seamTolerance * 100)}% (⟷ {completedAisles[bayIndex - 1]?.replace('bay_', 'Bay ')} Right)
+-                              </span>
+-                            </div>
+-                          )}
+-                          {hasRightSeam && (
+-                            <div 
+-                              style={{ width: `${seamTolerance * 100}%` }}
+-                              className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none flex flex-col justify-end p-1 z-0"
+-                            >
+-                              <span className="text-[8px] font-mono font-bold text-amber-300 bg-black/85 px-1 py-0.5 rounded shadow self-start border border-amber-500/30 whitespace-nowrap">
+-                                Right Seam {Math.round(seamTolerance * 100)}% (⟷ {completedAisles[bayIndex + 1]?.replace('bay_', 'Bay ')} Left)
+-                              </span>
+-                            </div>
+-                          )}
+-                        </>
+-                      );
+-                    })()}
+-
+-                    {/* Stitched Seam Divider Line for ALL Tab */}
+-                    {isAllView && completedAisles.length > 1 && (() => {
+-                      let acc = 0;
+-                      return completedAisles.slice(0, -1).map((k, idx) => {
+-                        acc += bayWidths[idx];
+-                        const linePct = (acc / totalWidth) * 100;
+-                        return (
+-                          <div 
+-                            key={`panorama-seam-${k}`}
+-                            style={{ left: `${linePct}%` }}
+-                            className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none flex flex-col justify-start p-1"
+-                          >
+-                            <span className="text-[8px] font-mono font-bold text-emerald-300 bg-black/85 px-1 py-0.5 rounded shadow border border-emerald-500/30 -translate-x-1/2 whitespace-nowrap">
+-                              Seam {k.replace('bay_', 'Bay ')} ⟷ {completedAisles[idx + 1]?.replace('bay_', 'Bay ')}
+-                            </span>
+-                          </div>
+-                        );
+-                      });
+-                    })()}
+-
+-                    {/* Source & Duplicate Bottle Highlights for all active bays */}
+-                    {baysToRender.map((bayKey) => {
+-                      const bayIndex = completedAisles.indexOf(bayKey);
+-                      if (bayIndex < 0) return null;
+-
+-                      const session = aisleSessions[bayKey];
+-                      const bayW = session?.naturalDimensions?.width || 800;
+-                      const bayH = session?.naturalDimensions?.height || 1280;
+-
+-                      let leftOffset = 0;
+-                      for (let i = 0; i < bayIndex; i++) {
+-                        leftOffset += bayWidths[i];
+-                      }
+-
+-                      const mapCoords = (x: number, y: number, w: number, h: number) => {
+-                        if (isAllView) {
+-                          const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
+-                          return {
+-                            leftPct: (boxLeftPx / totalWidth) * 100,
+-                            topPct: (y / bayH) * 100,
+-                            widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
+-                            heightPct: (h / bayH) * 100
+-                          };
+-                        }
+-                        return {
+-                          leftPct: (x / bayW) * 100,
+-                          topPct: (y / bayH) * 100,
+-                          widthPct: (w / bayW) * 100,
+-                          heightPct: (h / bayH) * 100
+-                        };
+-                      };
+-
+-                      const report = duplicateReports[bayKey];
+-                      const nextBayKey = completedAisles[bayIndex + 1];
+-                      const nextReport = nextBayKey ? duplicateReports[nextBayKey] : null;
+-
+-                      const myBoxes: any[] = session?.boxes && session.boxes.length > 0 
+-                        ? session.boxes 
+-                        : (session?.rawBoxes || []);
+-
+-                      return (
+-                        <React.Fragment key={`bay-overlays-${bayKey}`}>
+-                          {/* 1. Kept Source Bottle Highlights on Left Bay */}
+-                          {nextReport?.hasDuplicates && nextReport.duplicates.map((dup) => {
+-                            const matchedBox = myBoxes.find((b) => String(b.id || `lbox-${b.x}-${b.y}`) === dup.matchedWithBoxId);
+-                            if (!matchedBox) return null;
+-
+-                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
+-                              matchedBox.x || 0,
+-                              matchedBox.y || 0,
+-                              matchedBox.width || 40,
+-                              matchedBox.height || 80
+-                            );
+-
+-                            return (
+-                              <div
+-                                key={`source-${dup.boxId}`}
+-                                style={{
+-                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
+-                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
+-                                  width: `${Math.max(3, Math.min(40, widthPct))}%`,
+-                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
+-                                }}
+-                                className="absolute rounded border-2 border-emerald-400 bg-emerald-500/20 flex items-center justify-center pointer-events-none z-10"
+-                                title={`Source bottle on ${bayKey.replace('bay_', 'Bay ')} (kept)`}
+-                              >
+-                                <span className="absolute -top-3.5 right-0 bg-emerald-600 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight whitespace-nowrap">
+-                                  Kept (Overlaps {nextBayKey.replace('bay_', 'Bay ')})
+-                                </span>
+-                              </div>
+-                            );
+-                          })}
+-
+-                          {/* 2. Duplicate Bottle Highlights on Right Bay */}
+-                          {report?.duplicates.map((dup) => {
+-                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
+-                              dup.x,
+-                              dup.y,
+-                              dup.width || 40,
+-                              dup.height || 80
+-                            );
+-                            const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
+-
+-                            return (
+-                              <button
+-                                key={`dup-${dup.boxId}`}
+-                                type="button"
+-                                onClick={(e) => {
+-                                  e.stopPropagation();
+-                                  handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
+-                                }}
+-                                style={{
+-                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
+-                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
+-                                  width: `${Math.max(3, Math.min(40, widthPct))}%`,
+-                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
+-                                }}
+-                                className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup z-10 ${
+-                                  isRemoved
+-                                    ? 'opacity-40 hover:opacity-95 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
+-                                    : 'opacity-85 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
+-                                }`}
+-                                title={`Tap to ${isRemoved ? 'restore' : 'remove'} duplicate for ${dup.brand}`}
+-                                aria-label={`Toggle duplicate for ${dup.brand}`}
+-                              >
+-                                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+-                                  <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
+-                                </div>
+-                                <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
+-                                  {isRemoved ? 'Removed' : 'Duplicate'}
+-                                </span>
+-                              </button>
+-                            );
+-                          })}
+-                        </React.Fragment>
+-                      );
+-                    })}
+-                  </>
+-                );
+-              })()}
++              {renderSeamOverlays(false)}
+             </div>
+ 
+             {/* Tap-to-swap Mode indicator badge */}
+@@ -3320,7 +3284,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+ 
+                 const origCount = resultsAisleView === 'ALL'
+                   ? combinedOrigCounts[brand]
+-                  : viewSession?.originalAiCounts[brand];
++                  : (viewSession?.seamAdjustedCounts?.[brand] ?? viewSession?.originalAiCounts[brand]);
+ 
+                 // Delta tag appears ONLY once a value has changed from its initial count
+                 const hasChangedFromInitial = origCount !== undefined && count !== origCount;
+@@ -3636,132 +3600,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
+               />
+               {/* Duplicate Bottles Overlay in Lightbox */}
+               <div className="absolute inset-0 pointer-events-none overflow-hidden">
+-                {(() => {
+-                  const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
+-                  const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
+-
+-                  const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
+-                  const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
+-
+-                  return (
+-                    <>
+-                      {/* Visual Seam Guide based on active bay index */}
+-                      {resultsAisleView !== 'ALL' && (() => {
+-                        const bayIndex = completedAisles.indexOf(resultsAisleView);
+-                        const hasLeftSeam = bayIndex > 0;
+-                        const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
+-                        return (
+-                          <>
+-                            {hasLeftSeam && (
+-                              <div 
+-                                style={{ width: `${seamTolerance * 100}%` }}
+-                                className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
+-                              />
+-                            )}
+-                            {hasRightSeam && (
+-                              <div 
+-                                style={{ width: `${seamTolerance * 100}%` }}
+-                                className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
+-                              />
+-                            )}
+-                          </>
+-                        );
+-                      })()}
+-
+-                      {/* Stitched Seam Divider Line for ALL Tab */}
+-                      {isAllView && completedAisles.length > 1 && (() => {
+-                        let acc = 0;
+-                        return completedAisles.slice(0, -1).map((k, idx) => {
+-                          acc += bayWidths[idx];
+-                          const linePct = (acc / totalWidth) * 100;
+-                          return (
+-                            <div 
+-                              key={`lb-panorama-seam-${k}`}
+-                              style={{ left: `${linePct}%` }}
+-                              className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none"
+-                            />
+-                          );
+-                        });
+-                      })()}
+-
+-                      {/* Duplicate Bottle Highlights for all active bays */}
+-                      {baysToRender.map((bayKey) => {
+-                        const bayIndex = completedAisles.indexOf(bayKey);
+-                        if (bayIndex < 0) return null;
+-
+-                        const session = aisleSessions[bayKey];
+-                        const bayW = session?.naturalDimensions?.width || 800;
+-                        const bayH = session?.naturalDimensions?.height || 1280;
+-
+-                        let leftOffset = 0;
+-                        for (let i = 0; i < bayIndex; i++) {
+-                          leftOffset += bayWidths[i];
+-                        }
+-
+-                        const mapCoords = (x: number, y: number, w: number, h: number) => {
+-                          if (isAllView) {
+-                            const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
+-                            return {
+-                              leftPct: (boxLeftPx / totalWidth) * 100,
+-                              topPct: (y / bayH) * 100,
+-                              widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
+-                              heightPct: (h / bayH) * 100
+-                            };
+-                          }
+-                          return {
+-                            leftPct: (x / bayW) * 100,
+-                            topPct: (y / bayH) * 100,
+-                            widthPct: (w / bayW) * 100,
+-                            heightPct: (h / bayH) * 100
+-                          };
+-                        };
+-
+-                        const report = duplicateReports[bayKey];
+-                        if (!report?.hasDuplicates) return null;
+-
+-                        return report.duplicates.map((dup) => {
+-                          const { leftPct, topPct, widthPct, heightPct } = mapCoords(
+-                            dup.x,
+-                            dup.y,
+-                            dup.width || 40,
+-                            dup.height || 80
+-                          );
+-                          const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
+-
+-                          return (
+-                            <button
+-                              key={`lightbox-${dup.boxId}`}
+-                              type="button"
+-                              onClick={(e) => {
+-                                e.stopPropagation();
+-                                handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
+-                              }}
+-                              style={{
+-                                left: `${Math.max(0, Math.min(95, leftPct))}%`,
+-                                top: `${Math.max(0, Math.min(95, topPct))}%`,
+-                                width: `${Math.max(3, Math.min(30, widthPct))}%`,
+-                                height: `${Math.max(4, Math.min(50, heightPct))}%`,
+-                              }}
+-                              className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup ${
+-                                isRemoved
+-                                  ? 'opacity-40 hover:opacity-90 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
+-                                  : 'opacity-75 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
+-                              }`}
+-                              title={`Tap to toggle duplicate for ${dup.brand}`}
+-                            >
+-                              <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+-                                <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
+-                              </div>
+-                              <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
+-                                {isRemoved ? 'Removed' : 'Duplicate'}
+-                              </span>
+-                            </button>
+-                          );
+-                        });
+-                      })}
+-                    </>
+-                  );
+-                })()}
++                {renderSeamOverlays(true)}
+               </div>
+             </div>
+           </div>
+diff --git a/src/services/n8nService.ts b/src/services/n8nService.ts
+index 9342400..92a2bfe 100644
+--- a/src/services/n8nService.ts
++++ b/src/services/n8nService.ts
+@@ -50,6 +50,14 @@ export interface N8nPayloadMetadata {
+   posmWobblers: boolean;
+   needsReview?: boolean;
+   timestamp: string;
++  /** Overlap with the previous bay. n8n drops boxes whose centre is left of cutFrac × image width. */
++  seam?: {
++    previousBay: string;
++    cutFrac: number;
++    overlapFrac: number;
++    confidence: string;
++    method: string;
++  };
+ }
+ 
+ export interface N8nTransmissionResult {
+@@ -778,6 +786,15 @@ export async function sendAuditToN8n(
+   formData.append('timestamp', metadata.timestamp);
+   formData.append('device_platform', 'mobile_web');
+   formData.append('app_url', 'https://mt-app-v-sf1.vercel.app/');
++  formData.append('bay_key', metadata.aisle || '');
++  formData.append('bay_label', metadata.aisleLabel || '');
++  if (metadata.seam && metadata.seam.cutFrac > 0) {
++    formData.append('seam_cut_frac', metadata.seam.cutFrac.toFixed(4));
++    formData.append('seam_overlap_frac', metadata.seam.overlapFrac.toFixed(4));
++    formData.append('seam_previous_bay', metadata.seam.previousBay);
++    formData.append('seam_confidence', metadata.seam.confidence);
++    formData.append('seam_method', metadata.seam.method);
++  }
+ 
+   const payloadSummary = {
+     endpoint,
+diff --git a/src/services/seamAlignment.ts b/src/services/seamAlignment.ts
+new file mode 100644
+index 0000000..3dd4675
+--- /dev/null
++++ b/src/services/seamAlignment.ts
+@@ -0,0 +1,464 @@
++/**
++ * Bay seam alignment & overlap de-duplication.
++ *
++ * Reps shoot bays left to right, so the right edge of Bay N overlaps the left
++ * edge of Bay N+1. This module:
++ *   1. MEASURES the overlap between two adjacent bay photos (image matching on
++ *      the phone — no extra Roboflow calls), and
++ *   2. Places a dividing line in the middle of the overlap. Every detected box
++ *      is then owned by exactly one bay:
++ *        - Bay N keeps boxes whose centre is LEFT of its cut line
++ *        - Bay N+1 keeps boxes whose centre is RIGHT of its cut line
++ *      Bottles inside the overlap are visible whole in both photos, so cutting
++ *      by box centre never slices a bottle, and half-bottles at Bay N's right
++ *      edge are dropped from Bay N and counted whole in Bay N+1.
++ *
++ * All seam positions are stored as FRACTIONS of each photo's width so they are
++ * independent of whatever resolution the CV model reports boxes in.
++ */
++
++export type SeamConfidence = 'high' | 'medium' | 'low' | 'none';
++export type SeamMethod = 'auto' | 'manual' | 'guide' | 'none';
++
++export interface SeamInfo {
++  leftBayKey: string;
++  rightBayKey: string;
++  /** Fraction (0..1) of the RIGHT bay's width that also appears in the left bay. */
++  overlapFracRight: number;
++  /** overlapFracLeft = overlapFracRight * widthRatio (accounts for zoom/aspect differences). */
++  widthRatio: number;
++  /** Left bay keeps boxes with centreX / width < cutFracLeft. */
++  cutFracLeft: number;
++  /** Right bay keeps boxes with centreX / width >= cutFracRight. */
++  cutFracRight: number;
++  /** Best normalised cross-correlation score (-1..1), 0 when not measured. */
++  score: number;
++  confidence: SeamConfidence;
++  method: SeamMethod;
++  /** Relative zoom of right photo vs left photo (1 = same). */
++  scale: number;
++  /** Vertical shift of right photo vs left photo, as a fraction of photo height. */
++  dyFrac: number;
++}
++
++/** Width of the faded previous-bay guide shown in the viewfinder (and the prior for the measurement). */
++export const GHOST_GUIDE_FRAC = 0.3;
++
++/** Search limits for the overlap, as a fraction of the left photo's width. */
++export const MIN_OVERLAP_FRAC = 0.04;
++export const MAX_OVERLAP_FRAC = 0.7;
++
++// Thresholds below are starting values — tune them against real bay pairs.
++const SCORE_NONE = 0.15;
++const SCORE_LOW = 0.3;
++const SCORE_HIGH = 0.5;
++const MARGIN_LOW = 0.03;
++const MARGIN_HIGH = 0.06;
++/** How strongly the guide overlap is favoured (score units per 100% of width away from it). */
++const PRIOR_WEIGHT = 0.15;
++
++const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
++
++/** Builds a SeamInfo with consistent cut lines from an overlap measurement. */
++export function buildSeam(
++  leftBayKey: string,
++  rightBayKey: string,
++  overlapFracRight: number,
++  widthRatio: number,
++  extras: Partial<Pick<SeamInfo, 'score' | 'confidence' | 'method' | 'scale' | 'dyFrac'>> = {}
++): SeamInfo {
++  const ovR = clamp(overlapFracRight, 0, 0.95);
++  const ovL = clamp(ovR * widthRatio, 0, 0.95);
++  return {
++    leftBayKey,
++    rightBayKey,
++    overlapFracRight: ovR,
++    widthRatio,
++    cutFracLeft: 1 - ovL / 2,
++    cutFracRight: ovR / 2,
++    score: extras.score ?? 0,
++    confidence: extras.confidence ?? 'none',
++    method: extras.method ?? 'none',
++    scale: extras.scale ?? 1,
++    dyFrac: extras.dyFrac ?? 0
++  };
++}
++
++// ============================================================================
++// PURE IMAGE MATCHING (testable without a browser)
++// ============================================================================
++
++export interface GrayImage {
++  data: Float32Array;
++  w: number;
++  h: number;
++}
++
++/** Edge-strength image (|dx| + |dy|). Matching on edges is robust to exposure changes between shots. */
++export function gradientImage(img: GrayImage): GrayImage {
++  const { data, w, h } = img;
++  const out = new Float32Array(w * h);
++  for (let y = 1; y < h - 1; y++) {
++    for (let x = 1; x < w - 1; x++) {
++      const i = y * w + x;
++      const dx = data[i + 1] - data[i - 1];
++      const dy = data[i + w] - data[i - w];
++      out[i] = Math.abs(dx) + Math.abs(dy);
++    }
++  }
++  return { data: out, w, h };
++}
++
++/** Bilinear resize. */
++export function resizeGray(img: GrayImage, nw: number, nh: number): GrayImage {
++  const out = new Float32Array(nw * nh);
++  const sx = img.w / nw;
++  const sy = img.h / nh;
++  for (let y = 0; y < nh; y++) {
++    const fy = Math.min(img.h - 1, Math.max(0, (y + 0.5) * sy - 0.5));
++    const y0 = Math.floor(fy);
++    const y1 = Math.min(img.h - 1, y0 + 1);
++    const wy = fy - y0;
++    for (let x = 0; x < nw; x++) {
++      const fx = Math.min(img.w - 1, Math.max(0, (x + 0.5) * sx - 0.5));
++      const x0 = Math.floor(fx);
++      const x1 = Math.min(img.w - 1, x0 + 1);
++      const wx = fx - x0;
++      const a = img.data[y0 * img.w + x0];
++      const b = img.data[y0 * img.w + x1];
++      const c = img.data[y1 * img.w + x0];
++      const d = img.data[y1 * img.w + x1];
++      out[y * nw + x] = (a * (1 - wx) + b * wx) * (1 - wy) + (c * (1 - wx) + d * wx) * wy;
++    }
++  }
++  return { data: out, w: nw, h: nh };
++}
++
++/**
++ * Zero-mean normalised cross-correlation between the right `ow` columns of A
++ * and the left `ow` columns of B (B already scaled), with B shifted down by dy0 rows.
++ */
++function zncc(A: GrayImage, B: GrayImage, ow: number, dy0: number, stride: number, rowStride = stride): number {
++  const xA0 = A.w - ow;
++  const vStart = Math.max(0, -dy0);
++  const vEnd = Math.min(B.h, A.h - dy0);
++  if (vEnd - vStart < A.h * 0.5 || ow > B.w || ow < 2) return -1;
++
++  let n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
++  for (let v = vStart; v < vEnd; v += rowStride) {
++    const rowA = (v + dy0) * A.w + xA0;
++    const rowB = v * B.w;
++    for (let u = 0; u < ow; u += stride) {
++      const a = A.data[rowA + u];
++      const b = B.data[rowB + u];
++      sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
++      n++;
++    }
++  }
++  if (n < 50) return -1;
++  const cov = sab - (sa * sb) / n;
++  const va = saa - (sa * sa) / n;
++  const vb = sbb - (sb * sb) / n;
++  if (va <= 1e-6 || vb <= 1e-6) return -1;
++  return cov / Math.sqrt(va * vb);
++}
++
++export interface OverlapEstimate {
++  /** Overlap width as a fraction of the LEFT image width. */
++  overlapFracLeft: number;
++  /** Overlap width as a fraction of the RIGHT image width. */
++  overlapFracRight: number;
++  widthRatio: number;
++  scale: number;
++  dyFrac: number;
++  score: number;
++  margin: number;
++  confidence: SeamConfidence;
++}
++
++interface Candidate { ow: number; s: number; dy: number; score: number; raw: number; }
++
++function searchOverlap(
++  A: GrayImage,
++  B: GrayImage,
++  owRange: [number, number],
++  scales: number[],
++  dyRange: [number, number],
++  dyStep: number,
++  stride: number,
++  priorFrac: number | null,
++  priorWeight: number,
++  curve?: Map<number, number>,
++  rowStride = stride
++): Candidate {
++  let best: Candidate = { ow: 0, s: 1, dy: 0, score: -Infinity, raw: -Infinity };
++  for (const s of scales) {
++    const Bs = s === 1 ? B : resizeGray(B, Math.max(2, Math.round(B.w * s)), Math.max(2, Math.round(B.h * s)));
++    const centreOffset = Math.round((A.h - Bs.h) / 2);
++    for (let dy = dyRange[0]; dy <= dyRange[1]; dy += dyStep) {
++      const dy0 = centreOffset + dy;
++      for (let ow = owRange[0]; ow <= owRange[1]; ow++) {
++        const raw = zncc(A, Bs, ow, dy0, stride, rowStride);
++        if (raw <= -1) continue;
++        const score = priorFrac !== null ? raw - priorWeight * Math.abs(ow / A.w - priorFrac) : raw;
++        if (curve) curve.set(ow, Math.max(curve.get(ow) ?? -Infinity, score));
++        if (score > best.score) best = { ow, s, dy, score, raw };
++      }
++    }
++  }
++  return best;
++}
++
++/** Local maxima of the coarse score curve, best first, at least `sep` apart. */
++function curvePeaks(curve: Map<number, number>, sep: number, maxPeaks: number): number[] {
++  const keys = Array.from(curve.keys()).sort((a, b) => a - b);
++  const peaks = keys.filter((ow, i) => {
++    const v = curve.get(ow)!;
++    const prev = i > 0 ? curve.get(keys[i - 1])! : -Infinity;
++    const next = i < keys.length - 1 ? curve.get(keys[i + 1])! : -Infinity;
++    return v >= prev && v >= next;
++  });
++  peaks.sort((a, b) => curve.get(b)! - curve.get(a)!);
++  const chosen: number[] = [];
++  for (const p of peaks) {
++    if (chosen.every((c) => Math.abs(c - p) >= sep)) chosen.push(p);
++    if (chosen.length >= maxPeaks) break;
++  }
++  return chosen;
++}
++
++/**
++ * Estimates how much of the left photo's right edge reappears at the right
++ * photo's left edge. Coarse-to-fine search over overlap width, zoom (±10%) and
++ * vertical shift (±6% of height).
++ *
++ * `priorFrac` (fraction of left width) gently favours the overlap the rep was
++ * guided to — useful on shelves of identical bottles where several shifts look alike.
++ */
++export function estimateOverlap(
++  leftGray: GrayImage,
++  rightGray: GrayImage,
++  priorFrac: number | null = null
++): OverlapEstimate {
++  // Normalise both images to the same height first (aspect ratios kept).
++  const COARSE_H = 96;
++  const FINE_H = 480;
++  const toH = (g: GrayImage, H: number) => resizeGray(g, Math.max(8, Math.round((g.w * H) / g.h)), H);
++
++  // --- Coarse pass ---
++  const Ac = gradientImage(toH(leftGray, COARSE_H));
++  const Bc = gradientImage(toH(rightGray, COARSE_H));
++  const coarseScales = [0.9, 0.925, 0.95, 0.975, 1, 1.025, 1.05, 1.075, 1.1];
++  const dyMaxC = Math.round(COARSE_H * 0.06);
++  const owMinC = Math.max(3, Math.round(Ac.w * MIN_OVERLAP_FRAC));
++  const owMaxC = Math.min(Bc.w - 1, Math.round(Ac.w * MAX_OVERLAP_FRAC));
++  const curve = new Map<number, number>();
++  const coarseBest = searchOverlap(Ac, Bc, [owMinC, owMaxC], coarseScales, [-dyMaxC, dyMaxC], 1, 1, priorFrac, PRIOR_WEIGHT, curve);
++  if (coarseBest.score === -Infinity) {
++    return { overlapFracLeft: 0, overlapFracRight: 0, widthRatio: 1, scale: 1, dyFrac: 0, score: 0, margin: 0, confidence: 'none' };
++  }
++
++  // Repeated identical bottles make several shifts (one facing apart) look alike at
++  // low resolution, where price tags and small print disappear. So every distinct
++  // coarse peak is re-checked at high resolution, and confidence is the gap between
++  // the best and second-best candidate there.
++  const sep = Math.max(3, Math.round(Ac.w * 0.04));
++  const peaks = curvePeaks(curve, sep, 5);
++
++  const k = FINE_H / COARSE_H;
++  const Af = gradientImage(toH(leftGray, FINE_H));
++  const Bf = gradientImage(toH(rightGray, FINE_H));
++
++  const fineResults: Candidate[] = peaks.map((owC) => {
++    // Recover the zoom / vertical shift for this peak, then refine at full detail.
++    const c = searchOverlap(Ac, Bc, [Math.max(owMinC, owC - 1), Math.min(owMaxC, owC + 1)], coarseScales, [-dyMaxC, dyMaxC], 1, 1, priorFrac, PRIOR_WEIGHT);
++    const fineScales = [c.s - 0.0125, c.s, c.s + 0.0125].filter((s) => s >= 0.88 && s <= 1.12);
++    const owCentre = Math.round(c.ow * k);
++    const owSpan = Math.ceil(k);
++    const dyCentre = Math.round(c.dy * k);
++    const dySpan = Math.ceil(k / 2);
++    // Full horizontal detail (price-tag text), every 2nd row for speed.
++    const f = searchOverlap(
++      Af, Bf,
++      [Math.max(3, owCentre - owSpan), Math.min(Bf.w - 1, owCentre + owSpan)],
++      fineScales,
++      [dyCentre - dySpan, dyCentre + dySpan], 1, 1,
++      priorFrac, PRIOR_WEIGHT, undefined, 2
++    );
++    return f.score > -Infinity ? f : { ...c, ow: owCentre, dy: dyCentre };
++  });
++  fineResults.sort((a, b) => b.score - a.score);
++  const result = fineResults[0];
++  const margin = fineResults.length > 1 ? result.score - fineResults[1].score : 1;
++
++  const overlapFracLeft = result.ow / Af.w;
++  const rightScaledW = Bf.w * result.s;
++  const overlapFracRight = result.ow / rightScaledW;
++  const widthRatio = rightScaledW / Af.w;
++
++  const score = result.raw;
++  let confidence: SeamConfidence;
++  if (score < SCORE_NONE) confidence = 'none';
++  else if (score < SCORE_LOW || margin < MARGIN_LOW) confidence = 'low';
++  else if (score < SCORE_HIGH || margin < MARGIN_HIGH) confidence = 'medium';
++  else confidence = 'high';
++
++  return {
++    overlapFracLeft,
++    overlapFracRight: clamp(overlapFracRight, 0, 0.95),
++    widthRatio,
++    scale: result.s,
++    dyFrac: result.dy / FINE_H,
++    score,
++    margin,
++    confidence
++  };
++}
++
++// ============================================================================
++// BROWSER WRAPPER
++// ============================================================================
++
++function loadImage(src: string): Promise<HTMLImageElement> {
++  return new Promise((resolve, reject) => {
++    const img = new Image();
++    if (!src.startsWith('data:') && !src.startsWith('blob:')) img.crossOrigin = 'anonymous';
++    img.onload = () => resolve(img);
++    img.onerror = () => reject(new Error('Could not load bay photo for seam alignment'));
++    img.src = src;
++  });
++}
++
++/** Loads a photo into a grayscale buffer at the given height (aspect ratio kept). */
++export async function loadGray(src: string, targetH = 640): Promise<{ gray: GrayImage; naturalW: number; naturalH: number }> {
++  const img = await loadImage(src);
++  const nW = img.naturalWidth || img.width;
++  const nH = img.naturalHeight || img.height;
++  const h = Math.min(targetH, nH);
++  const w = Math.max(8, Math.round((nW * h) / nH));
++  const canvas = document.createElement('canvas');
++  canvas.width = w;
++  canvas.height = h;
++  const ctx = canvas.getContext('2d', { willReadFrequently: true });
++  if (!ctx) throw new Error('Canvas not available');
++  ctx.drawImage(img, 0, 0, w, h);
++  const px = ctx.getImageData(0, 0, w, h).data;
++  const data = new Float32Array(w * h);
++  for (let i = 0, j = 0; i < data.length; i++, j += 4) {
++    data[i] = 0.299 * px[j] + 0.587 * px[j + 1] + 0.114 * px[j + 2];
++  }
++  return { gray: { data, w, h }, naturalW: nW, naturalH: nH };
++}
++
++/**
++ * Measures the seam between two bay photos. Never throws: if matching fails the
++ * seam falls back to the guide overlap (when the rep shot with the guide) or to
++ * zero overlap, with confidence 'none' so the rep is asked to set the line.
++ */
++export async function estimateSeam(
++  leftPhotoUrl: string,
++  rightPhotoUrl: string,
++  leftBayKey: string,
++  rightBayKey: string,
++  opts: { shotWithGuide?: boolean } = {}
++): Promise<SeamInfo> {
++  const prior = opts.shotWithGuide ? GHOST_GUIDE_FRAC : null;
++  try {
++    const [L, R] = await Promise.all([loadGray(leftPhotoUrl), loadGray(rightPhotoUrl)]);
++    const est = estimateOverlap(L.gray, R.gray, prior);
++    if (est.confidence === 'none') {
++      return fallbackSeam(leftBayKey, rightBayKey, L.naturalW / L.naturalH, R.naturalW / R.naturalH, prior, est.score);
++    }
++    return buildSeam(leftBayKey, rightBayKey, est.overlapFracRight, est.widthRatio, {
++      score: Number(est.score.toFixed(3)),
++      confidence: est.confidence,
++      method: 'auto',
++      scale: Number(est.scale.toFixed(4)),
++      dyFrac: Number(est.dyFrac.toFixed(4))
++    });
++  } catch (err) {
++    console.warn('[seamAlignment] measurement failed:', err);
++    return fallbackSeam(leftBayKey, rightBayKey, 1, 1, prior, 0);
++  }
++}
++
++function fallbackSeam(
++  leftBayKey: string,
++  rightBayKey: string,
++  aspectLeft: number,
++  aspectRight: number,
++  prior: number | null,
++  score: number
++): SeamInfo {
++  const widthRatio = aspectRight / aspectLeft;
++  const overlapFracRight = prior !== null ? prior / widthRatio : 0;
++  return buildSeam(leftBayKey, rightBayKey, overlapFracRight, widthRatio, {
++    score,
++    confidence: 'none',
++    method: prior !== null ? 'guide' : 'none'
++  });
++}
++
++// ============================================================================
++// BOX OWNERSHIP (which bay counts which bottle)
++// ============================================================================
++
++export interface SeamBay {
++  key: string;
++  label?: string;
++  boxes: any[];
++  /** Width of the coordinate frame the boxes are expressed in (pixels). */
++  frameWidth: number;
++  /** Seam with the previous (left) bay, if any. */
++  seam?: SeamInfo | null;
++}
++
++export interface SeamExclusion {
++  bayKey: string;
++  box: any;
++  brand: string;
++  /** 'left-edge' = dropped because the previous bay owns it; 'right-edge' = the next bay owns it. */
++  side: 'left-edge' | 'right-edge';
++  otherBayKey: string;
++  centreFrac: number;
++}
++
++/** Horizontal centre of a box as a fraction of the photo width. */
++export function boxCentreFrac(box: any, frameWidth: number): number | null {
++  if (box?.pixelCoords && typeof box.pixelCoords.x === 'number' && frameWidth > 0) {
++    return (box.pixelCoords.x + (box.pixelCoords.width || 0) / 2) / frameWidth;
++  }
++  if (typeof box?.x === 'number' && frameWidth > 0) {
++    return (box.x + (typeof box.width === 'number' ? box.width : 0) / 2) / frameWidth;
++  }
++  if (typeof box?.left === 'number' && box.left <= 100) {
++    return (box.left + (typeof box.width === 'number' ? box.width : 0) / 2) / 100;
++  }
++  return null;
++}
++
++/**
++ * Decides which boxes each bay must NOT count, using the dividing line of each seam.
++ * `bays` must be in left-to-right order.
++ */
++export function computeSeamExclusions(bays: SeamBay[]): SeamExclusion[] {
++  const out: SeamExclusion[] = [];
++  bays.forEach((bay, i) => {
++    const leftSeam = bay.seam && i > 0 && bay.seam.leftBayKey === bays[i - 1].key ? bay.seam : null;
++    const next = bays[i + 1];
++    const rightSeam = next?.seam && next.seam.leftBayKey === bay.key ? next.seam : null;
++    if (!leftSeam && !rightSeam) return;
++
++    for (const box of bay.boxes || []) {
++      const c = boxCentreFrac(box, bay.frameWidth);
++      if (c === null) continue;
++      const brand = String(box.brand || box.label || 'OTHER').toUpperCase().trim();
++      if (leftSeam && leftSeam.overlapFracRight > 0 && c < leftSeam.cutFracRight) {
++        out.push({ bayKey: bay.key, box, brand, side: 'left-edge', otherBayKey: leftSeam.leftBayKey, centreFrac: c });
++      } else if (rightSeam && rightSeam.overlapFracRight > 0 && c >= rightSeam.cutFracLeft) {
++        out.push({ bayKey: bay.key, box, brand, side: 'right-edge', otherBayKey: rightSeam.rightBayKey, centreFrac: c });
++      }
++    }
++  });
++  return out;
++}
+diff --git a/src/types.ts b/src/types.ts
+index d3774d7..aa38096 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -108,6 +108,15 @@ export interface AisleSessionData {
+   rawBoxes?: any[];
+   naturalDimensions?: { width: number; height: number };
+   removedDuplicates?: DuplicateMatch[];
++  seam?: {
++    leftBayKey: string;
++    rightBayKey: string;
++    overlapFracRight: number;
++    cutFracLeft: number;
++    cutFracRight: number;
++    confidence: string;
++    method: string;
++  };
+   n8nStatus?: any;
+   timestamp?: string;
+ }

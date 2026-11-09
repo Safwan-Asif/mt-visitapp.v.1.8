@@ -26,6 +26,13 @@ import {
   toAlternativeDriveImageUrl
 } from '../services/googleSheetsService';
 import { getAuditCoordinates, GeoLocationResult } from '../services/geolocationService';
+import {
+  SeamInfo,
+  buildSeam,
+  estimateSeam,
+  computeSeamExclusions,
+  GHOST_GUIDE_FRAC
+} from '../services/seamAlignment';
 import { useTheme } from '../ThemeContext';
 import { LiveLocationBadge } from './LiveLocationBadge';
 
@@ -113,6 +120,10 @@ export interface NormalizedN8nAuditOutput {
   boxes: any[];
   meta?: any;
   dimensions?: { width: number; height: number };
+  /** True only when n8n reported the image size (not guessed from box extents). */
+  dimensionsExplicit?: boolean;
+  /** True when n8n already dropped the boxes left of the seam (seam-aware parse node). */
+  seamApplied?: boolean;
 }
 
 /**
@@ -157,8 +168,15 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     totalFacings = Number(target.totalFacings);
   }
 
+  // A seam-aware n8n returns de-duplicated `counts` plus `counts_before_seam`. The app applies
+  // the seam itself (so the rep can review and restore bottles), so it starts from the full counts.
+  const seamApplied = Boolean(target?.seam_applied);
+  const countsSource = seamApplied && target?.counts_before_seam && typeof target.counts_before_seam === 'object'
+    ? target.counts_before_seam
+    : target?.counts;
+
   // Parse stringified JSON counts if delivered as string
-  let rawCounts = target?.counts;
+  let rawCounts = countsSource;
   if (typeof rawCounts === 'string') {
     try {
       rawCounts = JSON.parse(rawCounts);
@@ -192,7 +210,7 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     }
   }
 
-  if (totalFacings === 0) {
+  if (seamApplied || (totalFacings === 0 && target?.total_facings === undefined && target?.totalFacings === undefined)) {
     totalFacings = Object.values(counts).reduce((acc, v) => acc + (v ?? 0), 0);
   }
 
@@ -233,6 +251,8 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     height = height || rawObj?.imagemediametadata?.height || rawObj?.imageMediaMetadata?.height || rawObj?.image?.height || rawObj?.meta?.height;
   }
 
+  const dimensionsExplicit = Boolean(width && height);
+
   // Fallback: deduce from max bounding box extent if boxes exist
   if ((!width || !height) && boxes.length > 0) {
     const maxBoxX = Math.max(...boxes.map((b: any) => (b.x || 0) + (b.width || 0)));
@@ -252,7 +272,9 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     replyText,
     boxes,
     meta: target?.meta,
-    dimensions: width && height ? { width: Number(width), height: Number(height) } : undefined
+    dimensions: width && height ? { width: Number(width), height: Number(height) } : undefined,
+    dimensionsExplicit,
+    seamApplied
   };
 }
 
@@ -276,6 +298,12 @@ export interface AisleSession {
   boxes: BoundingBox[];
   rawBoxes: any[];
   removedDuplicates?: DuplicateMatch[];
+  /** Seam with the previous (left) bay — measured on capture, confirmed by the rep before upload. */
+  seam?: SeamInfo | null;
+  /** True when the photo was taken with the previous-bay guide visible in the viewfinder. */
+  shotWithGuide?: boolean;
+  /** AI counts after the overlap with neighbouring bays is removed (baseline for the discrepancy log). */
+  seamAdjustedCounts?: Record<string, number>;
   n8nStatus: any;
   analysisStartTime: number | null;
   analysisDurationSeconds: number;
@@ -283,300 +311,85 @@ export interface AisleSession {
 }
 
 // ============================================================================
-// CROSS-BAY DUPLICATE DETECTION FOR OVERLAPPING SHELF PHOTOS
+// CROSS-BAY OVERLAP DE-DUPLICATION (measured seams — see services/seamAlignment.ts)
 // ============================================================================
 
-/**
- * Default strip percentage for adjacent bay seam overlap (default 15% = 0.15, range 8%–35%).
- * Compares boundary regions using Consensus Horizontal Translation Clustering.
- */
-export const DEFAULT_STRIP_PCT = 0.15;
-export const STRIP_PCT = DEFAULT_STRIP_PCT;
+/** Box ids from n8n ("box-1", "box-2", …) repeat in every bay, so ids are namespaced per bay. */
+export const bayBoxId = (bayKey: string, box: any, index: number) =>
+  `${bayKey}:${String(box?.id ?? `idx-${index}`)}`;
+
+/** Frame width the bay's boxes are expressed in. */
+const bayFrameWidth = (bay: AisleSession) => bay.naturalDimensions?.width || 800;
 
 /**
- * Vertical alignment tolerance multiplier (default 50% = 0.50).
- * Two shelf items are considered matching if the difference between their normalized center Y coordinates
- * is within 50% of the maximum normalized height of the two boxes:
- * Math.abs(rightNormCenterY - leftNormCenterY) <= Math.max(rightNormH, leftNormH) * Y_TOLERANCE
+ * Builds per-bay reports of boxes that belong to the neighbouring bay, using the
+ * dividing line in the middle of each measured overlap. Bays must be in
+ * left-to-right order. A bay only gets a left seam if it was shot right after its
+ * left neighbour (the seam's leftBayKey must match).
  */
-export const Y_TOLERANCE = 0.50;
+export function buildSeamDuplicateReports(baysInOrder: AisleSession[]): Record<string, BayDuplicateReport> {
+  const reports: Record<string, BayDuplicateReport> = {};
+  baysInOrder.forEach((bay) => {
+    reports[bay.key] = { bayKey: bay.key, bayLabel: bay.label, hasDuplicates: false, duplicates: [] };
+  });
 
-/**
- * COORDINATE SYSTEM DETERMINATION & NORMALIZATION:
- * Confirmed from real n8n webhook implementation (n8n-mt-visit-audit-workflow.json, lines 148-168):
- *
- *   const left = Math.round(pred.x - pred.width / 2);
- *   const top = Math.round(pred.y - pred.height / 2);
- *   const width = Math.round(pred.width);
- *   const height = Math.round(pred.height);
- *   boxes.push({ id: `box-${index + 1}`, brand: matchedBrand, x: left, y: top, width, height, ... });
- *
- * Findings:
- * 1. box.x and box.y delivered in webhook responses are TOP-LEFT CORNERS, NOT box centres.
- * 2. Cameras can deliver different resolutions per bay (e.g. 720x1280 vs 960x1280).
- *    To ensure robust matching, we normalize all bounding boxes into unit fractions [0.0, 1.0]
- *    using each bay's own measured resolution:
- *      normCenterX = (box.x + box.width / 2) / bayWidth
- *      normCenterY = (box.y + box.height / 2) / bayHeight
- * 3. Boundary Sorting: Left bay sorted right-to-left (outer edge first); Right bay sorted left-to-right (outer edge first).
- * 4. Horizontal Pan Displacement: deltaX = normCenterX_left - normCenterX_right.
- *    All true duplicate bottles across shelf tiers share the same physical camera shift.
- * 5. Consensus Clustering: Automatically rejects repeating brand bottles deeper in the bay whose displacement deviates from the seam.
- * 6. Single-bottle fallback for split/crop tests.
- */
+  const seamBays = baysInOrder.map((bay) => ({
+    key: bay.key,
+    label: bay.label,
+    boxes: (bay.rawBoxes && bay.rawBoxes.length > 0 ? bay.rawBoxes : bay.boxes || []).map((b: any, i: number) => ({
+      ...b,
+      __id: bayBoxId(bay.key, b, i)
+    })),
+    frameWidth: bayFrameWidth(bay),
+    seam: bay.seam || null
+  }));
 
-/**
- * Detects duplicate bottle detections occurring at the overlapping boundaries
- * of adjacent bays captured left-to-right using Edge-Anchored Consensus Translation Clustering.
- *
- * Takes sessions in aisle order, evaluates adjacent pairs, and flags duplicate boxes
- * on the RIGHT bay only so facings are not inflated.
- *
- * Returns a Record<string, BayDuplicateReport> keyed by bayKey.
- */
-interface BottleBoxNorm {
-  raw: any;
-  normX: number;
-  normRight: number;
-  normCenterX: number;
-  normCenterY: number;
-  normW: number;
-  normH: number;
-  brand: string;
+  for (const ex of computeSeamExclusions(seamBays)) {
+    const box = ex.box;
+    const report = reports[ex.bayKey];
+    report.duplicates.push({
+      boxId: box.__id,
+      brand: ex.brand,
+      x: typeof box.x === 'number' ? box.x : 0,
+      y: typeof box.y === 'number' ? box.y : 0,
+      width: typeof box.width === 'number' ? box.width : 0,
+      height: typeof box.height === 'number' ? box.height : 0,
+      confidence: box.confidence,
+      matchedWithBoxId: '',
+      leftBayKey: ex.side === 'left-edge' ? ex.otherBayKey : ex.bayKey,
+      rightBayKey: ex.side === 'left-edge' ? ex.bayKey : ex.otherBayKey
+    });
+    report.hasDuplicates = true;
+  }
+  return reports;
 }
 
 /**
- * Detects duplicate bottle detections occurring at adjacent bay seams using
- * OUTER EDGE BOTTLE ALIGNMENT (Row-by-Row 1st/2nd Edge Bottle Matching).
- *
- * 1. Groups bottles in Bay 1 and Bay 2 into horizontal shelf tiers/rows by normCenterY.
- * 2. On each shelf tier:
- *    - Left Bay (Bay 1): Selects the 1 rightmost bottle (max normCenterX).
- *    - Right Bay (Bay 2): Selects the 1st leftmost bottle (min normCenterX) AND 2nd leftmost bottle.
- * 3. Compares the 1st (and 2nd) leftmost bottle of Bay 2 against the rightmost bottle of Bay 1 on that tier.
- * 4. Flags matched bottles in Bay 2 as duplicates.
- *
- * Zero sliders required, zero reliance on photo width percentages, 100% automated & tamper-proof.
+ * Visible slice of each bay in the joined panorama (fractions of photo width):
+ * each bay is shown from its left count line to its right count line, so the
+ * panorama has no repeated shelf area.
  */
-export function detectCrossBayDuplicates(
-  aisleSessions: any[] | Record<string, any>,
-  seamTolerance: number = DEFAULT_STRIP_PCT,
-  yTolerance: number = Y_TOLERANCE
-): Record<string, BayDuplicateReport> {
-  const sessionsList = Array.isArray(aisleSessions)
-    ? aisleSessions
-    : Object.values(aisleSessions);
-
-  // Filter to captured bays in aisle order
-  const capturedBays = sessionsList.filter(
-    (b) => Boolean(b.capturedPhotoUrl || b.annotatedPhotoUrl || b.status === 'done')
-  );
-
-  const reports: Record<string, BayDuplicateReport> = {};
-
-  // Initialize empty report for every captured bay
-  capturedBays.forEach((bay) => {
-    reports[bay.key] = {
-      bayKey: bay.key,
-      bayLabel: bay.label,
-      hasDuplicates: false,
-      duplicates: []
-    };
+export function computeBayCrops(baysInOrder: AisleSession[]): Record<string, { start: number; end: number }> {
+  const crops: Record<string, { start: number; end: number }> = {};
+  baysInOrder.forEach((bay, i) => {
+    const prev = baysInOrder[i - 1];
+    const next = baysInOrder[i + 1];
+    const leftSeam = prev && bay.seam && bay.seam.leftBayKey === prev.key ? bay.seam : null;
+    const rightSeam = next && next.seam && next.seam.leftBayKey === bay.key ? next.seam : null;
+    const start = leftSeam ? leftSeam.cutFracRight : 0;
+    const end = rightSeam ? rightSeam.cutFracLeft : 1;
+    crops[bay.key] = end - start > 0.05 ? { start, end } : { start: 0, end: 1 };
   });
+  return crops;
+}
 
-  if (capturedBays.length < 2) {
-    return reports;
-  }
-
-  // Iterate over adjacent pairs of bays: (Bay 1, Bay 2), (Bay 2, Bay 3), etc.
-  for (let i = 0; i < capturedBays.length - 1; i++) {
-    const leftBay = capturedBays[i];
-    const rightBay = capturedBays[i + 1];
-
-    const leftBoxes: any[] = leftBay.boxes && leftBay.boxes.length > 0 
-      ? leftBay.boxes 
-      : (leftBay.rawBoxes || []);
-    const rightBoxes: any[] = rightBay.boxes && rightBay.boxes.length > 0 
-      ? rightBay.boxes 
-      : (rightBay.rawBoxes || []);
-
-    if (leftBoxes.length === 0 || rightBoxes.length === 0) continue;
-
-    // Use specific bay naturalDimensions; fall back to max coordinate extent if available
-    const leftBayWidth = leftBay.naturalDimensions?.width || Math.max(...leftBoxes.map((b) => (b.x || 0) + (b.width || 0)), 720);
-    const leftBayHeight = leftBay.naturalDimensions?.height || Math.max(...leftBoxes.map((b) => (b.y || 0) + (b.height || 0)), 1280);
-
-    const rightBayWidth = rightBay.naturalDimensions?.width || Math.max(...rightBoxes.map((b) => (b.x || 0) + (b.width || 0)), 960);
-    const rightBayHeight = rightBay.naturalDimensions?.height || Math.max(...rightBoxes.map((b) => (b.y || 0) + (b.height || 0)), 1280);
-
-    // Normalize left bay boxes
-    const leftNormalized: BottleBoxNorm[] = leftBoxes.map((b) => {
-      const w = b.width || 40;
-      const h = b.height || 80;
-      const x = b.x ?? 0;
-      const y = b.y ?? 0;
-      const centerX = x + w / 2;
-      const centerY = y + h / 2;
-      return {
-        raw: b,
-        normX: x / leftBayWidth,
-        normRight: (x + w) / leftBayWidth,
-        normCenterX: centerX / leftBayWidth,
-        normCenterY: centerY / leftBayHeight,
-        normW: w / leftBayWidth,
-        normH: h / leftBayHeight,
-        brand: (b.brand || b.label || 'OTHER').toUpperCase().trim()
-      };
-    });
-
-    // Normalize right bay boxes
-    const rightNormalized: BottleBoxNorm[] = rightBoxes.map((b) => {
-      const w = b.width || 40;
-      const h = b.height || 80;
-      const x = b.x ?? 0;
-      const y = b.y ?? 0;
-      const centerX = x + w / 2;
-      const centerY = y + h / 2;
-      return {
-        raw: b,
-        normX: x / rightBayWidth,
-        normRight: (x + w) / rightBayWidth,
-        normCenterX: centerX / rightBayWidth,
-        normCenterY: centerY / rightBayHeight,
-        normW: w / rightBayWidth,
-        normH: h / rightBayHeight,
-        brand: (b.brand || b.label || 'OTHER').toUpperCase().trim()
-      };
-    });
-
-    const rightReport = reports[rightBay.key] || {
-      bayKey: rightBay.key,
-      bayLabel: rightBay.label,
-      hasDuplicates: false,
-      duplicates: []
-    };
-
-    // Group Left Bay and Right Bay boxes into horizontal shelf tiers by normCenterY
-    interface ShelfRowGroup {
-      avgCenterY: number;
-      leftBoxes: BottleBoxNorm[];
-      rightBoxes: BottleBoxNorm[];
-    }
-
-    const shelfRows: ShelfRowGroup[] = [];
-
-    // Group left bay boxes into rows
-    for (const lBox of leftNormalized) {
-      let placed = false;
-      for (const row of shelfRows) {
-        if (Math.abs(lBox.normCenterY - row.avgCenterY) <= 0.09) {
-          row.leftBoxes.push(lBox);
-          row.avgCenterY = row.leftBoxes.reduce((sum, b) => sum + b.normCenterY, 0) / row.leftBoxes.length;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        shelfRows.push({
-          avgCenterY: lBox.normCenterY,
-          leftBoxes: [lBox],
-          rightBoxes: []
-        });
-      }
-    }
-
-    // Assign right bay boxes to the closest shelf row
-    for (const rBox of rightNormalized) {
-      let bestRow: ShelfRowGroup | null = null;
-      let minDiff = 0.09;
-      for (const row of shelfRows) {
-        const diff = Math.abs(rBox.normCenterY - row.avgCenterY);
-        if (diff < minDiff) {
-          minDiff = diff;
-          bestRow = row;
-        }
-      }
-      if (bestRow) {
-        bestRow.rightBoxes.push(rBox);
-      } else {
-        shelfRows.push({
-          avgCenterY: rBox.normCenterY,
-          leftBoxes: [],
-          rightBoxes: [rBox]
-        });
-      }
-    }
-
-    const matchedRightBoxIds = new Set<string>();
-
-    // For each shelf row, compare Bay 1's rightmost bottle against Bay 2's 1st and 2nd leftmost bottles
-    for (const row of shelfRows) {
-      if (row.leftBoxes.length === 0 || row.rightBoxes.length === 0) continue;
-
-      // Sort left row boxes right-to-left (rightmost first)
-      row.leftBoxes.sort((a, b) => b.normCenterX - a.normCenterX);
-      // Sort right row boxes left-to-right (leftmost first)
-      row.rightBoxes.sort((a, b) => a.normCenterX - b.normCenterX);
-
-      const rightmostLeftBox = row.leftBoxes[0];
-      const leftmostRight1 = row.rightBoxes[0];
-      const leftmostRight2 = row.rightBoxes.length > 1 ? row.rightBoxes[1] : null;
-
-      // Helper to check brand match
-      const checkBrandMatch = (b1: BottleBoxNorm, b2: BottleBoxNorm) => {
-        return b1.brand === b2.brand ||
-          (b1.brand === 'OTHER' && b2.brand !== 'OTHER') ||
-          (b2.brand === 'OTHER' && b1.brand !== 'OTHER');
-      };
-
-      // Helper to record duplicate
-      const addDuplicate = (rBoxNorm: BottleBoxNorm, lBoxNorm: BottleBoxNorm) => {
-        const rightBox = rBoxNorm.raw;
-        const leftBox = lBoxNorm.raw;
-
-        const rightX = typeof rightBox.x === 'number' ? rightBox.x : (typeof rightBox.left === 'number' ? rightBox.left : Math.round(rBoxNorm.normX * rightBayWidth));
-        const rightY = typeof rightBox.y === 'number' ? rightBox.y : (typeof rightBox.top === 'number' ? rightBox.top : Math.round((rBoxNorm.normCenterY - rBoxNorm.normH / 2) * rightBayHeight));
-
-        const leftX = typeof leftBox.x === 'number' ? leftBox.x : (typeof leftBox.left === 'number' ? leftBox.left : Math.round(lBoxNorm.normX * leftBayWidth));
-        const leftY = typeof leftBox.y === 'number' ? leftBox.y : (typeof leftBox.top === 'number' ? leftBox.top : Math.round((lBoxNorm.normCenterY - lBoxNorm.normH / 2) * leftBayHeight));
-
-        const rightId = String(rightBox.id || `rbox-${rightX}-${rightY}`);
-        if (matchedRightBoxIds.has(rightId)) return;
-        matchedRightBoxIds.add(rightId);
-
-        const leftId = String(leftBox.id || `lbox-${leftX}-${leftY}`);
-        const resolvedBrand = rBoxNorm.brand !== 'OTHER' ? rBoxNorm.brand : lBoxNorm.brand;
-
-        rightReport.duplicates.push({
-          boxId: rightId,
-          brand: resolvedBrand,
-          x: rightX,
-          y: rightY,
-          width: rightBox.width || rightBox.w || Math.round(rBoxNorm.normW * rightBayWidth),
-          height: rightBox.height || rightBox.h || Math.round(rBoxNorm.normH * rightBayHeight),
-          confidence: rightBox.confidence,
-          matchedWithBoxId: leftId,
-          leftBayKey: leftBay.key,
-          rightBayKey: rightBay.key
-        });
-        rightReport.hasDuplicates = true;
-      };
-
-      // 1st Check: Does Bay 1's rightmost bottle match Bay 2's 1st leftmost bottle?
-      if (leftmostRight1 && checkBrandMatch(rightmostLeftBox, leftmostRight1)) {
-        addDuplicate(leftmostRight1, rightmostLeftBox);
-      } 
-      // 2nd Check: Heavy overlap fallback — does Bay 1's rightmost bottle match Bay 2's 2nd leftmost bottle?
-      else if (leftmostRight2 && checkBrandMatch(rightmostLeftBox, leftmostRight2)) {
-        addDuplicate(leftmostRight1, rightmostLeftBox);
-        addDuplicate(leftmostRight2, rightmostLeftBox);
-      }
-    }
-
-    reports[rightBay.key] = rightReport;
-  }
-
-  return reports;
+/** Rectangle of an image of size iw×ih fitted (object-contain) inside cw×ch. */
+function fitRect(cw: number, ch: number, iw: number, ih: number) {
+  if (!cw || !ch || !iw || !ih) return { left: 0, top: 0, width: cw, height: ch };
+  const scale = Math.min(cw / iw, ch / ih);
+  const width = iw * scale;
+  const height = ih * scale;
+  return { left: (cw - width) / 2, top: (ch - height) / 2, width, height };
 }
 
 /**
@@ -588,7 +401,8 @@ export function detectCrossBayDuplicates(
  */
 export async function stitchBayPanorama(
   bays: AisleSession[],
-  forceRaw: boolean = false
+  forceRaw: boolean = false,
+  crops: Record<string, { start: number; end: number }> = {}
 ): Promise<string> {
   const validBays = bays.filter(
     (b) => Boolean(b.capturedPhotoUrl || b.annotatedPhotoUrl)
@@ -649,11 +463,14 @@ export async function stitchBayPanorama(
     const targetHeight = Math.min(1200, Math.max(600, maxHeight));
 
     // Scale both width and height by the same factor (targetHeight / meta.height) to preserve aspect ratio
+    // Each bay is drawn only between its count lines (crop), so overlapping shelf area appears once.
     const scaledSegments = bayImageMeta.map((meta) => {
+      const crop = crops[meta.bay.key] || { start: 0, end: 1 };
       const scale = targetHeight / (meta.height || targetHeight);
-      const scaledWidth = Math.round((meta.width || 800) * scale);
+      const scaledWidth = Math.max(1, Math.round((meta.width || 800) * (crop.end - crop.start) * scale));
       return {
         ...meta,
+        crop,
         scaledWidth,
         scaledHeight: targetHeight
       };
@@ -676,7 +493,9 @@ export async function stitchBayPanorama(
     // Draw each bay segment left-to-right in aisle order
     let currentX = 0;
     scaledSegments.forEach((seg, index) => {
-      ctx.drawImage(seg.img, currentX, 0, seg.scaledWidth, seg.scaledHeight);
+      const srcX = seg.crop.start * seg.width;
+      const srcW = (seg.crop.end - seg.crop.start) * seg.width;
+      ctx.drawImage(seg.img, srcX, 0, srcW, seg.height, currentX, 0, seg.scaledWidth, seg.scaledHeight);
 
       // Draw thin vertical dashed dividers at each seam
       if (index > 0) {
@@ -918,45 +737,54 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   const [newBrandName, setNewBrandName] = useState<string>('');
   const [newBrandCount, setNewBrandCount] = useState<number>(2);
 
+  // Upload-on-confirm: a captured photo waits here until the rep taps Upload.
+  // For Bay 2+, the overlap with the previous bay is measured and shown for confirmation.
+  const [pendingCapture, setPendingCapture] = useState<{
+    bayKey: string;
+    file: File | null;
+    dataUrl: string;
+    width: number;
+    height: number;
+    shotWithGuide: boolean;
+    isRetake: boolean;
+  } | null>(null);
+  const [pendingSeam, setPendingSeam] = useState<SeamInfo | null>(null);
+  const [isMeasuringSeam, setIsMeasuringSeam] = useState<boolean>(false);
+  const [showAlignmentCheck, setShowAlignmentCheck] = useState<boolean>(false);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const pendingDataUrlRef = useRef<string | null>(null);
+  const isDraggingSeamRef = useRef<boolean>(false);
+
+  // Viewfinder geometry: the live video is shown uncropped (object-contain) so the
+  // preview matches the saved photo exactly; the guide is positioned on that frame.
+  const viewfinderRef = useRef<HTMLDivElement | null>(null);
+  const [viewfinderSize, setViewfinderSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  // Blocks level-triggered auto-capture while the rep is lining up the guide or reviewing a photo.
+  const captureBlockedRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (step !== 'CAPTURE') return;
+    const el = viewfinderRef.current;
+    if (!el) return;
+    const update = () => setViewfinderSize({ w: el.clientWidth, h: el.clientHeight });
+    update();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [step]);
+
+  // Latest auto-capture function (the sensor listener is bound once per step, so it must not hold a stale closure).
+  const autoCaptureFnRef = useRef<() => void>(() => {});
+
   // Cross-Bay Duplicate Detection States
-  const [seamTolerance, setSeamTolerance] = useState<number>(DEFAULT_STRIP_PCT);
   const [duplicateReports, setDuplicateReports] = useState<Record<string, BayDuplicateReport>>({});
   const [duplicateReviewStatus, setDuplicateReviewStatus] = useState<'pending' | 'removed' | 'kept'>('pending');
   const [isDuplicatePanelExpanded, setIsDuplicatePanelExpanded] = useState<boolean>(true);
   const [removedDuplicateBoxIds, setRemovedDuplicateBoxIds] = useState<Set<string>>(new Set());
-
-  // Ghost Alignment Overlay State for Next Bay (10-15% Right Slice of Previous Bay)
-  const [ghostOverlayUrl, setGhostOverlayUrl] = useState<string | null>(null);
-  const [showGhostOverlay, setShowGhostOverlay] = useState<boolean>(true);
-
-  // Previous bay session calculation for ghost overlay (Bay 2 uses Bay 1, Bay 3 uses Bay 2, etc.)
-  const allBayKeys = useMemo(() => Object.keys(aisleSessions), [aisleSessions]);
-  const currentBayIndex = useMemo(() => allBayKeys.indexOf(currentAisle), [allBayKeys, currentAisle]);
-  const previousBayKey = currentBayIndex > 0 ? allBayKeys[currentBayIndex - 1] : null;
-  const previousBaySession = previousBayKey ? aisleSessions[previousBayKey] : null;
-
-  // Dynamically extract the right 10-15% strip of the preceding bay as a ghost preview
-  useEffect(() => {
-    if (step !== 'CAPTURE') {
-      setGhostOverlayUrl(null);
-      return;
-    }
-
-    if (previousBaySession?.capturedPhotoUrl) {
-      let isMounted = true;
-      extractRightOverlapStrip(previousBaySession.capturedPhotoUrl, seamTolerance || 0.15)
-        .then((dataUrl) => {
-          if (isMounted) {
-            setGhostOverlayUrl(dataUrl || null);
-          }
-        });
-      return () => {
-        isMounted = false;
-      };
-    } else {
-      setGhostOverlayUrl(null);
-    }
-  }, [step, currentAisle, previousBaySession?.capturedPhotoUrl, seamTolerance]);
 
   // Image letterbox-free bounding rect tracking in Shelf Preview
   const shelfContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1343,9 +1171,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       if (level && isMotionLow) {
         if (!levelHoldStartTimeRef.current) {
           levelHoldStartTimeRef.current = now;
-        } else if (now - levelHoldStartTimeRef.current >= 500 && !autoCaptureTriggeredRef.current) {
+        } else if (now - levelHoldStartTimeRef.current >= 500 && !autoCaptureTriggeredRef.current && !captureBlockedRef.current) {
           autoCaptureTriggeredRef.current = true;
-          handleAutoCaptureTrigger();
+          autoCaptureFnRef.current();
         }
       } else {
         levelHoldStartTimeRef.current = null;
@@ -1407,6 +1235,32 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     return capturedAisles.every((k) => aisleSessions[k]?.status === 'done');
   }, [capturedAisles, aisleSessions]);
 
+  /** Nearest earlier bay (in shooting order) that has a photo — the left neighbour for the seam. */
+  const previousCapturedBayKey = useCallback((bayKey: string): string | null => {
+    const idx = bayKeys.indexOf(bayKey);
+    for (let i = idx - 1; i >= 0; i--) {
+      if (aisleSessions[bayKeys[i]]?.capturedPhotoUrl) return bayKeys[i];
+    }
+    return null;
+  }, [bayKeys, aisleSessions]);
+
+  const nextCapturedBayKey = useCallback((bayKey: string): string | null => {
+    const idx = bayKeys.indexOf(bayKey);
+    if (idx < 0) return null;
+    for (let i = idx + 1; i < bayKeys.length; i++) {
+      if (aisleSessions[bayKeys[i]]?.capturedPhotoUrl) return bayKeys[i];
+    }
+    return null;
+  }, [bayKeys, aisleSessions]);
+
+  // Previous bay whose right edge is shown as a faded guide while shooting the current bay
+  const ghostGuideBayKey = step === 'CAPTURE' && !pendingCapture ? previousCapturedBayKey(currentAisle) : null;
+  const ghostGuideUrl = ghostGuideBayKey ? aisleSessions[ghostGuideBayKey]?.capturedPhotoUrl || null : null;
+
+  useEffect(() => {
+    captureBlockedRef.current = Boolean(pendingCapture) || Boolean(ghostGuideUrl);
+  }, [pendingCapture, ghostGuideUrl]);
+
   // Standard brands list
   const standardBrands = CATEGORY_BRANDS[category] || ['YARA', 'ZAIN', 'ADEERA', 'AL RAI', 'DAWI', 'OTHER'];
   const allBrandKeys = useMemo(() => {
@@ -1442,7 +1296,12 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     const res: Record<string, number> = {};
     for (const b of allBrandKeys) {
       res[b] = completedAisles.reduce(
-        (sum, k) => sum + (aisleSessions[k]?.originalAiCounts[b] ?? aisleSessions[k]?.counts[b] ?? 0),
+        (sum, k) =>
+          sum +
+          (aisleSessions[k]?.seamAdjustedCounts?.[b] ??
+            aisleSessions[k]?.originalAiCounts[b] ??
+            aisleSessions[k]?.counts[b] ??
+            0),
         0
       );
     }
@@ -1513,7 +1372,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     let isMounted = true;
     setIsStitchingPanorama(true);
 
-    stitchBayPanorama(capturedBaySessions, showRawPhotoComparison)
+    const crops = duplicateReviewStatus === 'removed' ? computeBayCrops(capturedBaySessions) : {};
+    stitchBayPanorama(capturedBaySessions, showRawPhotoComparison, crops)
       .then((dataUrl) => {
         if (isMounted) {
           setStitchedPanoramaUrl(dataUrl);
@@ -1536,7 +1396,12 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
   // 2. Overlapping Async Upload & Analysis Handler (Runs in background without touching POSM)
   const startAsyncBayAnalysis = useCallback(
-    async (targetAisle: string, file: File | null, dataUrl: string) => {
+    async (
+      targetAisle: string,
+      file: File | null,
+      dataUrl: string,
+      seamOpts: { seam?: SeamInfo | null; shotWithGuide?: boolean; captureDims?: { width: number; height: number } } = {}
+    ) => {
       const startTime = Date.now();
 
       // Immediately set status to analysing
@@ -1547,7 +1412,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             key: targetAisle,
             label: `Bay ${Object.keys(prev).length + 1}`,
             status: 'idle',
-            naturalDimensions: { width: 800, height: 800 },
+            naturalDimensions: seamOpts.captureDims || { width: 800, height: 800 },
             rawCounts: {},
             counts: {},
             originalAiCounts: {},
@@ -1562,6 +1427,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           capturedFile: file,
           capturedPhotoUrl: dataUrl,
           capturedFileName: file?.name || `${targetAisle}_capture.jpg`,
+          ...(seamOpts.captureDims ? { naturalDimensions: seamOpts.captureDims } : {}),
+          seam: seamOpts.seam ?? null,
+          shotWithGuide: Boolean(seamOpts.shotWithGuide),
           analysisStartTime: startTime,
           errorMessage: undefined
         }
@@ -1596,10 +1464,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             posmShelfSticker,
             posmWobblers,
             needsReview: false,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            seam: seamOpts.seam
+              ? {
+                  previousBay: seamOpts.seam.leftBayKey,
+                  cutFrac: seamOpts.seam.cutFracRight,
+                  overlapFrac: seamOpts.seam.overlapFracRight,
+                  confidence: seamOpts.seam.confidence,
+                  method: seamOpts.seam.method
+                }
+              : undefined
           },
           90000,
-          { width: 800, height: 800 }
+          seamOpts.captureDims || { width: 800, height: 800 }
         );
         console.log(`[Bay ${targetAisle}] Transmission result:`, result);
 
@@ -1612,7 +1489,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
         setAisleSessions((prev) => {
           const currentPrev = prev[targetAisle];
-          const newDimensions = normalized.dimensions || currentPrev?.naturalDimensions || { width: 800, height: 800 };
+          const newDimensions = (normalized.dimensionsExplicit && normalized.dimensions)
+            || seamOpts.captureDims
+            || currentPrev?.naturalDimensions
+            || normalized.dimensions
+            || { width: 800, height: 800 };
           return {
             ...prev,
             [targetAisle]: {
@@ -1679,6 +1560,125 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setStep('CAPTURE');
   };
 
+  /**
+   * Every capture (camera, gallery, sample) lands here. Nothing is uploaded yet:
+   * the rep reviews the photo — and for Bay 2+ the measured overlap — then taps Upload.
+   */
+  const beginBayPreview = useCallback(
+    (targetAisle: string, file: File | null, dataUrl: string, dims: { width: number; height: number } | null) => {
+      const isRetake = retakeBayKey === targetAisle;
+      const prevKey = previousCapturedBayKey(targetAisle);
+      const prevUrl = prevKey ? aisleSessions[prevKey]?.capturedPhotoUrl : null;
+      const shotWithGuide = Boolean(prevUrl) && !file; // live camera shots of Bay 2+ show the guide
+
+      setLastCapturedAisle(targetAisle);
+      setShowPostCapturePrompt(false);
+      setShowAlignmentCheck(false);
+      setPendingSeam(null);
+      pendingDataUrlRef.current = dataUrl;
+      setPendingCapture({
+        bayKey: targetAisle,
+        file,
+        dataUrl,
+        width: dims?.width || 0,
+        height: dims?.height || 0,
+        shotWithGuide,
+        isRetake
+      });
+
+      const finishMeasure = (w: number, h: number) => {
+        if (w && h) {
+          setPendingCapture((p) => (p && p.dataUrl === dataUrl ? { ...p, width: w, height: h } : p));
+        }
+        if (!prevKey || !prevUrl) {
+          setIsMeasuringSeam(false);
+          return;
+        }
+        setIsMeasuringSeam(true);
+        estimateSeam(prevUrl, dataUrl, prevKey, targetAisle, { shotWithGuide })
+          .then((seam) => {
+            if (pendingDataUrlRef.current === dataUrl) setPendingSeam(seam);
+          })
+          .finally(() => {
+            if (pendingDataUrlRef.current === dataUrl) setIsMeasuringSeam(false);
+          });
+      };
+
+      if (dims?.width && dims?.height) {
+        finishMeasure(dims.width, dims.height);
+      } else {
+        const probe = new Image();
+        probe.onload = () => finishMeasure(probe.naturalWidth, probe.naturalHeight);
+        probe.onerror = () => finishMeasure(0, 0);
+        probe.src = dataUrl;
+      }
+    },
+    [retakeBayKey, previousCapturedBayKey, aisleSessions]
+  );
+
+  /** Rep tapped Upload: store the confirmed seam and send the photo for analysis. */
+  const handleConfirmUpload = () => {
+    if (!pendingCapture) return;
+    const { bayKey, file, dataUrl, width, height, shotWithGuide, isRetake } = pendingCapture;
+    const captureDims = width && height ? { width, height } : undefined;
+
+    startAsyncBayAnalysis(bayKey, file, dataUrl, { seam: pendingSeam, shotWithGuide, captureDims });
+
+    // If a middle bay was re-shot, the seam of the bay to its right is stale: re-measure it.
+    const nextKey = nextCapturedBayKey(bayKey);
+    const nextUrl = nextKey ? aisleSessions[nextKey]?.capturedPhotoUrl : null;
+    if (nextKey && nextUrl) {
+      const nextShotWithGuide = Boolean(aisleSessions[nextKey]?.shotWithGuide);
+      estimateSeam(dataUrl, nextUrl, bayKey, nextKey, { shotWithGuide: nextShotWithGuide }).then((seam) => {
+        setAisleSessions((prev) => (prev[nextKey] ? { ...prev, [nextKey]: { ...prev[nextKey], seam } } : prev));
+      });
+    }
+
+    pendingDataUrlRef.current = null;
+    setPendingCapture(null);
+    setPendingSeam(null);
+    setShowAlignmentCheck(false);
+
+    if (isRetake) {
+      setRetakeBayKey(null);
+      setShowPostCapturePrompt(false);
+      setStep('POSM');
+    } else {
+      setShowPostCapturePrompt(true);
+    }
+  };
+
+  /** Rep rejected the photo: discard it and return to the camera for the same bay. */
+  const handleDiscardPending = () => {
+    pendingDataUrlRef.current = null;
+    setPendingCapture(null);
+    setPendingSeam(null);
+    setIsMeasuringSeam(false);
+    setShowAlignmentCheck(false);
+    autoCaptureTriggeredRef.current = false;
+    levelHoldStartTimeRef.current = null;
+  };
+
+  /** Rep dragged the overlap edge in the preview (fraction of the new photo's width). */
+  const handleSeamDrag = (clientX: number) => {
+    const frame = previewFrameRef.current;
+    if (!frame || !pendingCapture) return;
+    const rect = frame.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(0.8, (clientX - rect.left) / rect.width));
+    const prevKey = previousCapturedBayKey(pendingCapture.bayKey);
+    if (!prevKey) return;
+    setPendingSeam((cur) => {
+      const ratio = cur?.widthRatio ?? 1;
+      return buildSeam(prevKey, pendingCapture.bayKey, frac, ratio, {
+        score: cur?.score ?? 0,
+        confidence: cur?.confidence ?? 'none',
+        method: 'manual',
+        scale: cur?.scale ?? 1,
+        dyFrac: cur?.dyFrac ?? 0
+      });
+    });
+  };
+
   // Auto-capture frame execution from WebRTC video stream
   const handleAutoCaptureTrigger = useCallback(() => {
     if (!videoRef.current || !cameraStreamActive) {
@@ -1706,66 +1706,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(video, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
-      const targetAisle = currentAisle;
-      setLastCapturedAisle(targetAisle);
-
-      const isRetake = retakeBayKey === targetAisle;
-
-      // Convert canvas snapshot into a real binary File object (identical to gallery upload) with high crispness (0.92)
-      canvas.toBlob((blob) => {
-        let capturedFile: File | null = null;
-        let objectUrl = '';
-
-        if (blob) {
-          const fileName = `camera_${targetAisle}_${Date.now()}.jpg`;
-          capturedFile = new File([blob], fileName, { type: 'image/jpeg' });
-          objectUrl = URL.createObjectURL(blob);
-        } else {
-          objectUrl = canvas.toDataURL('image/jpeg', 0.92);
-        }
-
-        // Store captured photo in bay session without triggering n8n yet (status: 'idle')
-        setAisleSessions((prev) => {
-          const s = prev[targetAisle];
-          return {
-            ...prev,
-            [targetAisle]: {
-              ...(s || {
-                key: targetAisle,
-                label: targetAisle,
-                naturalDimensions: { width: w, height: h },
-                rawCounts: {},
-                counts: {},
-                originalAiCounts: {},
-                totalFacings: null,
-                boxes: [],
-                rawBoxes: [],
-                n8nStatus: null,
-                analysisStartTime: null,
-                analysisDurationSeconds: 0
-              }),
-              status: 'idle',
-              capturedFile,
-              capturedPhotoUrl: objectUrl,
-              capturedFileName: capturedFile?.name || `${targetAisle}_capture.jpg`,
-              naturalDimensions: { width: w, height: h },
-              errorMessage: undefined
-            }
-          };
-        });
-
-        setRetakeBayKey(null);
-        setShowPostCapturePrompt(true);
-      }, 'image/jpeg', 0.90);
+      beginBayPreview(currentAisle, null, dataUrl, { width: canvas.width, height: canvas.height });
     } catch (err) {
       console.warn('Auto-capture canvas snapshot note, falling back to system camera:', err);
       cameraInputRef.current?.click();
     }
-  }, [cameraStreamActive, currentAisle]);
+  }, [cameraStreamActive, currentAisle, beginBayPreview]);
+  autoCaptureFnRef.current = handleAutoCaptureTrigger;
 
   // Manual Shutter Click handler: snaps live video frame inside app or opens system camera
   const handleManualShutter = () => {
+    if (pendingCapture) return;
     if (cameraStreamActive && videoRef.current && videoRef.current.videoWidth > 0) {
       handleAutoCaptureTrigger();
     } else {
@@ -1773,103 +1726,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     }
   };
 
-  // File Picker selected handler (Stores photo for review without sending to n8n yet)
+  // File Picker selected handler
   const handlePhotoFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const objectUrl = URL.createObjectURL(file);
-    const targetAisle = currentAisle;
-
-    setLastCapturedAisle(targetAisle);
-
-    setAisleSessions((prev) => {
-      const s = prev[targetAisle];
-      return {
-        ...prev,
-        [targetAisle]: {
-          ...(s || {
-            key: targetAisle,
-            label: targetAisle,
-            naturalDimensions: { width: 800, height: 800 },
-            rawCounts: {},
-            counts: {},
-            originalAiCounts: {},
-            totalFacings: null,
-            boxes: [],
-            rawBoxes: [],
-            n8nStatus: null,
-            analysisStartTime: null,
-            analysisDurationSeconds: 0
-          }),
-          status: 'idle',
-          capturedFile: file,
-          capturedPhotoUrl: objectUrl,
-          capturedFileName: file.name,
-          errorMessage: undefined
-        }
-      };
-    });
-
-    // Measure exact natural image dimensions
-    const probe = new Image();
-    probe.onload = () => {
-      if (probe.naturalWidth && probe.naturalHeight) {
-        setAisleSessions((prev) => {
-          const s = prev[targetAisle];
-          if (!s) return prev;
-          return {
-            ...prev,
-            [targetAisle]: {
-              ...s,
-              naturalDimensions: { width: probe.naturalWidth, height: probe.naturalHeight }
-            }
-          };
-        });
-      }
-    };
-    probe.src = objectUrl;
-
-    setRetakeBayKey(null);
-    setShowPostCapturePrompt(true);
+    beginBayPreview(currentAisle, file, objectUrl, null);
     e.target.value = '';
   };
 
-  // Debug Demo Sample Shelf (Stores demo photo without triggering n8n yet)
+  // Debug Demo Sample Shelf
   const handleUseDemoSample = () => {
-    const targetAisle = currentAisle;
-    setLastCapturedAisle(targetAisle);
-
-    setAisleSessions((prev) => {
-      const s = prev[targetAisle];
-      return {
-        ...prev,
-        [targetAisle]: {
-          ...(s || {
-            key: targetAisle,
-            label: targetAisle,
-            naturalDimensions: { width: 800, height: 800 },
-            rawCounts: {},
-            counts: {},
-            originalAiCounts: {},
-            totalFacings: null,
-            boxes: [],
-            rawBoxes: [],
-            n8nStatus: null,
-            analysisStartTime: null,
-            analysisDurationSeconds: 0
-          }),
-          status: 'idle',
-          capturedFile: null,
-          capturedPhotoUrl: fallbackShelfPhoto,
-          capturedFileName: `sample_${category.toLowerCase()}.jpg`,
-          errorMessage: undefined
-        }
-      };
-    });
-
-    setRetakeBayKey(null);
-    setShowPostCapturePrompt(true);
+    beginBayPreview(currentAisle, null, fallbackShelfPhoto, null);
   };
 
   // Flexible Dynamic Bay Addition (Transmits confirmed bay to n8n, then adds next bay)
@@ -1877,7 +1746,16 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setShowPostCapturePrompt(false);
     autoCaptureTriggeredRef.current = false;
     levelHoldStartTimeRef.current = null;
-    setShowGhostOverlay(true);
+    setPendingCapture(null);
+    setPendingSeam(null);
+    setIsMeasuringSeam(false);
+    setShowAlignmentCheck(false);
+
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
+    if (!cameraStreamActive) {
+      startCameraStream();
+    }
 
     // Transmit the confirmed bay to n8n workflow only now
     const confirmedBayKey = lastCapturedAisle || currentAisle;
@@ -1945,68 +1823,82 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   };
 
   // 2. Submitting POSM: gated on all captured bays reaching status === 'done'
-  // Runs Cross-Bay Duplicate Detection ONCE on entering RESULTS, before panorama builds and before compliance comparison
+  // Applies the measured bay seams (each bottle counted by exactly one bay) on entering RESULTS.
   const handlePosmSubmit = () => {
     if (!allCapturedDone || erroredAisles.length > 0) return;
+    applySeamDeduplication();
+    setStep('RESULTS');
+    setResultsAisleView('ALL');
+  };
 
-    // Detect duplicates across adjacent bay seams using First Complete Column Sequence Alignment
-    const reports = detectCrossBayDuplicates(aisleSessions, seamTolerance);
-    setDuplicateReports(reports);
+  /**
+   * Deducts every box that belongs to a neighbouring bay (per the confirmed seams).
+   * Anything deducted earlier — by seams or by manual taps — is restored first, so
+   * running this again (e.g. after going back to POSM) never double-deducts.
+   */
+  const applySeamDeduplication = () => {
+    const ordered = bayKeys.map((k) => aisleSessions[k]).filter((s) => s && s.status === 'done');
+    const rawReports = buildSeamDuplicateReports(ordered);
+    const reports: Record<string, BayDuplicateReport> = {};
+    Object.entries(rawReports).forEach(([k, r]) => {
+      reports[k] = { ...r, duplicates: r.duplicates.map((d) => ({ ...d, brand: canonicalizeBrand(d.brand, category) })) };
+    });
 
-    // Auto-deduct verified column seam duplicates for an automated, tamper-proof rep experience
+    const previouslyRemoved = removedDuplicateBoxIds;
+    const previousReports = duplicateReports;
     const newlyRemovedIds = new Set<string>();
+
     setAisleSessions((prev) => {
       const updated = { ...prev };
+      const counts: Record<string, Record<string, number>> = {};
+      const getCounts = (k: string) => (counts[k] ??= { ...(updated[k]?.counts || {}) });
 
-      Object.entries(reports).forEach(([bayKey, report]) => {
-        if (!report.hasDuplicates || report.duplicates.length === 0) return;
-        const session = updated[bayKey];
-        if (!session) return;
-
-        const nextCounts = { ...session.counts };
-        const nextRawCounts = { ...session.rawCounts };
-
-        report.duplicates.forEach((d) => {
-          newlyRemovedIds.add(d.boxId);
-          if (nextCounts[d.brand] !== undefined && nextCounts[d.brand] > 0) {
-            nextCounts[d.brand] -= 1;
-          }
-          if (nextRawCounts[d.brand] !== undefined && nextRawCounts[d.brand] > 0) {
-            nextRawCounts[d.brand] -= 1;
-          }
+      // 1. Restore earlier deductions
+      Object.values(previousReports).forEach((rep) => {
+        rep.duplicates.forEach((d) => {
+          if (!previouslyRemoved.has(d.boxId) || !updated[rep.bayKey]) return;
+          const c = getCounts(rep.bayKey);
+          c[d.brand] = (c[d.brand] || 0) + 1;
         });
+      });
 
-        const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
+      // 2. Deduct boxes owned by the neighbouring bay
+      Object.values(reports).forEach((rep) => {
+        rep.duplicates.forEach((d) => {
+          newlyRemovedIds.add(d.boxId);
+          const c = getCounts(rep.bayKey);
+          if ((c[d.brand] || 0) > 0) c[d.brand] -= 1;
+        });
+      });
 
-        updated[bayKey] = {
+      Object.entries(counts).forEach(([k, c]) => {
+        const session = updated[k];
+        updated[k] = {
           ...session,
-          counts: nextCounts,
-          rawCounts: nextRawCounts,
-          totalFacings: nextTotal,
-          removedDuplicates: report.duplicates
+          counts: c,
+          totalFacings: Object.values(c).reduce((a, b) => a + (b ?? 0), 0),
+          removedDuplicates: reports[k]?.duplicates || []
         };
+      });
+
+      // AI counts after seam removal = baseline for the discrepancy log (rep edits are measured against it)
+      ordered.forEach((s) => {
+        const orig = updated[s.key]?.originalAiCounts || {};
+        const adjusted: Record<string, number> = { ...orig };
+        (reports[s.key]?.duplicates || []).forEach((d) => {
+          if ((adjusted[d.brand] || 0) > 0) adjusted[d.brand] -= 1;
+        });
+        updated[s.key] = { ...updated[s.key], seamAdjustedCounts: adjusted };
       });
 
       return updated;
     });
 
+    setDuplicateReports(reports);
     setRemovedDuplicateBoxIds(newlyRemovedIds);
     setDuplicateReviewStatus('removed');
     setIsDuplicatePanelExpanded(false);
-
-    setStep('RESULTS');
-    setResultsAisleView('ALL');
-  };
-
-  // Re-evaluates duplicate detection with a custom seamTolerance (e.g. 0.10, 0.15, 0.20, 0.25, 0.30)
-  const handleUpdateSeamTolerance = (newTolerance: number) => {
-    setSeamTolerance(newTolerance);
-    const reports = detectCrossBayDuplicates(aisleSessions, newTolerance);
-    setDuplicateReports(reports);
-    if (duplicateReviewStatus === 'removed') {
-      setDuplicateReviewStatus('pending');
-      setRemovedDuplicateBoxIds(new Set());
-    }
+    setStitchedPanoramaUrl(null);
   };
 
   // 1-Tap Toggle for any box on the active bay to add or remove it as a duplicate
@@ -2016,16 +1908,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       const session = prev[bayKey];
       if (!session) return prev;
       const nextCounts = { ...session.counts };
-      const nextRawCounts = { ...session.rawCounts };
 
       if (isCurrentlyRemoved) {
-        // Unmark duplicate: add 1 facing back
+        // Restore: add 1 facing back
         nextCounts[boxBrand] = (nextCounts[boxBrand] || 0) + 1;
-        nextRawCounts[boxBrand] = (nextRawCounts[boxBrand] || 0) + 1;
       } else {
         // Mark as duplicate: deduct 1 facing
         if (nextCounts[boxBrand] && nextCounts[boxBrand] > 0) nextCounts[boxBrand] -= 1;
-        if (nextRawCounts[boxBrand] && nextRawCounts[boxBrand] > 0) nextRawCounts[boxBrand] -= 1;
       }
 
       const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
@@ -2034,7 +1923,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         [bayKey]: {
           ...session,
           counts: nextCounts,
-          rawCounts: nextRawCounts,
           totalFacings: nextTotal
         }
       };
@@ -2053,11 +1941,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setDuplicateReports((prev) => {
       const rep = prev[bayKey];
       if (!rep) return prev;
+      // Restored boxes stay in the report (shown as "Counted") so the rep can tap them again.
       const exists = rep.duplicates.some((d) => d.boxId === boxId);
-      let nextDups = [...rep.duplicates];
-      if (isCurrentlyRemoved && exists) {
-        nextDups = nextDups.filter((d) => d.boxId !== boxId);
-      } else if (!isCurrentlyRemoved && !exists) {
+      const nextDups = [...rep.duplicates];
+      if (!isCurrentlyRemoved && !exists) {
         nextDups.push({
           boxId,
           brand: boxBrand,
@@ -2084,62 +1971,56 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
   // Cross-Bay Duplicates Summary
   const totalDuplicatesCount = useMemo(() => {
-    return Object.values(duplicateReports).reduce((sum, r) => sum + r.duplicates.length, 0);
-  }, [duplicateReports]);
+    return Object.values(duplicateReports).reduce(
+      (sum, r) => sum + r.duplicates.filter((d) => removedDuplicateBoxIds.has(d.boxId)).length,
+      0
+    );
+  }, [duplicateReports, removedDuplicateBoxIds]);
 
-  const baysWithDuplicates = useMemo(() => {
-    return Object.values(duplicateReports).filter((r) => r.hasDuplicates && r.duplicates.length > 0);
-  }, [duplicateReports]);
+  /** One row per bay join, for the results summary. */
+  const seamSummaries = useMemo(() => {
+    const ordered = completedAisles.map((k) => aisleSessions[k]).filter(Boolean);
+    return ordered.slice(1).map((bay, i) => {
+      const left = ordered[i];
+      const seam = bay.seam && bay.seam.leftBayKey === left.key ? bay.seam : null;
+      const excluded = [
+        ...(duplicateReports[left.key]?.duplicates || []).filter((d) => d.rightBayKey === bay.key),
+        ...(duplicateReports[bay.key]?.duplicates || []).filter((d) => d.leftBayKey === left.key)
+      ].filter((d) => removedDuplicateBoxIds.has(d.boxId)).length;
+      return { leftKey: left.key, leftLabel: left.label, rightKey: bay.key, rightLabel: bay.label, seam, excluded };
+    });
+  }, [completedAisles, aisleSessions, duplicateReports, removedDuplicateBoxIds]);
 
-  // "Remove duplicates" handler: subtracts duplicates from that bay's counts & rawCounts,
-  // marks removed box IDs in state, and recalculates totals and compliance
-  const handleRemoveDuplicates = () => {
+  // "Keep all": restores every deducted bottle and turns the seam cut off
+  const handleKeepAllDuplicates = () => {
     setAisleSessions((prev) => {
       const updated = { ...prev };
-      const newlyRemovedIds = new Set(removedDuplicateBoxIds);
-
-      Object.entries(duplicateReports).forEach(([bayKey, report]) => {
-        if (!report.hasDuplicates || report.duplicates.length === 0) return;
-        const session = updated[bayKey];
+      Object.values(duplicateReports).forEach((rep) => {
+        const session = updated[rep.bayKey];
         if (!session) return;
-
-        const nextCounts = { ...session.counts };
-        const nextRawCounts = { ...session.rawCounts };
-
-        report.duplicates.forEach((d) => {
-          newlyRemovedIds.add(d.boxId);
-          // Decrement count for the duplicate brand on this bay
-          if (nextCounts[d.brand] !== undefined && nextCounts[d.brand] > 0) {
-            nextCounts[d.brand] -= 1;
-          }
-          if (nextRawCounts[d.brand] !== undefined && nextRawCounts[d.brand] > 0) {
-            nextRawCounts[d.brand] -= 1;
-          }
+        const c = { ...session.counts };
+        rep.duplicates.forEach((d) => {
+          if (removedDuplicateBoxIds.has(d.boxId)) c[d.brand] = (c[d.brand] || 0) + 1;
         });
-
-        const nextTotal = Object.values(nextCounts).reduce((a, b) => a + (b ?? 0), 0);
-
-        updated[bayKey] = {
+        updated[rep.bayKey] = {
           ...session,
-          counts: nextCounts,
-          rawCounts: nextRawCounts,
-          totalFacings: nextTotal,
-          removedDuplicates: [...(session.removedDuplicates || []), ...report.duplicates]
+          counts: c,
+          totalFacings: Object.values(c).reduce((a, b) => a + (b ?? 0), 0),
+          removedDuplicates: [],
+          seamAdjustedCounts: undefined
         };
       });
-
-      setRemovedDuplicateBoxIds(newlyRemovedIds);
       return updated;
     });
-
-    setDuplicateReviewStatus('removed');
-    setIsDuplicatePanelExpanded(false);
-  };
-
-  // "Keep all" handler: leaves counts untouched and dismisses the duplicate review
-  const handleKeepAllDuplicates = () => {
+    setRemovedDuplicateBoxIds(new Set());
     setDuplicateReviewStatus('kept');
     setIsDuplicatePanelExpanded(false);
+    setStitchedPanoramaUrl(null);
+  };
+
+  // "Re-apply": counts each bottle once again using the seams
+  const handleRemoveDuplicates = () => {
+    applySeamDeduplication();
   };
 
   // 6. Proportional Delta Distribution on ALL Tab
@@ -2308,7 +2189,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         boundingBoxes: s.boxes,
         rawBoxes: s.rawBoxes,
         naturalDimensions: s.naturalDimensions,
-        removedDuplicates: s.removedDuplicates || (duplicateReviewStatus === 'removed' ? duplicateReports[key]?.duplicates : undefined) || [],
+        removedDuplicates: (duplicateReports[key]?.duplicates || []).filter((d) => removedDuplicateBoxIds.has(d.boxId)),
+        seam: s.seam || undefined,
         timestamp: new Date().toISOString()
       };
     });
@@ -2323,8 +2205,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       .join(', ');
 
     const currentDiscrepancyLog = formatDiscrepancyLog(combinedOrigCounts, combinedCounts);
-    const dupNote = duplicateReviewStatus === 'removed' && totalDuplicatesCount > 0
-      ? ` [${totalDuplicatesCount} cross-bay overlap duplicate(s) removed]`
+    const seamNote = seamSummaries
+      .map((j) => {
+        const pct = j.seam ? Math.round(j.seam.overlapFracRight * 100) : 0;
+        const how = j.seam ? `${j.seam.method}/${j.seam.confidence}` : 'no seam';
+        return `${j.leftLabel}|${j.rightLabel}: ${pct}% overlap (${how}), ${j.excluded} counted once`;
+      })
+      .join('; ');
+    const dupNote = seamSummaries.length > 0
+      ? ` [Overlap: ${duplicateReviewStatus === 'kept' ? 'rep kept all detections; ' : ''}${seamNote}]`
       : '';
     const fullDiscrepancyLog = `[${completedAisles.length} Bay(s): ${baySummaryStr}]${dupNote} ${currentDiscrepancyLog}`;
 
@@ -2434,6 +2323,131 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   };
 
   // Image source resolution for RESULTS tab
+  /**
+   * Count-line overlays on the results photo.
+   * - ALL tab: joined panorama (each bay cropped at its count lines) with a divider at every join.
+   * - Bay tab: shaded areas that belong to the neighbouring bay + every bottle that bay doesn't
+   *   count (red) or that the rep restored (green). Tap toggles.
+   */
+  const renderSeamOverlays = (inLightbox: boolean) => {
+    const ordered = completedAisles.map((k) => aisleSessions[k]).filter(Boolean);
+    const seamsOn = duplicateReviewStatus === 'removed';
+    const crops = seamsOn ? computeBayCrops(ordered) : {};
+    const isAllView = resultsAisleView === 'ALL' && ordered.length > 1;
+
+    if (isAllView) {
+      const segW = ordered.map((b) => {
+        const c = crops[b.key] || { start: 0, end: 1 };
+        const w = b.naturalDimensions?.width || 800;
+        const h = b.naturalDimensions?.height || 800;
+        return (c.end - c.start) * (w / h);
+      });
+      const total = segW.reduce((a, v) => a + v, 0) || 1;
+      let acc = 0;
+      return ordered.slice(0, -1).map((b, idx) => {
+        acc += segW[idx];
+        const next = ordered[idx + 1];
+        const hasSeam = seamsOn && next.seam && next.seam.leftBayKey === b.key;
+        return (
+          <div
+            key={`${inLightbox ? 'lb-' : ''}join-${b.key}`}
+            style={{ left: `${(acc / total) * 100}%` }}
+            className={`absolute top-0 bottom-0 w-0 border-r-2 border-dashed z-0 pointer-events-none ${hasSeam ? 'border-emerald-400/90' : 'border-amber-400/80'}`}
+          >
+            {!inLightbox && (
+              <span className="absolute top-1 -translate-x-1/2 text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded border border-emerald-500/30 whitespace-nowrap">
+                {hasSeam ? `Count line ${b.label} | ${next.label}` : `${b.label} | ${next.label}`}
+              </span>
+            )}
+          </div>
+        );
+      });
+    }
+
+    const bayKey = resultsAisleView === 'ALL' ? ordered[0]?.key : resultsAisleView;
+    const bayIndex = ordered.findIndex((b) => b.key === bayKey);
+    if (bayIndex < 0) return null;
+    const session = ordered[bayIndex];
+    const prev = ordered[bayIndex - 1];
+    const next = ordered[bayIndex + 1];
+    const leftSeam = prev && session.seam && session.seam.leftBayKey === prev.key ? session.seam : null;
+    const rightSeam = next && next.seam && next.seam.leftBayKey === session.key ? next.seam : null;
+    const bayW = session.naturalDimensions?.width || 800;
+    const bayH = session.naturalDimensions?.height || 1280;
+    const report = duplicateReports[session.key];
+
+    return (
+      <>
+        {leftSeam && (
+          <div
+            style={{ width: `${leftSeam.cutFracRight * 100}%` }}
+            className={`absolute top-0 bottom-0 left-0 border-r-2 border-dashed pointer-events-none flex flex-col justify-end p-1 z-0 ${
+              seamsOn ? 'border-emerald-400/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
+            }`}
+          >
+            {!inLightbox && (
+              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-end border border-emerald-500/30 whitespace-nowrap">
+                Counted in {prev.label}
+              </span>
+            )}
+          </div>
+        )}
+        {rightSeam && (
+          <div
+            style={{ width: `${(1 - rightSeam.cutFracLeft) * 100}%` }}
+            className={`absolute top-0 bottom-0 right-0 border-l-2 border-dashed pointer-events-none flex flex-col justify-end p-1 z-0 ${
+              seamsOn ? 'border-emerald-400/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
+            }`}
+          >
+            {!inLightbox && (
+              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-start border border-emerald-500/30 whitespace-nowrap">
+                Counted in {next.label}
+              </span>
+            )}
+          </div>
+        )}
+        {(report?.duplicates || []).map((dup) => {
+          const isRemoved = removedDuplicateBoxIds.has(dup.boxId);
+          const leftPct = (dup.x / bayW) * 100;
+          const topPct = (dup.y / bayH) * 100;
+          const widthPct = ((dup.width || 40) / bayW) * 100;
+          const heightPct = ((dup.height || 80) / bayH) * 100;
+          if (!dup.width && !dup.height && !dup.x && !dup.y) return null;
+          return (
+            <button
+              key={`${inLightbox ? 'lb-' : ''}dup-${dup.boxId}`}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleBoxDuplicate(dup.boxId, session.key, dup.brand);
+              }}
+              style={{
+                left: `${Math.max(0, Math.min(99, leftPct))}%`,
+                top: `${Math.max(0, Math.min(99, topPct))}%`,
+                width: `${Math.max(1.5, widthPct)}%`,
+                height: `${Math.max(2, heightPct)}%`
+              }}
+              className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 z-10 ${
+                isRemoved
+                  ? 'bg-red-950/40 border-2 border-red-500 opacity-80'
+                  : 'bg-emerald-500/20 border-2 border-dashed border-emerald-400 opacity-90'
+              }`}
+              title={isRemoved ? `${dup.brand}: counted in the neighbouring bay. Tap to count here too.` : `${dup.brand}: counted here. Tap to stop counting.`}
+              aria-label={`${isRemoved ? 'Count' : 'Stop counting'} ${dup.brand} bottle`}
+            >
+              {isRemoved && (
+                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+                  <div className="w-[140%] h-[2px] bg-red-500 rotate-[-45deg]" />
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </>
+    );
+  };
+
+  // Image source resolution for RESULTS tab
   const activePhotoDisplay = resultsAisleView === 'ALL'
     ? (capturedBaySessions.length > 1
         ? (stitchedPanoramaUrl || (completedAisles[0] ? aisleSessions[completedAisles[0]]?.capturedPhotoUrl : null) || fallbackShelfPhoto)
@@ -2480,7 +2494,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-between p-3.5 max-w-md mx-auto w-full h-full overflow-hidden select-none">
+    <div className="flex-1 flex flex-col justify-between p-2 sm:p-3 md:p-4 w-full h-full max-h-[100dvh] md:max-w-7xl md:mx-auto overflow-hidden select-none">
       {/* Hidden Native File Inputs */}
       <input
         ref={cameraInputRef}
@@ -2557,21 +2571,31 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
       {/* ================= STEP 1: CAPTURE ================= */}
       {step === 'CAPTURE' && !showPostCapturePrompt && (
-        <div className="flex-1 flex flex-col justify-between py-1 space-y-2 overflow-hidden">
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
           {/* Camera Guidance Viewfinder & Auto-Capture (Snapchat-style Live Video Feed) */}
           <div 
+            ref={viewfinderRef}
             onClick={() => {
-              if (!cameraStreamActive) startCameraStream();
+              if (!cameraStreamActive && !pendingCapture) startCameraStream();
             }}
-            className="relative flex-1 rounded-3xl border border-emerald-900/60 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group cursor-pointer"
+            className="order-1 md:order-2 flex-1 relative rounded-3xl border border-emerald-900/60 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group cursor-pointer"
           >
             {/* Live WebRTC Video Stream (Fills viewfinder) */}
+            {/* object-contain: the viewfinder shows exactly the frame that will be saved (no hidden edges) */}
             <video
               ref={videoRef}
               playsInline
               muted
               autoPlay
-              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
+              }}
+              onResize={(e) => {
+                const v = e.currentTarget;
+                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
+              }}
+              className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
                 cameraStreamActive ? 'opacity-100' : 'opacity-0'
               }`}
             />
@@ -2588,39 +2612,31 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             {/* Soft edge darkening scrim */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
 
-            {/* Live Ghost Preview Overlay of Previous Bay Right Seam (Onion-Skin Alignment) */}
-            {ghostOverlayUrl && showGhostOverlay && (
-              <div 
-                style={{ width: `${seamTolerance * 100}%` }}
-                className="absolute inset-y-0 left-0 pointer-events-none z-15 overflow-hidden border-r-2 border-dashed border-emerald-400/90 shadow-2xl animate-fade-in"
-              >
-                {/* Semi-transparent ghost image with smooth screen blend */}
-                <img 
-                  src={ghostOverlayUrl}
-                  alt="Previous bay alignment ghost"
-                  className="w-full h-full object-cover opacity-50 mix-blend-screen filter contrast-125 brightness-110"
-                />
-
-                {/* Soft gradient darkening & alignment tint */}
-                <div className="absolute inset-0 bg-gradient-to-r from-emerald-950/40 via-transparent to-emerald-500/25 pointer-events-none" />
-
-                {/* Top Alignment Tag */}
-                <div className="absolute top-12 left-1 right-1 flex flex-col items-center">
-                  <span className="text-[8px] font-black uppercase tracking-wider text-emerald-300 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-emerald-400/50 shadow-md text-center leading-tight">
-                    Align {previousBaySession?.label || 'Bay 1'} Edge
+            {/* Previous-bay guide: the right edge of the last bay, faded over the left of the frame.
+                Lining it up keeps the overlap consistent and makes the overlap measurement reliable. */}
+            {ghostGuideUrl && (() => {
+              const frame = cameraStreamActive && videoDims.w
+                ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
+                : { left: 0, top: 0, width: viewfinderSize.w, height: viewfinderSize.h };
+              return (
+                <div
+                  className="absolute overflow-hidden pointer-events-none z-[5] border-r-2 border-dashed border-amber-400/90"
+                  style={{ left: frame.left, top: frame.top, width: frame.width * GHOST_GUIDE_FRAC, height: frame.height }}
+                >
+                  <img
+                    src={ghostGuideUrl}
+                    alt=""
+                    className="absolute top-0 right-0 h-full max-w-none opacity-45"
+                    style={{ width: frame.width, objectFit: 'fill' }}
+                  />
+                  <span className="absolute bottom-12 left-1 right-1 text-center text-[9px] font-black uppercase tracking-tight text-amber-200 bg-black/80 px-1 py-0.5 rounded border border-amber-500/40">
+                    Line up with {aisleSessions[ghostGuideBayKey!]?.label || 'previous bay'}
                   </span>
                 </div>
+              );
+            })()}
 
-                {/* Bottom Overlap Badge */}
-                <div className="absolute bottom-12 left-1 right-1 flex flex-col items-center">
-                  <span className="text-[7.5px] font-bold text-white bg-emerald-900/85 backdrop-blur-sm px-1.5 py-0.5 rounded border border-emerald-500/40 text-center">
-                    {Math.round(seamTolerance * 100)}% Ghost
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Camera Guidance: Level Line & Vertical Seam Markers (Drawn directly over live video) */}
+            {/* Camera Guidance: Level Line & Banner */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10">
               {/* Top Viewfinder Banner */}
               <div className="w-full flex items-center justify-between pointer-events-auto">
@@ -2629,26 +2645,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 </span>
 
                 <div className="flex items-center gap-1.5">
-                  {/* Ghost Guide Toggle Button (when adjacent bay exists) */}
-                  {ghostOverlayUrl && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowGhostOverlay((prev) => !prev);
-                      }}
-                      className={`px-2 py-0.5 rounded-lg border text-[9px] font-bold flex items-center gap-1 backdrop-blur-md transition-all cursor-pointer ${
-                        showGhostOverlay
-                          ? 'bg-emerald-500/25 border-emerald-400/60 text-emerald-300 shadow-sm'
-                          : 'bg-black/75 border-slate-600 text-slate-400'
-                      }`}
-                      title="Toggle Ghost Alignment Preview on/off"
-                    >
-                      <Layers size={10} />
-                      <span>Ghost {showGhostOverlay ? 'ON' : 'OFF'}</span>
-                    </button>
-                  )}
-
                   <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 backdrop-blur-md ${
                     isLevel 
                       ? 'text-emerald-400 bg-black/75 border-emerald-500/50' 
@@ -2657,31 +2653,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
                   </span>
                 </div>
-              </div>
-
-              {/* Two Vertical Seam Overlap Zones (dynamically reflects seamTolerance) */}
-              {(!ghostOverlayUrl || !showGhostOverlay) && (
-                <div 
-                  style={{ width: `${seamTolerance * 100}%` }}
-                  className="absolute top-10 bottom-10 left-0 bg-amber-500/15 border-r-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
-                  title={`Left Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
-                >
-                  <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
-                    Overlap
-                  </span>
-                  <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
-                </div>
-              )}
-
-              <div 
-                style={{ width: `${seamTolerance * 100}%` }}
-                className="absolute top-10 bottom-10 right-0 bg-amber-500/15 border-l-2 border-dashed border-amber-400/90 pointer-events-none flex flex-col justify-between items-center py-2 z-10"
-                title={`Right Overlap Seam Guide (${Math.round(seamTolerance * 100)}%)`}
-              >
-                <span className="text-[8px] font-black uppercase tracking-tighter text-amber-300 bg-black/90 px-1.5 py-0.5 rounded shadow border border-amber-500/30">
-                  Overlap
-                </span>
-                <span className="text-[8px] text-amber-300 font-mono bg-black/80 px-1 py-0.5 rounded">{Math.round(seamTolerance * 100)}%</span>
               </div>
 
               {/* Horizontal Level Line drawn across live camera view */}
@@ -2710,15 +2681,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               {/* Bottom Guidance Cue */}
               <div className="w-full flex items-center justify-center pointer-events-auto">
                 <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md text-center max-w-sm truncate">
-                  {ghostOverlayUrl && showGhostOverlay
-                    ? `Match shelf bottles on left with the ${previousBaySession?.label || 'Bay 1'} ghost • Tap shutter`
-                    : 'Keep 1 column of overlap inside the amber zone • Tap shutter to snap'}
+                  {ghostGuideUrl
+                    ? 'Line up the faded strip with the shelf • Tap shutter to snap'
+                    : 'Hold level • Tap shutter to snap'}
                 </span>
               </div>
             </div>
 
             {/* Camera Permission / Initialization Alert Box */}
-            {cameraErrorNotice && !cameraStreamActive && !showPostCapturePrompt && (
+            {cameraErrorNotice && !cameraStreamActive && !showPostCapturePrompt && !pendingCapture && (
               <div className="absolute inset-0 z-30 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center space-y-3 pointer-events-auto animate-fade-in">
                 <div className="p-3 rounded-2xl bg-amber-500/20 border border-amber-400/60 text-amber-300 shadow-lg">
                   <AlertTriangle size={28} />
@@ -2759,7 +2730,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             )}
 
             {/* Tap to Activate Live Stream Badge (When camera permission pending) */}
-            {!cameraStreamActive && !cameraErrorNotice && !showPostCapturePrompt && (
+            {!cameraStreamActive && !cameraErrorNotice && !showPostCapturePrompt && !pendingCapture && (
               <div className="absolute bottom-14 z-20 pointer-events-auto flex flex-col items-center space-y-1.5 animate-pulse">
                 <button
                   type="button"
@@ -2785,104 +2756,376 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
             )}
 
-            {/* Post-Capture Inline Bay Prompt Overlay */}
-            {/* (Moved to full-screen dedicated review component below) */}
+            {/* Review-before-upload: nothing is sent to n8n until the rep taps Upload.
+                For Bay 2+, the measured overlap with the previous bay is shaded; the rep can drag its edge. */}
+            {pendingCapture && (() => {
+              const pc = pendingCapture;
+              const label = aisleSessions[pc.bayKey]?.label || 'Bay';
+              const prevKey = previousCapturedBayKey(pc.bayKey);
+              const prevSession = prevKey ? aisleSessions[prevKey] : null;
+              const prevLabel = prevSession?.label || 'previous bay';
+              const frame = fitRect(viewfinderSize.w, viewfinderSize.h, pc.width || 3, pc.height || 4);
+              const seam = pendingSeam;
+              const ovPct = seam ? seam.overlapFracRight * 100 : 0;
+              const cutPct = seam ? seam.cutFracRight * 100 : 0;
+              const needsCheck = Boolean(prevKey) && !isMeasuringSeam && (!seam || seam.method !== 'manual') &&
+                (!seam || seam.confidence === 'low' || seam.confidence === 'none');
+              const confidenceText: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' };
+
+              return (
+                <div
+                  className="absolute inset-0 z-40 bg-black"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Photo frame (exactly the photo, no letterbox) */}
+                  <div
+                    ref={previewFrameRef}
+                    className="absolute overflow-hidden touch-none select-none"
+                    style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}
+                    onPointerMove={(e) => {
+                      if (isDraggingSeamRef.current) handleSeamDrag(e.clientX);
+                    }}
+                    onPointerUp={() => { isDraggingSeamRef.current = false; }}
+                    onPointerCancel={() => { isDraggingSeamRef.current = false; }}
+                  >
+                    <img src={pc.dataUrl} alt={`${label} preview`} className="absolute inset-0 w-full h-full" style={{ objectFit: 'fill' }} draggable={false} />
+
+                    {prevKey && seam && !isMeasuringSeam && (
+                      <>
+                        {/* Overlap area (already photographed in the previous bay) */}
+                        <div
+                          className="absolute top-0 bottom-0 left-0 overflow-hidden bg-amber-500/25 pointer-events-none"
+                          style={{ width: `${ovPct}%` }}
+                        >
+                          {showAlignmentCheck && prevSession?.capturedPhotoUrl && (
+                            <img
+                              src={prevSession.capturedPhotoUrl}
+                              alt=""
+                              className="absolute max-w-none opacity-60"
+                              style={{
+                                width: `${(100 / Math.max(0.05, ovPct / 100)) / seam.widthRatio}%`,
+                                right: 0,
+                                top: `calc(50% - ${seam.dyFrac * 100}%)`,
+                                transform: 'translateY(-50%)'
+                              }}
+                            />
+                          )}
+                        </div>
+                        {/* Count line: left of it belongs to the previous bay */}
+                        <div
+                          className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400 pointer-events-none"
+                          style={{ left: `${cutPct}%` }}
+                        >
+                          <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-black text-emerald-200 bg-black/80 px-1 py-0.5 rounded border border-emerald-500/50">
+                            Count line
+                          </span>
+                        </div>
+                        {/* Draggable overlap edge */}
+                        <div
+                          role="slider"
+                          aria-label={`Where ${prevLabel} ends`}
+                          aria-valuenow={Math.round(ovPct)}
+                          aria-valuemin={0}
+                          aria-valuemax={80}
+                          className="absolute top-0 bottom-0 w-11 -ml-[22px] flex items-center justify-center cursor-ew-resize touch-none"
+                          style={{ left: `${ovPct}%` }}
+                          onPointerDown={(e) => {
+                            isDraggingSeamRef.current = true;
+                            (e.currentTarget.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId);
+                            handleSeamDrag(e.clientX);
+                          }}
+                        >
+                          <div className="h-full w-[3px] bg-amber-400 shadow shadow-black" />
+                          <div className="absolute w-7 h-12 rounded-lg bg-amber-400 text-black text-[11px] font-black flex items-center justify-center shadow-lg">
+                            ⟷
+                          </div>
+                          <span className="absolute bottom-24 whitespace-nowrap text-[9px] font-black text-amber-200 bg-black/85 px-1.5 py-0.5 rounded border border-amber-500/50">
+                            {prevLabel} ends here
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Header */}
+                  <div className="absolute top-0 left-0 right-0 p-2 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between pointer-events-none">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-white">{label} &bull; Review before upload</span>
+                    {prevKey && isMeasuringSeam && (
+                      <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
+                        <Loader2 size={12} className="animate-spin" /> Measuring overlap…
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Footer: status + actions */}
+                  <div className="absolute bottom-0 left-0 right-0 p-2.5 space-y-2 bg-gradient-to-t from-black/95 via-black/85 to-transparent">
+                    {prevKey && seam && !isMeasuringSeam && (
+                      <div className={`text-[11px] rounded-xl px-2.5 py-1.5 border ${
+                        needsCheck ? 'bg-amber-500/15 border-amber-500/50 text-amber-200' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
+                      }`}>
+                        {needsCheck ? (
+                          <span className="flex items-start gap-1.5">
+                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                            <span>Couldn't measure the overlap reliably. Drag the amber edge to where {prevLabel}'s photo ends, or set it to the far left if there's no overlap.</span>
+                          </span>
+                        ) : (
+                          <span>
+                            Overlap with {prevLabel}: <strong>{Math.round(ovPct)}%</strong>
+                            {seam.method === 'manual' ? ' (set by you)' : ` · ${confidenceText[seam.confidence]} confidence`}
+                            . Bottles left of the count line are counted in {prevLabel}.
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDiscardPending}
+                        className="h-11 px-3 rounded-2xl border border-slate-600 bg-slate-900/90 text-slate-200 font-bold text-xs flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                      >
+                        <RefreshCw size={14} />
+                        <span>Retake</span>
+                      </button>
+                      {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAlignmentCheck((v) => !v)}
+                          className={`h-11 px-3 rounded-2xl border font-bold text-xs active:scale-95 cursor-pointer ${
+                            showAlignmentCheck ? 'bg-amber-500 text-black border-amber-300' : 'bg-slate-900/90 text-amber-200 border-amber-600/60'
+                          }`}
+                          title={`Overlay ${prevLabel} on the overlap to check the alignment`}
+                        >
+                          {showAlignmentCheck ? 'Hide check' : 'Check'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleConfirmUpload}
+                        disabled={isMeasuringSeam}
+                        className="flex-1 h-11 rounded-2xl bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-[0.98] cursor-pointer"
+                      >
+                        <Upload size={15} />
+                        <span>Upload {label}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Mobile-friendly Bottom Shutter Bar Deck (Only shown during active camera shooting) */}
+          {/* Capture Controls Dock: Desktop Left Sidebar + Mobile Bottom Shutter Bar */}
           {!showPostCapturePrompt && (
-            <div className="shrink-0 space-y-2 pt-2 pb-6 sm:pb-3 px-3 mt-1 bg-gradient-to-t from-black via-black/95 to-black/80 backdrop-blur-md rounded-t-3xl border-t border-emerald-900/60 shadow-2xl z-20 select-none">
+            <div className="order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-6 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 bg-gradient-to-t md:bg-none from-black via-black/95 to-black/80 md:bg-[#132219]/90 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border border-emerald-900/60 shadow-2xl z-20 select-none overflow-hidden">
               {/* Visual grip bar hint for mobile viewports */}
-              <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1" />
+              <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1 md:hidden" />
 
-              <div className="grid grid-cols-2 gap-3">
-                {/* Primary 1: Shutter Button (Always functional & mobile-optimized) */}
-                <button
-                  type="button"
-                  onClick={handleManualShutter}
-                  className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
-                >
-                  <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                    <Camera size={16} className="text-white stroke-[2.5]" />
+              {/* Desktop-only Bay Queue & Operational Guidance */}
+              <div className="hidden md:flex flex-col gap-3">
+                <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                      Shelf Capture
+                    </h3>
+                    <p className="text-[11px] text-emerald-300/80">
+                      Target: {category} &bull; {currentSession?.label || 'Bay 1'}
+                    </p>
                   </div>
-                  <span>Shoot {currentSession?.label || 'Bay 1'}</span>
-                </button>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300">
+                    {capturedAisles.length} Captured
+                  </span>
+                </div>
 
-                {/* Primary 2: Device Gallery / Library Upload */}
-                <button
-                  type="button"
-                  onClick={() => galleryInputRef.current?.click()}
-                  className={`h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
-                    isDark
-                      ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
-                      : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
-                  }`}
-                >
-                  <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                    <Upload size={15} className="text-emerald-400" />
+                {/* Bay Sequence Progress Card */}
+                <div className="p-3 rounded-2xl bg-black/50 border border-emerald-900/50 space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                    Bay Sequence Queue
                   </div>
-                  <span>Gallery</span>
-                </button>
+                  <div className="flex flex-wrap gap-1.5">
+                    {bayKeys.map((k, idx) => {
+                      const s = aisleSessions[k];
+                      const isCaptured = Boolean(s?.capturedPhotoUrl);
+                      const isCurrent = currentAisle === k;
+                      return (
+                        <div
+                          key={k}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
+                            isCurrent
+                              ? 'bg-emerald-500/25 border-emerald-400 text-white ring-1 ring-emerald-400/50'
+                              : isCaptured
+                              ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300'
+                              : 'bg-black/40 border-slate-800 text-slate-500'
+                          }`}
+                        >
+                          <span>{s?.label || `Bay ${idx + 1}`}</span>
+                          {isCaptured && <CheckCircle2 size={12} className="text-emerald-400" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Guidance & Alignment Helper */}
+                <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-800/30 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
+                    <Layers size={13} className="text-emerald-400" />
+                    <span>Alignment Guidance</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-200/80 leading-relaxed">
+                    {ghostGuideUrl
+                      ? 'Align the faded edge on the left with the shelf you previously photographed to ensure seamless multi-bay stitching.'
+                      : 'Hold camera upright and level with the middle shelf. Tap Shutter when the center line turns green.'}
+                  </p>
+                </div>
               </div>
 
-              {/* Bottom auxiliary link: Done Shooting or Sample Shelf (debug only) */}
-              <div className="flex items-center justify-between px-2 pt-0.5 text-[11px]">
-                {capturedAisles.length > 0 ? (
+              {/* Common Primary Actions: Shutter & Gallery Buttons */}
+              <div className="space-y-2.5 pt-2 md:pt-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Primary 1: Shutter Button */}
                   <button
                     type="button"
-                    onClick={handleDoneShooting}
-                    className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/40"
+                    onClick={handleManualShutter}
+                    className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
                   >
-                    <CheckCircle2 size={12} className="text-emerald-400" />
-                    <span>Shelf Completed &bull; Proceed to POSM ({capturedAisles.length} captured)</span>
+                    <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                      <Camera size={16} className="text-white stroke-[2.5]" />
+                    </div>
+                    <span>Shoot {currentSession?.label || 'Bay 1'}</span>
                   </button>
-                ) : <div />}
 
-                {isDebugMode && (
+                  {/* Primary 2: Device Gallery / Library Upload */}
                   <button
                     type="button"
-                    onClick={handleUseDemoSample}
-                    className="text-emerald-500 hover:text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                    onClick={() => galleryInputRef.current?.click()}
+                    disabled={Boolean(pendingCapture)}
+                    className={`h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                      isDark
+                        ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
+                        : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
+                    }`}
                   >
-                    <span>Sample {category} ({currentSession?.label || 'Bay 1'})</span>
+                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
+                      <Upload size={15} className="text-emerald-400" />
+                    </div>
+                    <span>Gallery</span>
                   </button>
-                )}
+                </div>
+
+                {/* Bottom auxiliary link: Done Shooting or Sample Shelf */}
+                <div className="flex items-center justify-between px-1 pt-1 text-[11px]">
+                  {capturedAisles.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleDoneShooting}
+                      className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1.5 rounded-xl border border-emerald-800/40 w-full justify-center md:w-auto"
+                    >
+                      <CheckCircle2 size={13} className="text-emerald-400" />
+                      <span>Proceed to POSM ({capturedAisles.length} captured)</span>
+                    </button>
+                  ) : <div />}
+
+                  {isDebugMode && (
+                    <button
+                      type="button"
+                      onClick={handleUseDemoSample}
+                      className="text-emerald-500 hover:text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer hidden md:flex"
+                    >
+                      <span>Sample {category} ({currentSession?.label || 'Bay 1'})</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Dedicated Post-Capture Full-Height Photo Review Screen */}
+      {/* Dedicated Post-Capture Photo Review Screen: Split on Desktop, Stacked on Mobile */}
       {step === 'CAPTURE' && showPostCapturePrompt && (
-        <div className="flex-1 flex flex-col justify-between overflow-hidden animate-fade-in py-1 space-y-2.5 select-none">
-          {/* Status Header: Clean, uncluttered, professional */}
-          <div className="shrink-0 flex items-center justify-between px-1.5 pt-0.5">
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 animate-pulse" />
-              <span className="text-xs font-bold text-white tracking-wide">
-                {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'} Captured
-              </span>
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden animate-fade-in py-1 select-none">
+          {/* Controls Dock (Desktop Left Sidebar, Mobile Bottom Deck) */}
+          <div className="order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-5 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 bg-[#132219]/90 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border border-emerald-900/60 shadow-2xl z-20 space-y-3">
+            {/* Review Status Header */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 animate-pulse" />
+                  <span className="text-xs font-bold text-white tracking-wide">
+                    {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'} Captured
+                  </span>
+                </div>
+                <span className="text-[10px] text-emerald-400/90 font-mono bg-black/60 px-2.5 py-0.5 rounded-full border border-emerald-800/40">
+                  Standard HD
+                </span>
+              </div>
+
+              {/* Status Notice */}
+              <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                  <div className="flex flex-col text-left">
+                    <span className="text-[11px] font-bold text-emerald-200">
+                      Photo Stored Locally
+                    </span>
+                    <span className="text-[10px] text-emerald-400/80">
+                      Processed securely with n8n AI workflow
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-emerald-300 font-mono bg-black/50 px-2 py-0.5 rounded border border-emerald-800/40">
+                  Ready
+                </span>
+              </div>
+
+              {/* Desktop-only bay sequence recap */}
+              <div className="hidden md:block p-3 rounded-2xl bg-black/40 border border-emerald-900/40 space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                  Audit Progress
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  You have captured {capturedAisles.length} bay{capturedAisles.length > 1 ? 's' : ''} for {category}. You can proceed to the POSM compliance form or add another bay.
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-emerald-400/90 font-mono bg-black/60 px-2.5 py-0.5 rounded-full border border-emerald-800/40">
-                1x Standard HD
-              </span>
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIsFullScreenOpen(true)}
-                className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer"
-                title="Fullscreen Preview"
+                onClick={handleDoneShooting}
+                className="w-full h-12 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 hover:brightness-110 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all border border-emerald-400/40"
               >
-                <Maximize2 size={13} />
+                <CheckCircle2 size={16} />
+                <span>Proceed to POSM Form</span>
               </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleRetakeBay(lastCapturedAisle)}
+                  className="h-11 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/50 active:scale-[0.98] text-rose-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                >
+                  <RefreshCw size={13} className="text-rose-400" />
+                  <span>Retake Picture</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleAddNewBay}
+                  className="h-11 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/50 active:scale-[0.98] text-emerald-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                >
+                  <Plus size={14} className="text-emerald-400" />
+                  <span>+ Add a Bay</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Large, High-Fidelity Photo Preview Frame */}
+          {/* Large, High-Fidelity Photo Preview Frame (Desktop Right Canvas, Mobile Top Preview) */}
           <div
             onClick={() => setIsFullScreenOpen(true)}
-            className="relative flex-1 min-h-[320px] rounded-2xl overflow-hidden border border-emerald-500/40 bg-black/95 flex items-center justify-center shadow-2xl cursor-pointer group"
+            className="order-1 md:order-2 flex-1 relative min-h-[280px] md:min-h-0 rounded-3xl overflow-hidden border border-emerald-500/40 bg-black/95 flex items-center justify-center shadow-2xl cursor-pointer group"
           >
             {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl ? (
               <img
@@ -2905,596 +3148,634 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               <span>Tap to zoom</span>
             </div>
           </div>
-
-          {/* Pre-transmission Photo Review Status Bar */}
-          <div className="shrink-0 px-3.5 py-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
-              <div className="flex flex-col text-left">
-                <span className="text-[11px] font-bold text-emerald-200">
-                  Photo Captured &bull; Ready for Review
-                </span>
-                <span className="text-[10px] text-emerald-400/80">
-                  Proceed or + Add a Bay to process with n8n AI workflow
-                </span>
-              </div>
-            </div>
-            <span className="text-[10px] text-emerald-300 font-mono bg-black/50 px-2.5 py-0.5 rounded border border-emerald-800/40">
-              Ready
-            </span>
-          </div>
-
-          {/* Clean, Human-Centric Action Deck */}
-          <div className="shrink-0 space-y-2 pt-1 pb-2">
-            {/* Primary Action Button: Proceed to POSM Form */}
-            <button
-              type="button"
-              onClick={handleDoneShooting}
-              className="w-full h-12 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 hover:brightness-110 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all border border-emerald-400/40"
-            >
-              <CheckCircle2 size={16} />
-              <span>Proceed to POSM Form</span>
-            </button>
-
-            {/* Secondary Actions: Retake Picture or Add Next Bay */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleRetakeBay(lastCapturedAisle)}
-                className="h-11 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/50 active:scale-[0.98] text-rose-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-              >
-                <RefreshCw size={13} className="text-rose-400" />
-                <span>Retake Picture</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleAddNewBay}
-                className="h-11 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/50 active:scale-[0.98] text-emerald-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-              >
-                <Plus size={14} className="text-emerald-400" />
-                <span>+ Add a Bay</span>
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
       {/* ================= STEP 2: POSM QUESTIONNAIRE ================= */}
-      {/* 1. Driven solely by step === 'POSM'. It is not hidden or reset by per-bay analysis completing! */}
+      {/* 1. Driven solely by step === 'POSM'. Split on Desktop, Compact on Mobile */}
       {step === 'POSM' && (
-        <div className="flex-1 flex flex-col justify-between py-2 space-y-3 overflow-hidden">
-          {/* Header Card with In-Flight Analysis Background Indicator */}
-          <div className={`p-4 rounded-3xl border space-y-2 ${
-            isDark ? 'bg-[#132219]/80 border-emerald-900/50' : 'bg-white border-emerald-950/10 shadow-xs'
-          }`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  {category} POSM Compliance
-                </h3>
-                <p className={`text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
-                  Store shelf verification checklist
-                </p>
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
+          {/* Left Column: POSM Form & Submission Controls */}
+          <div className="order-1 md:w-[450px] md:shrink-0 flex flex-col justify-between h-full bg-[#132219]/90 border border-emerald-900/60 rounded-3xl p-3 sm:p-4 md:p-5 overflow-hidden shadow-xl space-y-3">
+            {/* Header Card with In-Flight Analysis Background Indicator */}
+            <div className={`p-3.5 rounded-2xl border space-y-2 shrink-0 ${
+              isDark ? 'bg-black/40 border-emerald-900/50' : 'bg-white border-emerald-950/10 shadow-xs'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    {category} POSM Compliance
+                  </h3>
+                  <p className={`text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
+                    Store shelf verification checklist
+                  </p>
+                </div>
+                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-xl border ${
+                  isDark ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-100 text-emerald-900 border-emerald-200'
+                }`}>
+                  {capturedAisles.length} Bay{capturedAisles.length > 1 ? 's' : ''} Photographed
+                </span>
               </div>
-              <span className={`text-[10px] font-bold px-2.5 py-1 rounded-xl border ${
-                isDark ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-100 text-emerald-900 border-emerald-200'
+
+              {/* In-flight async analysis status */}
+              <div className={`text-[11px] p-2 rounded-xl border flex items-center justify-between ${
+                inFlightAisles.length > 0 
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
+                  : erroredAisles.length > 0
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
               }`}>
-                {capturedAisles.length} Bay{capturedAisles.length > 1 ? 's' : ''} Photographed
-              </span>
-            </div>
-
-            {/* In-flight async analysis status */}
-            <div className={`text-[11px] p-2 rounded-xl border flex items-center justify-between ${
-              inFlightAisles.length > 0 
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
-                : erroredAisles.length > 0
-                ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-            }`}>
-              <div className="flex items-center gap-2 truncate pr-2">
-                {inFlightAisles.length > 0 ? (
-                  <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
-                ) : erroredAisles.length > 0 ? (
-                  <AlertCircle size={13} className="text-rose-400 shrink-0" />
-                ) : (
-                  <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                )}
-                <span className="truncate">
-                  {inFlightAisles.length > 0
-                    ? `Background analysis in flight for ${inFlightAisles.length} bay(s)…`
-                    : erroredAisles.length > 0
-                    ? `${erroredAisles.length} bay analysis failed`
-                    : `All ${completedAisles.length} bay analyses complete`}
+                <div className="flex items-center gap-2 truncate pr-2">
+                  {inFlightAisles.length > 0 ? (
+                    <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
+                  ) : erroredAisles.length > 0 ? (
+                    <AlertCircle size={13} className="text-rose-400 shrink-0" />
+                  ) : (
+                    <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {inFlightAisles.length > 0
+                      ? `Background analysis in flight for ${inFlightAisles.length} bay(s)…`
+                      : erroredAisles.length > 0
+                      ? `${erroredAisles.length} bay analysis failed`
+                      : `All ${completedAisles.length} bay analyses complete`}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono shrink-0">
+                  {allCapturedDone ? 'Ready' : 'In Flight'}
                 </span>
               </div>
-              <span className="text-[10px] font-mono shrink-0">
-                {allCapturedDone ? 'Ready' : 'In Flight'}
-              </span>
-            </div>
-          </div>
-
-          {/* 3. Errored Bay Escape Hatch */}
-          {erroredAisles.length > 0 && (
-            <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 space-y-2 shrink-0">
-              <div className="flex items-center gap-2 text-rose-300 text-xs font-bold">
-                <AlertCircle size={15} className="text-rose-400 shrink-0" />
-                <span>Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}</span>
-              </div>
-              <p className="text-[11px] text-rose-200/80">
-                A bay in error cannot proceed to results. Please retake to re-analyse.
-              </p>
-              <div className="space-y-1.5 pt-0.5">
-                {erroredAisles.map((k) => (
-                  <div key={k} className="flex items-center justify-between p-2 rounded-xl bg-black/50 border border-rose-500/30">
-                    <span className="text-xs font-bold text-white">
-                      {aisleSessions[k]?.label || k}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRetakeBay(k)}
-                      className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                    >
-                      <Camera size={13} />
-                      <span>Retake {aisleSessions[k]?.label || k}</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Scrollable POSM Questionnaire Form */}
-          <div className="flex-1 overflow-y-auto space-y-2.5 px-0.5">
-            {/* Toggle 1: Price Tag */}
-            <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
-              isDark ? 'bg-[#132219]/70 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-            }`}>
-              <div className="pr-2">
-                <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  <Tag size={14} className="text-emerald-400" />
-                  Price tags legible &amp; present?
-                </h4>
-                <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Shelf edge label or neck promotional pricing active
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPriceTagOk(true)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    priceTagOk
-                      ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPriceTagOk(false)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    !priceTagOk
-                      ? 'bg-rose-600 text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  No
-                </button>
-              </div>
             </div>
 
-            {/* Toggle 2: Shelf Sticker */}
-            <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
-              isDark ? 'bg-[#132219]/70 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-            }`}>
-              <div className="pr-2">
-                <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  <ShieldCheck size={14} className="text-emerald-400" />
-                  POSM shelf strips &amp; stickers intact?
-                </h4>
-                <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Primary brand shelf divider &amp; rail branding in place
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPosmShelfSticker(true)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    posmShelfSticker
-                      ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPosmShelfSticker(false)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    !posmShelfSticker
-                      ? 'bg-rose-600 text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  No
-                </button>
-              </div>
-            </div>
-
-            {/* Toggle 3: Wobblers */}
-            <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
-              isDark ? 'bg-[#132219]/70 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-            }`}>
-              <div className="pr-2">
-                <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                  <Layers size={14} className="text-amber-400" />
-                  Promotional wobblers deployed?
-                </h4>
-                <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Active campaign shelf talker or special offer danglers
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPosmWobblers(true)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    posmWobblers
-                      ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPosmWobblers(false)}
-                  className={`min-h-[38px] min-w-[52px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    !posmWobblers
-                      ? 'bg-rose-600 text-white shadow-md'
-                      : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  No
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 2. Submit POSM: gated on all captured bays status === 'done' */}
-          <div className="shrink-0 space-y-2 pt-1">
-            {/* Live in-flight status line naming the bay still in flight */}
-            {inFlightAisles.length > 0 && (
-              <p className="text-xs font-semibold text-amber-400 text-center flex items-center justify-center gap-1.5 animate-pulse">
-                <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
-                <span>
-                  Analyse still running for {inFlightAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}…
-                </span>
-              </p>
-            )}
-
+            {/* 3. Errored Bay Escape Hatch */}
             {erroredAisles.length > 0 && (
-              <p className="text-xs font-semibold text-rose-400 text-center flex items-center justify-center gap-1.5">
-                <AlertCircle size={13} className="text-rose-400 shrink-0" />
-                <span>
-                  Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}. Retake required.
-                </span>
-              </p>
+              <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 space-y-2 shrink-0">
+                <div className="flex items-center gap-2 text-rose-300 text-xs font-bold">
+                  <AlertCircle size={15} className="text-rose-400 shrink-0" />
+                  <span>Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}</span>
+                </div>
+                <p className="text-[11px] text-rose-200/80">
+                  A bay in error cannot proceed to results. Please retake to re-analyse.
+                </p>
+                <div className="space-y-1.5 pt-0.5">
+                  {erroredAisles.map((k) => (
+                    <div key={k} className="flex items-center justify-between p-2 rounded-xl bg-black/50 border border-rose-500/30">
+                      <span className="text-xs font-bold text-white">
+                        {aisleSessions[k]?.label || k}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRetakeBay(k)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                      >
+                        <Camera size={13} />
+                        <span>Retake {aisleSessions[k]?.label || k}</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
-            <button
-              type="button"
-              disabled={!allCapturedDone || erroredAisles.length > 0}
-              onClick={handlePosmSubmit}
-              className={`w-full py-3.5 text-xs font-black uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                allCapturedDone && erroredAisles.length === 0
-                  ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white shadow-xl shadow-emerald-950/40 hover:brightness-110'
-                  : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60'
-              }`}
-            >
-              <span>Submit POSM &bull; Proceed to Results</span>
-              <CheckCircle2 size={16} />
-            </button>
+            {/* Scrollable POSM Questionnaire Form */}
+            <div className="flex-1 overflow-y-auto space-y-2.5 px-0.5 min-h-0">
+              {/* Toggle 1: Price Tag */}
+              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
+                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
+              }`}>
+                <div className="pr-2">
+                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    <Tag size={14} className="text-emerald-400" />
+                    Price tags legible &amp; present?
+                  </h4>
+                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Shelf edge label or neck promotional pricing active
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPriceTagOk(true)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      priceTagOk
+                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriceTagOk(false)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      !priceTagOk
+                        ? 'bg-rose-600 text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
 
-            <div className="flex items-center justify-center">
+              {/* Toggle 2: Shelf Sticker */}
+              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
+                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
+              }`}>
+                <div className="pr-2">
+                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    <ShieldCheck size={14} className="text-emerald-400" />
+                    POSM shelf strips &amp; stickers intact?
+                  </h4>
+                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Primary brand shelf divider &amp; rail branding in place
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPosmShelfSticker(true)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      posmShelfSticker
+                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPosmShelfSticker(false)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      !posmShelfSticker
+                        ? 'bg-rose-600 text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+
+              {/* Toggle 3: Wobblers */}
+              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
+                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
+              }`}>
+                <div className="pr-2">
+                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    <Layers size={14} className="text-amber-400" />
+                    Promotional wobblers deployed?
+                  </h4>
+                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Active campaign shelf talker or special offer danglers
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPosmWobblers(true)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      posmWobblers
+                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPosmWobblers(false)}
+                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      !posmWobblers
+                        ? 'bg-rose-600 text-white shadow-md'
+                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Submit POSM: gated on all captured bays status === 'done' */}
+            <div className="shrink-0 space-y-2 pt-1 border-t border-emerald-900/40">
+              {/* Live in-flight status line naming the bay still in flight */}
+              {inFlightAisles.length > 0 && (
+                <p className="text-xs font-semibold text-amber-400 text-center flex items-center justify-center gap-1.5 animate-pulse">
+                  <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
+                  <span>
+                    Analyse still running for {inFlightAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}…
+                  </span>
+                </p>
+              )}
+
+              {erroredAisles.length > 0 && (
+                <p className="text-xs font-semibold text-rose-400 text-center flex items-center justify-center gap-1.5">
+                  <AlertCircle size={13} className="text-rose-400 shrink-0" />
+                  <span>
+                    Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}. Retake required.
+                  </span>
+                </p>
+              )}
+
               <button
                 type="button"
-                onClick={() => setStep('CAPTURE')}
-                className="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
+                disabled={!allCapturedDone || erroredAisles.length > 0}
+                onClick={handlePosmSubmit}
+                className={`w-full py-3.5 text-xs font-black uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  allCapturedDone && erroredAisles.length === 0
+                    ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white shadow-xl shadow-emerald-950/40 hover:brightness-110'
+                    : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60'
+                }`}
               >
-                <Camera size={12} />
-                <span>Shoot Another Bay First</span>
+                <span>Submit POSM &bull; Proceed to Results</span>
+                <CheckCircle2 size={16} />
               </button>
+
+              <div className="flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => setStep('CAPTURE')}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
+                >
+                  <Camera size={12} />
+                  <span>Shoot Another Bay First</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column (Desktop Only): Shelf Reference Canvas */}
+          <div className="order-2 hidden md:flex md:flex-1 h-full bg-black rounded-3xl border border-emerald-900/60 p-4 overflow-hidden relative flex-col justify-between shadow-2xl">
+            <div className="flex items-center justify-between pb-2 z-10">
+              <span className="text-xs font-bold text-white flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                Shelf Photo Reference ({capturedAisles.length} Bay{capturedAisles.length > 1 ? 's' : ''})
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-md border border-emerald-800/60">
+                Visual Inspection Mode
+              </span>
+            </div>
+
+            <div
+              onClick={() => setIsFullScreenOpen(true)}
+              className="flex-1 relative rounded-2xl overflow-hidden bg-black/95 flex items-center justify-center cursor-pointer group"
+            >
+              {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl ? (
+                <img
+                  src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
+                  alt="Shelf Reference"
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <div className="text-slate-500 text-xs font-medium">No photo available</div>
+              )}
+
+              <div className="absolute top-2.5 right-2.5 bg-black/75 px-2.5 py-1 rounded-lg text-[10px] text-slate-200 border border-white/10 opacity-75 group-hover:opacity-100 flex items-center gap-1">
+                <Maximize2 size={11} />
+                <span>Tap to enlarge</span>
+              </div>
+            </div>
+
+            <div className="pt-2 text-center text-[11px] text-emerald-300/80">
+              Compare physical POSM status against the photographed shelf before proceeding to final count results.
             </div>
           </div>
         </div>
       )}
 
       {/* ================= STEP 3: RESULTS ================= */}
+      {/* Responsive layout: Split 2-Column on Desktop/Tablet, 58/42 Zero-Scroll on Mobile */}
       {step === 'RESULTS' && (
-        <div className="flex-1 flex flex-col justify-between h-full overflow-hidden">
-          {/* Dynamic Results Tab Strip: ALL | BAY 1 | BAY 2 ... + Add Bay */}
-          <div className="flex items-center justify-between pb-1.5 gap-1 shrink-0">
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-              {/* Show ALL tab if more than 1 bay captured */}
-              {capturedAisles.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setResultsAisleView('ALL')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
-                    resultsAisleView === 'ALL'
-                      ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
-                      : isDark
-                      ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white'
-                      : 'bg-white text-emerald-900 border border-emerald-300 hover:bg-emerald-50'
-                  }`}
-                >
-                  <span>ALL</span>
-                  <span className={`text-[9px] font-bold px-1 py-0.2 rounded ${
-                    resultsAisleView === 'ALL'
-                      ? 'bg-white/20 text-white'
-                      : isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900'
-                  }`}>
-                    {combinedTotalFacings}f
-                  </span>
-                </button>
-              )}
-
-              {/* Bay tabs: All captured bays are status === 'done' */}
-              {capturedAisles.map((k) => {
-                const s = aisleSessions[k];
-                if (!s) return null;
-                const isSelected = (resultsAisleView === k) || (capturedAisles.length === 1 && resultsAisleView === 'ALL');
-
-                return (
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 h-full overflow-hidden">
+          {/* Controls & Brand Facings Dock (Desktop Left Column, Mobile Bottom 42% Area) */}
+          <div className="order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full bg-transparent md:bg-[#132219]/80 md:rounded-3xl md:border md:border-emerald-900/60 md:p-4 overflow-hidden shadow-xl min-h-0 pt-1 md:pt-4">
+            {/* Dynamic Results Tab Strip: ALL | BAY 1 | BAY 2 ... + Add Bay */}
+            <div className="flex items-center justify-between pb-1.5 gap-1 shrink-0">
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                {/* Show ALL tab if more than 1 bay captured */}
+                {capturedAisles.length > 1 && (
                   <button
-                    key={k}
                     type="button"
-                    onClick={() => {
-                      setResultsAisleView(k);
-                    }}
-                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
-                      isSelected
+                    onClick={() => setResultsAisleView('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                      resultsAisleView === 'ALL'
                         ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
                         : isDark
                         ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white'
                         : 'bg-white text-emerald-900 border border-emerald-300 hover:bg-emerald-50'
                     }`}
                   >
-                    <span>{s.label}</span>
-                    <span className={`text-[9px] font-black px-1 py-0.2 rounded ${
-                      isSelected
+                    <span>ALL</span>
+                    <span className={`text-[9px] font-bold px-1 py-0.2 rounded ${
+                      resultsAisleView === 'ALL'
                         ? 'bg-white/20 text-white'
                         : isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900'
                     }`}>
-                      {s.totalFacings ?? 0}f
+                      {combinedTotalFacings}f
                     </span>
                   </button>
-                );
-              })}
+                )}
+
+                {/* Bay tabs: All captured bays are status === 'done' */}
+                {capturedAisles.map((k) => {
+                  const s = aisleSessions[k];
+                  if (!s) return null;
+                  const isSelected = (resultsAisleView === k) || (capturedAisles.length === 1 && resultsAisleView === 'ALL');
+
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        setResultsAisleView(k);
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
+                          : isDark
+                          ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white'
+                          : 'bg-white text-emerald-900 border border-emerald-300 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <span>{s.label}</span>
+                      <span className={`text-[9px] font-black px-1 py-0.2 rounded ${
+                        isSelected
+                          ? 'bg-white/20 text-white'
+                          : isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900'
+                      }`}>
+                        {s.totalFacings ?? 0}f
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Flexible + Add Bay Button: Always available to scan another bay */}
+              <button
+                type="button"
+                onClick={handleAddNewBay}
+                className="px-2.5 py-1.5 rounded-xl text-[10px] font-black text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                title="Shoot another bay"
+              >
+                <Plus size={11} />
+                <span>Add Bay</span>
+              </button>
             </div>
 
-            {/* Flexible + Add Bay Button: Always available to scan another bay */}
-            <button
-              type="button"
-              onClick={handleAddNewBay}
-              className="px-2.5 py-1.5 rounded-xl text-[10px] font-black text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-all cursor-pointer flex items-center gap-1 shrink-0"
-              title="Shoot another bay"
-            >
-              <Plus size={11} />
-              <span>Add Bay</span>
-            </button>
-          </div>
-
-          {/* Cross-Bay Duplicate Detections: Always Available when 2+ Bays exist */}
-          {completedAisles.length >= 2 && (
-            <div className="pb-1.5 shrink-0 animate-fade-in">
-              {duplicateReviewStatus === 'pending' ? (
-                <div className="space-y-1.5">
+            {/* Bay overlap summary banner: each bottle in an overlap is counted by one bay only */}
+            {seamSummaries.length > 0 && (() => {
+              const isFlagged = (j: typeof seamSummaries[number]) =>
+                !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
+              const flaggedCount = seamSummaries.filter(isFlagged).length;
+              const kept = duplicateReviewStatus === 'kept';
+              const confidenceLabel = (j: typeof seamSummaries[number]) => {
+                if (!j.seam) return 'No overlap set';
+                if (j.seam.method === 'manual') return 'Set by rep';
+                return { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' }[j.seam.confidence];
+              };
+              return (
+                <div className="pb-1.5 shrink-0 animate-fade-in space-y-1.5">
                   <button
                     type="button"
                     onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
-                    className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 transition-all cursor-pointer shadow-sm group"
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      kept
+                        ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+                        : flaggedCount > 0
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
+                        : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    <span className="flex items-center gap-2 truncate">
+                      {flaggedCount > 0 && !kept ? <AlertTriangle size={13} className="shrink-0" /> : <Layers size={13} className="shrink-0" />}
+                      <span className="truncate">
+                        {kept
+                          ? 'Overlap removal off: all detections kept'
+                          : flaggedCount > 0
+                          ? `Check ${flaggedCount} bay join${flaggedCount > 1 ? 's' : ''} · ${totalDuplicatesCount} counted once`
+                          : `${totalDuplicatesCount} bottle${totalDuplicatesCount === 1 ? '' : 's'} in bay overlaps counted once`}
                       </span>
-                      <AlertTriangle size={13} className="text-amber-400 shrink-0" />
-                      <span className="text-xs font-black truncate">
-                        {baysWithDuplicates.length > 0
-                          ? (baysWithDuplicates.length === 1
-                              ? `${totalDuplicatesCount} overlapping detection${totalDuplicatesCount > 1 ? 's' : ''} on ${baysWithDuplicates[0].bayLabel}`
-                              : `${totalDuplicatesCount} overlapping detections across ${baysWithDuplicates.length} bays`)
-                          : `Seam Overlap Controls (${Math.round(seamTolerance * 100)}%) • 0 duplicates detected`}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 text-[11px] font-bold text-amber-200 shrink-0">
-                      <span>{isDuplicatePanelExpanded ? 'Hide Controls' : 'Seam Controls'}</span>
-                      {isDuplicatePanelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </div>
+                    </span>
+                    <span className="flex items-center gap-1 text-[11px] shrink-0">
+                      Details {isDuplicatePanelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </span>
                   </button>
 
-                  {/* Expanded Duplicate Review & Seam Controls Panel */}
+                  {/* Desktop Inline Expanded Overlap Panel */}
                   {isDuplicatePanelExpanded && (
-                    <div className="p-3 rounded-2xl bg-black/95 border border-amber-500/40 shadow-xl space-y-2.5 backdrop-blur-md animate-fade-in text-left">
-                      <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
-                        <div>
-                          <h4 className="text-xs font-black text-amber-300 flex items-center gap-1.5">
-                            <Layers size={13} />
-                            Overlapping Seam &amp; Live Controls
-                          </h4>
-                          <p className="text-[10px] text-amber-200/90 mt-0.5">
-                            Comparing <strong>Bay 1 [Right {Math.round(seamTolerance * 100)}%]</strong> ⟷ <strong>Bay 2 [Left {Math.round(seamTolerance * 100)}%]</strong> across adjacent shelf seams.
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          +{totalDuplicatesCount} facings
-                        </span>
-                      </div>
-
-                      {/* Interactive Seam Tolerance Controls */}
-                      <div className="p-2.5 rounded-xl bg-[#0e1913] border border-emerald-900/60 space-y-2">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="font-bold text-emerald-300 flex items-center gap-1.5">
-                            <span>Seam Overlap Strip:</span>
-                            <span className="font-mono text-amber-300 font-black bg-amber-500/25 px-2 py-0.5 rounded border border-amber-500/40 text-xs">
-                              {Math.round(seamTolerance * 100)}%
-                            </span>
+                    <div className="hidden md:block p-2.5 rounded-2xl bg-black/90 border border-emerald-900/60 space-y-2 text-left">
+                      {seamSummaries.map((j) => (
+                        <div
+                          key={`${j.leftKey}-${j.rightKey}`}
+                          className={`flex items-center justify-between text-[11px] px-2 py-1.5 rounded-lg border ${
+                            isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100'
+                          }`}
+                        >
+                          <span className="font-bold">
+                            {j.leftLabel} ⟷ {j.rightLabel}
+                            <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
                           </span>
-                          <span className="text-[10px] text-emerald-400/80 font-semibold">
-                            (Drag or tap preset to auto-recalculate)
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            {!kept && <span className="font-mono">{j.excluded} once</span>}
+                            <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded-full border border-current/40">{confidenceLabel(j)}</span>
                           </span>
                         </div>
-
-                        {/* Quick Presets */}
-                        <div className="flex items-center justify-between gap-1">
-                          {[0.10, 0.15, 0.20, 0.25, 0.30].map((pct) => (
-                            <button
-                              key={pct}
-                              type="button"
-                              onClick={() => handleUpdateSeamTolerance(pct)}
-                              className={`flex-1 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
-                                Math.abs(seamTolerance - pct) < 0.01
-                                  ? 'bg-amber-500 text-black shadow-md font-black scale-105 ring-1 ring-amber-300'
-                                  : 'bg-black/60 text-slate-300 hover:text-white hover:bg-slate-800 border border-emerald-950'
-                              }`}
-                            >
-                              {Math.round(pct * 100)}%
-                            </button>
-                          ))}
-                        </div>
-
-                        {/* Slider */}
-                        <div className="flex items-center gap-2 pt-0.5">
-                          <span className="text-[10px] text-slate-400 font-mono font-bold">8%</span>
-                          <input
-                            type="range"
-                            min="0.08"
-                            max="0.35"
-                            step="0.01"
-                            value={seamTolerance}
-                            onChange={(e) => handleUpdateSeamTolerance(parseFloat(e.target.value))}
-                            className="flex-1 accent-amber-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
-                            title="Adjust seam overlap width percentage"
-                          />
-                          <span className="text-[10px] text-slate-400 font-mono font-bold">35%</span>
-                        </div>
-                      </div>
-
-                      {/* 1-Tap Toggle Tip */}
-                      <div className="text-[10px] text-emerald-300/90 bg-emerald-950/60 border border-emerald-800/60 rounded-xl px-2.5 py-1.5 flex items-center justify-between">
-                        <span>💡 <strong>1-Tap Manual Override:</strong> Tap any bottle box on the photo preview below to toggle duplicate on/off</span>
-                      </div>
-
-                      {/* Duplicates Grouped by Bay and Brand */}
-                      {baysWithDuplicates.length > 0 ? (
-                        <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar pr-0.5">
-                          {baysWithDuplicates.map((report) => {
-                            const brandMap: Record<string, number> = {};
-                            report.duplicates.forEach((d) => {
-                              brandMap[d.brand] = (brandMap[d.brand] || 0) + 1;
-                            });
-
-                            return (
-                              <div key={report.bayKey} className="p-2 rounded-xl bg-[#132219]/90 border border-emerald-900/60">
-                                <div className="flex items-center justify-between text-xs font-black text-white pb-1 border-b border-emerald-900/40">
-                                  <span className="flex items-center gap-1.5">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                                    {report.bayLabel}
-                                  </span>
-                                  <span className="text-[10px] font-bold text-amber-400">
-                                    {report.duplicates.length} duplicate{report.duplicates.length > 1 ? 's' : ''} detected
-                                  </span>
-                                </div>
-                                <div className="pt-1.5 space-y-1">
-                                  {Object.entries(brandMap).map(([brand, count]) => {
-                                    const brandColor = BRAND_COLORS[brand] || '#10B981';
-                                    return (
-                                      <div key={brand} className="flex items-center justify-between text-[11px] text-slate-200 px-1.5 py-0.5 rounded bg-black/40">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: brandColor }} />
-                                          <span className="font-bold text-white">{brand}</span>
-                                        </div>
-                                        <span className="text-[10px] text-rose-300 font-bold">
-                                          +{count} facing{count > 1 ? 's' : ''} added
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="p-2.5 rounded-xl bg-[#132219]/60 border border-emerald-900/40 text-center text-emerald-300/80 text-[11px]">
-                          No duplicate bottles detected at {Math.round(seamTolerance * 100)}% seam overlap. Drag slider above or tap any bottle to manually toggle duplicate.
-                        </div>
-                      )}
-
-                      {/* Actions: Remove duplicates & Keep all */}
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={handleRemoveDuplicates}
-                          className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:brightness-110 active:scale-95 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-rose-950/40"
-                        >
-                          <Check size={14} className="stroke-[3]" />
-                          <span>Remove duplicates</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={handleKeepAllDuplicates}
-                          className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
-                        >
-                          <X size={14} />
-                          <span>Keep all</span>
-                        </button>
-                      </div>
+                      ))}
+                      <p className="text-[10px] text-emerald-300/80">
+                        Open a bay tab to see count lines. <span className="text-red-400 font-bold">Red ✕</span> = counted in neighbouring bay. <span className="text-emerald-300 font-bold">Green</span> = counted here.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={kept ? handleRemoveDuplicates : handleKeepAllDuplicates}
+                        className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] uppercase tracking-wider cursor-pointer active:scale-[0.98]"
+                      >
+                        {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
+                      </button>
                     </div>
                   )}
                 </div>
-              ) : duplicateReviewStatus === 'removed' ? (
-                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold shadow-sm">
-                  <div className="flex items-center gap-2 truncate">
-                    <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
-                    <span className="truncate">
-                      AI Outer Edge Seam Alignment: {totalDuplicatesCount > 0 ? `${totalDuplicatesCount} seam duplicate facing(s) automatically deducted` : 'No seam duplicates detected'}
-                    </span>
-                  </div>
-                  <span className="text-[10px] uppercase font-mono font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                    Automated
+              );
+            })()}
+
+            {/* Brand Facings Area: Scrollable rows and steppers */}
+            <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden">
+              <div className="flex items-center justify-between px-1 pb-1 shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                    isDark ? 'text-emerald-300/70' : 'text-emerald-950/70'
+                  }`}>
+                    Brand Facings
+                  </span>
+                  <span className={`text-[9px] font-black px-1.5 py-0.2 rounded border ${
+                    isDark ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/40' : 'text-emerald-800 bg-emerald-100 border-emerald-300'
+                  }`}>
+                    {resultsAisleView === 'ALL' ? 'ALL' : viewSession?.label}
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-400">
+                    Total: {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}
                   </span>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-400 text-xs font-medium">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <Layers size={13} className="shrink-0" />
-                    <span>Kept all detections ({totalDuplicatesCount} overlap{totalDuplicatesCount > 1 ? 's' : ''})</span>
-                  </div>
+
+                {/* Add Competitor SKU button */}
+                <button
+                  type="button"
+                  onClick={() => setIsAddBrandOpen(true)}
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
+                    isDark
+                      ? 'text-emerald-300 hover:text-white bg-[#132219] hover:bg-[#1b3024] border-emerald-800/60'
+                      : 'text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+                  }`}
+                >
+                  <Plus size={11} />
+                  <span>+ Brand</span>
+                </button>
+              </div>
+
+              {/* Scrollable Brand List */}
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 px-0.5 pb-1 scroll-smooth">
+                {allBrandKeys.map((brand) => {
+                  const count = resultsAisleView === 'ALL' 
+                    ? (combinedCounts[brand] ?? 0) 
+                    : (viewSession?.counts[brand] ?? 0);
+                  const upperBrand = brand.toUpperCase().trim();
+                  const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#16A34A';
+                  const isPrimary = category === 'Edible Oil'
+                    ? ['YARA', 'ZAIN', 'DAWI', 'AL RAI', 'ADEERA'].includes(upperBrand)
+                    : category === 'Flour'
+                    ? ['F1', 'F2', 'F3', 'PREM', 'SR', 'KFM'].includes(upperBrand)
+                    : ['QFM', 'QFM PREM', 'ZAIN'].includes(upperBrand);
+
+                  const origCount = resultsAisleView === 'ALL'
+                    ? combinedOrigCounts[brand]
+                    : (viewSession?.seamAdjustedCounts?.[brand] ?? viewSession?.originalAiCounts[brand]);
+
+                  // Delta tag appears ONLY once a value has changed from its initial count
+                  const hasChangedFromInitial = origCount !== undefined && count !== origCount;
+                  const diff = hasChangedFromInitial ? count - origCount : 0;
+
+                  return (
+                    <div
+                      key={brand}
+                      className={`border rounded-2xl px-3 py-1.5 flex items-center justify-between transition-all ${
+                        hasChangedFromInitial
+                          ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30'
+                          : isPrimary
+                          ? isDark
+                            ? 'border-emerald-500/50 bg-[#132219]/90 shadow-sm'
+                            : 'border-emerald-500/60 bg-emerald-50/50 shadow-xs'
+                          : isDark
+                          ? 'border-emerald-900/40 bg-[#132219]/60'
+                          : 'border-emerald-950/10 bg-white shadow-xs'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                          style={{ backgroundColor: brandColor }}
+                        />
+                        <div>
+                          <span className={`text-xs font-black flex items-center gap-1 ${
+                            isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
+                          }`}>
+                            {brand}
+                            {isPrimary && (
+                              <span className={`text-[8px] font-black uppercase px-1 py-0.2 rounded border ${
+                                isDark
+                                  ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40'
+                                  : 'text-emerald-800 bg-emerald-100 border-emerald-300'
+                              }`}>
+                                {category === 'Edible Oil' ? 'QFI' : 'QFM'}
+                              </span>
+                            )}
+                          </span>
+                          {/* Delta tag ONLY once modified from initial count */}
+                          {hasChangedFromInitial && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[8px] font-extrabold text-amber-500 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
+                                Initial {origCount} &rarr; Adjusted {count} ({diff > 0 ? `+${diff}` : diff})
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Steppers visible at all times */}
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCount(brand, -1)}
+                          className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
+                            isDark
+                              ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
+                              : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
+                          }`}
+                          aria-label={`Decrease ${brand}`}
+                        >
+                          -
+                        </button>
+                        <span className={`w-6 text-center text-sm font-black tabular-nums ${
+                          isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
+                        }`}>
+                          {count}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCount(brand, 1)}
+                          className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
+                            isDark
+                              ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
+                              : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
+                          }`}
+                          aria-label={`Increase ${brand}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Save Action Bar Dock */}
+              <div className="pt-2 pb-1 space-y-1.5 shrink-0 border-t border-emerald-900/40">
+                <button
+                  type="button"
+                  onClick={handleFinalSave}
+                  disabled={!isSaveEnabled}
+                  className="w-full py-3.5 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <CheckCircle2 size={16} />
+                  <span>
+                    Confirm &amp; Save Category Audit ({completedAisles.length} Bay{completedAisles.length > 1 ? 's' : ''})
+                  </span>
+                </button>
+
+                <div className="flex items-center justify-center gap-4 text-[10px]">
                   <button
                     type="button"
-                    onClick={handleRemoveDuplicates}
-                    className="text-[10px] text-amber-400 hover:text-amber-300 underline cursor-pointer ml-2 shrink-0 font-bold"
+                    onClick={() => setStep('POSM')}
+                    className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer py-1"
                   >
-                    Remove
+                    <ShieldCheck size={11} /> Review POSM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStep('CAPTURE')}
+                    className="text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
+                  >
+                    <Camera size={11} /> Return to Camera
                   </button>
                 </div>
-              )}
+              </div>
             </div>
-          )}
+          </div>
 
-          {/* 3. Shelf Image Preview (Panorama on ALL tab, individual photo on BAY tabs, tap to swap Raw/Annotated) */}
+          {/* Shelf Image Preview Canvas (Desktop Right Column, Mobile Top 58% Canvas) */}
           <div 
             ref={shelfContainerRef}
             onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-            className="relative h-[48%] shrink-0 min-h-[220px] bg-black rounded-3xl border border-emerald-900/60 overflow-hidden shadow-2xl flex items-center justify-center cursor-pointer group"
+            className="order-1 md:order-2 md:flex-1 h-[58%] md:h-full shrink-0 min-h-[220px] bg-black rounded-3xl border border-emerald-900/60 overflow-hidden shadow-2xl relative flex items-center justify-center cursor-pointer group"
             title="Tap photo to swap between Annotated and Raw view"
           >
             {isStitchingPanorama ? (
@@ -3535,191 +3816,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     }
               }
             >
-              {(() => {
-                const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
-                const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
-
-                const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
-                const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
-
-                return (
-                  <>
-                    {/* Visual Seam Overlap Line Indicators */}
-                    {resultsAisleView !== 'ALL' && (() => {
-                      const bayIndex = completedAisles.indexOf(resultsAisleView);
-                      const hasLeftSeam = bayIndex > 0;
-                      const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
-
-                      return (
-                        <>
-                          {hasLeftSeam && (
-                            <div 
-                              style={{ width: `${seamTolerance * 100}%` }}
-                              className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none flex flex-col justify-end p-1 z-0"
-                            >
-                              <span className="text-[8px] font-mono font-bold text-amber-300 bg-black/85 px-1 py-0.5 rounded shadow self-end border border-amber-500/30 whitespace-nowrap">
-                                Left Seam {Math.round(seamTolerance * 100)}% (⟷ {completedAisles[bayIndex - 1]?.replace('bay_', 'Bay ')} Right)
-                              </span>
-                            </div>
-                          )}
-                          {hasRightSeam && (
-                            <div 
-                              style={{ width: `${seamTolerance * 100}%` }}
-                              className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none flex flex-col justify-end p-1 z-0"
-                            >
-                              <span className="text-[8px] font-mono font-bold text-amber-300 bg-black/85 px-1 py-0.5 rounded shadow self-start border border-amber-500/30 whitespace-nowrap">
-                                Right Seam {Math.round(seamTolerance * 100)}% (⟷ {completedAisles[bayIndex + 1]?.replace('bay_', 'Bay ')} Left)
-                              </span>
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
-
-                    {/* Stitched Seam Divider Line for ALL Tab */}
-                    {isAllView && completedAisles.length > 1 && (() => {
-                      let acc = 0;
-                      return completedAisles.slice(0, -1).map((k, idx) => {
-                        acc += bayWidths[idx];
-                        const linePct = (acc / totalWidth) * 100;
-                        return (
-                          <div 
-                            key={`panorama-seam-${k}`}
-                            style={{ left: `${linePct}%` }}
-                            className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none flex flex-col justify-start p-1"
-                          >
-                            <span className="text-[8px] font-mono font-bold text-emerald-300 bg-black/85 px-1 py-0.5 rounded shadow border border-emerald-500/30 -translate-x-1/2 whitespace-nowrap">
-                              Seam {k.replace('bay_', 'Bay ')} ⟷ {completedAisles[idx + 1]?.replace('bay_', 'Bay ')}
-                            </span>
-                          </div>
-                        );
-                      });
-                    })()}
-
-                    {/* Source & Duplicate Bottle Highlights for all active bays */}
-                    {baysToRender.map((bayKey) => {
-                      const bayIndex = completedAisles.indexOf(bayKey);
-                      if (bayIndex < 0) return null;
-
-                      const session = aisleSessions[bayKey];
-                      const bayW = session?.naturalDimensions?.width || 800;
-                      const bayH = session?.naturalDimensions?.height || 1280;
-
-                      let leftOffset = 0;
-                      for (let i = 0; i < bayIndex; i++) {
-                        leftOffset += bayWidths[i];
-                      }
-
-                      const mapCoords = (x: number, y: number, w: number, h: number) => {
-                        if (isAllView) {
-                          const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
-                          return {
-                            leftPct: (boxLeftPx / totalWidth) * 100,
-                            topPct: (y / bayH) * 100,
-                            widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
-                            heightPct: (h / bayH) * 100
-                          };
-                        }
-                        return {
-                          leftPct: (x / bayW) * 100,
-                          topPct: (y / bayH) * 100,
-                          widthPct: (w / bayW) * 100,
-                          heightPct: (h / bayH) * 100
-                        };
-                      };
-
-                      const report = duplicateReports[bayKey];
-                      const nextBayKey = completedAisles[bayIndex + 1];
-                      const nextReport = nextBayKey ? duplicateReports[nextBayKey] : null;
-
-                      const myBoxes: any[] = session?.boxes && session.boxes.length > 0 
-                        ? session.boxes 
-                        : (session?.rawBoxes || []);
-
-                      return (
-                        <React.Fragment key={`bay-overlays-${bayKey}`}>
-                          {/* 1. Kept Source Bottle Highlights on Left Bay */}
-                          {nextReport?.hasDuplicates && nextReport.duplicates.map((dup) => {
-                            const matchedBox = myBoxes.find((b) => String(b.id || `lbox-${b.x}-${b.y}`) === dup.matchedWithBoxId);
-                            if (!matchedBox) return null;
-
-                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
-                              matchedBox.x || 0,
-                              matchedBox.y || 0,
-                              matchedBox.width || 40,
-                              matchedBox.height || 80
-                            );
-
-                            return (
-                              <div
-                                key={`source-${dup.boxId}`}
-                                style={{
-                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
-                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
-                                  width: `${Math.max(3, Math.min(40, widthPct))}%`,
-                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
-                                }}
-                                className="absolute rounded border-2 border-emerald-400 bg-emerald-500/20 flex items-center justify-center pointer-events-none z-10"
-                                title={`Source bottle on ${bayKey.replace('bay_', 'Bay ')} (kept)`}
-                              >
-                                <span className="absolute -top-3.5 right-0 bg-emerald-600 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight whitespace-nowrap">
-                                  Kept (Overlaps {nextBayKey.replace('bay_', 'Bay ')})
-                                </span>
-                              </div>
-                            );
-                          })}
-
-                          {/* 2. Duplicate Bottle Highlights on Right Bay */}
-                          {report?.duplicates.map((dup) => {
-                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
-                              dup.x,
-                              dup.y,
-                              dup.width || 40,
-                              dup.height || 80
-                            );
-                            const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
-
-                            return (
-                              <button
-                                key={`dup-${dup.boxId}`}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
-                                }}
-                                style={{
-                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
-                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
-                                  width: `${Math.max(3, Math.min(40, widthPct))}%`,
-                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
-                                }}
-                                className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup z-10 ${
-                                  isRemoved
-                                    ? 'opacity-40 hover:opacity-95 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
-                                    : 'opacity-85 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
-                                }`}
-                                title={`Tap to ${isRemoved ? 'restore' : 'remove'} duplicate for ${dup.brand}`}
-                                aria-label={`Toggle duplicate for ${dup.brand}`}
-                              >
-                                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
-                                  <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
-                                </div>
-                                <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
-                                  {isRemoved ? 'Removed' : 'Duplicate'}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </React.Fragment>
-                      );
-                    })}
-                  </>
-                );
-              })()}
+              {renderSeamOverlays(false)}
             </div>
 
             {/* Tap-to-swap Mode indicator badge */}
-            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-emerald-500/40 text-[9px] font-bold text-emerald-300 flex items-center gap-1 pointer-events-none">
+            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-emerald-500/40 text-[9px] font-bold text-emerald-300 flex items-center gap-1 pointer-events-none z-20">
               <span>
                 {resultsAisleView === 'ALL' && capturedBaySessions.length > 1
                   ? (showRawPhotoComparison ? 'Raw Panorama (Tap for AI)' : 'Annotated Panorama (Tap for Raw)')
@@ -3746,7 +3847,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             )}
 
             {/* Bottom Scrim Info */}
-            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] text-emerald-100 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-900/70 shadow-sm pointer-events-auto">
+            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] text-emerald-100 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-900/70 shadow-sm pointer-events-auto z-20">
               <span className="font-semibold truncate max-w-[180px]">
                 {resultsAisleView === 'ALL'
                   ? `${category} Panorama (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
@@ -3758,177 +3859,71 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
           </div>
 
-          {/* Brand Facing Counts List & Bottom Actions */}
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pt-2 pb-2 px-0.5 scroll-smooth">
-            <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-1.5">
-                <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                  isDark ? 'text-emerald-300/70' : 'text-emerald-950/70'
-                }`}>
-                  Brand Facings
-                </span>
-                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded border ${
-                  isDark ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/40' : 'text-emerald-800 bg-emerald-100 border-emerald-300'
-                }`}>
-                  {resultsAisleView === 'ALL' ? 'ALL Combined' : viewSession?.label}
-                </span>
-                <span className="text-[10px] font-bold text-emerald-400">
-                  Total: {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}
-                </span>
-              </div>
-
-              {/* Add Competitor SKU button */}
-              <button
-                type="button"
-                onClick={() => setIsAddBrandOpen(true)}
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                  isDark
-                    ? 'text-emerald-300 hover:text-white bg-[#132219] hover:bg-[#1b3024] border-emerald-800/60'
-                    : 'text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
-                }`}
-              >
-                <Plus size={11} />
-                <span>+ Brand</span>
-              </button>
-            </div>
-
-            {/* Brand Rows with continuous steppers and conditional delta tags */}
-            <div className="space-y-1">
-              {allBrandKeys.map((brand) => {
-                const count = resultsAisleView === 'ALL' 
-                  ? (combinedCounts[brand] ?? 0) 
-                  : (viewSession?.counts[brand] ?? 0);
-                const upperBrand = brand.toUpperCase().trim();
-                const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#16A34A';
-                const isPrimary = category === 'Edible Oil'
-                  ? ['YARA', 'ZAIN', 'DAWI', 'AL RAI', 'ADEERA'].includes(upperBrand)
-                  : category === 'Flour'
-                  ? ['F1', 'F2', 'F3', 'PREM', 'SR', 'KFM'].includes(upperBrand)
-                  : ['QFM', 'QFM PREM', 'ZAIN'].includes(upperBrand);
-
-                const origCount = resultsAisleView === 'ALL'
-                  ? combinedOrigCounts[brand]
-                  : viewSession?.originalAiCounts[brand];
-
-                // Delta tag appears ONLY once a value has changed from its initial count
-                const hasChangedFromInitial = origCount !== undefined && count !== origCount;
-                const diff = hasChangedFromInitial ? count - origCount : 0;
-
-                return (
-                  <div
-                    key={brand}
-                    className={`border rounded-2xl px-3 py-1.5 flex items-center justify-between transition-all ${
-                      hasChangedFromInitial
-                        ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30'
-                        : isPrimary
-                        ? isDark
-                          ? 'border-emerald-500/50 bg-[#132219]/90 shadow-sm'
-                          : 'border-emerald-500/60 bg-emerald-50/50 shadow-xs'
-                        : isDark
-                        ? 'border-emerald-900/40 bg-[#132219]/60'
-                        : 'border-emerald-950/10 bg-white shadow-xs'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <div
-                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
-                        style={{ backgroundColor: brandColor }}
-                      />
-                      <div>
-                        <span className={`text-xs font-black flex items-center gap-1 ${
-                          isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-                        }`}>
-                          {brand}
-                          {isPrimary && (
-                            <span className={`text-[8px] font-black uppercase px-1 py-0.2 rounded border ${
-                              isDark
-                                ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40'
-                                : 'text-emerald-800 bg-emerald-100 border-emerald-300'
-                            }`}>
-                              {category === 'Edible Oil' ? 'QFI' : 'QFM'}
-                            </span>
-                          )}
-                        </span>
-                        {/* Delta tag ONLY once modified from initial count */}
-                        {hasChangedFromInitial && (
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <span className="text-[8px] font-extrabold text-amber-500 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
-                              Initial {origCount} &rarr; Adjusted {count} ({diff > 0 ? `+${diff}` : diff})
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Steppers visible at all times */}
-                    <div className="flex items-center space-x-2">
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateCount(brand, -1)}
-                        className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
-                          isDark
-                            ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
-                            : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
-                        }`}
-                        aria-label={`Decrease ${brand}`}
-                      >
-                        -
-                      </button>
-                      <span className={`w-6 text-center text-sm font-black tabular-nums ${
-                        isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-                      }`}>
-                        {count}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateCount(brand, 1)}
-                        className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
-                          isDark
-                            ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
-                            : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
-                        }`}
-                        aria-label={`Increase ${brand}`}
-                      >
-                        +
-                      </button>
-                    </div>
+          {/* Mobile-Only Slide-Up Sheet for Overlap Details */}
+          {isDuplicatePanelExpanded && seamSummaries.length > 0 && (() => {
+            const isFlagged = (j: typeof seamSummaries[number]) =>
+              !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
+            const kept = duplicateReviewStatus === 'kept';
+            const confidenceLabel = (j: typeof seamSummaries[number]) => {
+              if (!j.seam) return 'No overlap set';
+              if (j.seam.method === 'manual') return 'Set by rep';
+              return { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' }[j.seam.confidence];
+            };
+            return (
+              <>
+                <div
+                  className="fixed inset-0 bg-black/75 z-40 md:hidden"
+                  onClick={() => setIsDuplicatePanelExpanded(false)}
+                />
+                <div className="fixed inset-x-0 bottom-0 z-50 md:hidden bg-[#0c1811] border-t border-emerald-500/50 rounded-t-3xl p-4 shadow-2xl space-y-3 max-h-[75vh] overflow-y-auto animate-fade-in">
+                  <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto" />
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                      Bay Overlap Deduplication
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setIsDuplicatePanelExpanded(false)}
+                      className="text-xs text-slate-400 hover:text-white px-2 py-0.5"
+                    >
+                      Close
+                    </button>
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Save Action Bar */}
-            <div className="pt-2 pb-1 space-y-1.5">
-              <button
-                type="button"
-                onClick={handleFinalSave}
-                disabled={!isSaveEnabled}
-                className="w-full py-3.5 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
-              >
-                <CheckCircle2 size={16} />
-                <span>
-                  Confirm &amp; Save Category Audit ({completedAisles.length} Bay{completedAisles.length > 1 ? 's' : ''})
-                </span>
-              </button>
-
-              <div className="flex items-center justify-center gap-4 text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => setStep('POSM')}
-                  className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer py-1"
-                >
-                  <ShieldCheck size={11} /> Review POSM
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep('CAPTURE')}
-                  className="text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
-                >
-                  <Camera size={11} /> Return to Camera
-                </button>
-              </div>
-            </div>
-          </div>
+                  {seamSummaries.map((j) => (
+                    <div
+                      key={`${j.leftKey}-${j.rightKey}`}
+                      className={`flex items-center justify-between text-[11px] px-2.5 py-2 rounded-xl border ${
+                        isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100'
+                      }`}
+                    >
+                      <span className="font-bold">
+                        {j.leftLabel} ⟷ {j.rightLabel}
+                        <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
+                      </span>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {!kept && <span className="font-mono">{j.excluded} once</span>}
+                        <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded-full border border-current/40">{confidenceLabel(j)}</span>
+                      </span>
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-emerald-300/80 leading-relaxed">
+                    Open a bay tab to see its count lines. <span className="text-red-400 font-bold">Red ✕</span> = counted in the neighbouring bay (tap to count here too). <span className="text-emerald-300 font-bold">Green</span> = counted here (tap to undo).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (kept) handleRemoveDuplicates();
+                      else handleKeepAllDuplicates();
+                      setIsDuplicatePanelExpanded(false);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-[0.98]"
+                  >
+                    {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -4129,132 +4124,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               {/* Duplicate Bottles Overlay in Lightbox (Only in RESULTS step) */}
               {step === 'RESULTS' && (
                 <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                  {(() => {
-                    const baysToRender = resultsAisleView === 'ALL' ? completedAisles : [resultsAisleView];
-                    const isAllView = resultsAisleView === 'ALL' && completedAisles.length > 1;
-
-                    const bayWidths = completedAisles.map((k) => aisleSessions[k]?.naturalDimensions?.width || 800);
-                    const totalWidth = bayWidths.reduce((a, b) => a + b, 0);
-
-                    return (
-                      <>
-                        {/* Visual Seam Guide based on active bay index */}
-                        {resultsAisleView !== 'ALL' && (() => {
-                          const bayIndex = completedAisles.indexOf(resultsAisleView);
-                          const hasLeftSeam = bayIndex > 0;
-                          const hasRightSeam = bayIndex >= 0 && bayIndex < completedAisles.length - 1;
-                          return (
-                            <>
-                              {hasLeftSeam && (
-                                <div 
-                                  style={{ width: `${seamTolerance * 100}%` }}
-                                  className="absolute top-0 bottom-0 left-0 border-r-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
-                                />
-                              )}
-                              {hasRightSeam && (
-                                <div 
-                                  style={{ width: `${seamTolerance * 100}%` }}
-                                  className="absolute top-0 bottom-0 right-0 border-l-2 border-dashed border-amber-400/80 bg-amber-500/10 pointer-events-none"
-                                />
-                              )}
-                            </>
-                          );
-                        })()}
-
-                        {/* Stitched Seam Divider Line for ALL Tab */}
-                        {isAllView && completedAisles.length > 1 && (() => {
-                          let acc = 0;
-                          return completedAisles.slice(0, -1).map((k, idx) => {
-                            acc += bayWidths[idx];
-                            const linePct = (acc / totalWidth) * 100;
-                            return (
-                              <div 
-                                key={`lb-panorama-seam-${k}`}
-                                style={{ left: `${linePct}%` }}
-                                className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400/80 z-0 pointer-events-none"
-                              />
-                            );
-                          });
-                        })()}
-
-                        {/* Duplicate Bottle Highlights for all active bays */}
-                        {baysToRender.map((bayKey) => {
-                          const bayIndex = completedAisles.indexOf(bayKey);
-                          if (bayIndex < 0) return null;
-
-                          const session = aisleSessions[bayKey];
-                          const bayW = session?.naturalDimensions?.width || 800;
-                          const bayH = session?.naturalDimensions?.height || 1280;
-
-                          let leftOffset = 0;
-                          for (let i = 0; i < bayIndex; i++) {
-                            leftOffset += bayWidths[i];
-                          }
-
-                          const mapCoords = (x: number, y: number, w: number, h: number) => {
-                            if (isAllView) {
-                              const boxLeftPx = leftOffset + (x / bayW) * bayWidths[bayIndex];
-                              return {
-                                leftPct: (boxLeftPx / totalWidth) * 100,
-                                topPct: (y / bayH) * 100,
-                                widthPct: ((w / bayW) * bayWidths[bayIndex] / totalWidth) * 100,
-                                heightPct: (h / bayH) * 100
-                              };
-                            }
-                            return {
-                              leftPct: (x / bayW) * 100,
-                              topPct: (y / bayH) * 100,
-                              widthPct: (w / bayW) * 100,
-                              heightPct: (h / bayH) * 100
-                            };
-                          };
-
-                          const report = duplicateReports[bayKey];
-                          if (!report?.hasDuplicates) return null;
-
-                          return report.duplicates.map((dup) => {
-                            const { leftPct, topPct, widthPct, heightPct } = mapCoords(
-                              dup.x,
-                              dup.y,
-                              dup.width || 40,
-                              dup.height || 80
-                            );
-                            const isRemoved = removedDuplicateBoxIds.has(dup.boxId) || duplicateReviewStatus === 'removed';
-
-                            return (
-                              <button
-                                key={`lightbox-${dup.boxId}`}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleBoxDuplicate(dup.boxId, bayKey, dup.brand);
-                                }}
-                                style={{
-                                  left: `${Math.max(0, Math.min(95, leftPct))}%`,
-                                  top: `${Math.max(0, Math.min(95, topPct))}%`,
-                                  width: `${Math.max(3, Math.min(30, widthPct))}%`,
-                                  height: `${Math.max(4, Math.min(50, heightPct))}%`,
-                                }}
-                                className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 group/dup ${
-                                  isRemoved
-                                    ? 'opacity-40 hover:opacity-90 bg-red-950/40 border-2 border-red-500 shadow-sm shadow-red-950'
-                                    : 'opacity-75 hover:opacity-100 bg-amber-500/25 border-2 border-dashed border-amber-400'
-                                }`}
-                                title={`Tap to toggle duplicate for ${dup.brand}`}
-                              >
-                                <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
-                                  <div className="w-[140%] h-[2.5px] bg-red-500 rotate-[-45deg] shadow-sm shadow-red-500" />
-                                </div>
-                                <span className="absolute -top-3.5 left-0 bg-red-600 group-hover/dup:bg-red-500 text-white text-[8px] font-black px-1 rounded shadow-xs uppercase tracking-tight">
-                                  {isRemoved ? 'Removed' : 'Duplicate'}
-                                </span>
-                              </button>
-                            );
-                          });
-                        })}
-                      </>
-                    );
-                  })()}
+                  {renderSeamOverlays(true)}
                 </div>
               )}
             </div>

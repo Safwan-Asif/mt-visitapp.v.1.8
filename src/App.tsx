@@ -338,7 +338,7 @@ export default function App() {
 
   return (
     <div
-      className={`h-screen w-screen overflow-hidden flex flex-col justify-between relative antialiased select-none transition-colors duration-300 ${
+      className={`h-[100dvh] w-full overflow-hidden flex flex-col justify-between relative antialiased select-none transition-colors duration-300 ${
         isDark ? 'bg-[#0B120E] text-[#F0FDF4]' : 'bg-[#F8FAF9] text-[#061A12]'
       }`}
     >
