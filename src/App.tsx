@@ -347,10 +347,12 @@ export default function App() {
       <div className={`absolute -bottom-20 -right-20 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${isDark ? 'bg-lime-900/15' : 'bg-lime-500/10'}`} />
       <div className={`absolute top-1/2 left-1/3 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${isDark ? 'bg-emerald-950/30' : 'bg-emerald-400/5'}`} />
 
-      {/* TOP HEADER BAR (Bespoke QFI Corporate Header) */}
+      {/* TOP HEADER BAR (Bespoke QFI Corporate Header - Hidden on mobile during camera capture for full-screen view) */}
       {user && currentScreen !== 'LOGIN' && (
         <header
-          className={`px-3.5 py-2.5 backdrop-blur-xl border-b flex items-center justify-between z-20 shrink-0 transition-colors ${
+          className={`px-3.5 py-2.5 backdrop-blur-xl border-b items-center justify-between z-20 shrink-0 transition-colors ${
+            currentScreen === 'CAMERA_WORKFLOW' ? 'hidden md:flex' : 'flex'
+          } ${
             isDark
               ? 'bg-[#132219]/80 border-emerald-900/40 shadow-lg shadow-black/20'
               : 'bg-white/90 border-slate-200/80 shadow-xs shadow-emerald-950/5'

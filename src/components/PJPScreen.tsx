@@ -355,31 +355,6 @@ export const PJPScreen: React.FC<PJPScreenProps> = ({
           })
         )}
       </div>
-
-      {/* Floating Bottom Quick Action */}
-      <div
-        className={`pt-2 shrink-0 border-t ${
-          isDark ? 'border-emerald-950' : 'border-slate-200'
-        }`}
-      >
-        <div
-          className={`backdrop-blur-xl border rounded-2xl p-2.5 flex items-center justify-between text-xs ${
-            isDark
-              ? 'bg-[#132219]/80 border-emerald-900/50 text-slate-300'
-              : 'bg-white border-emerald-950/10 text-slate-700 shadow-xs'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-[#10B981]" />
-            <span className={isDark ? 'text-slate-400' : 'text-slate-600'}>
-              PJP Sequence Optimized for High-Speed Route
-            </span>
-          </div>
-          <span className={`font-bold ${isDark ? 'text-[#10B981]' : 'text-[#047857]'}`}>
-            ~1m 45s / Store
-          </span>
-        </div>
-      </div>
     </div>
   );
 };

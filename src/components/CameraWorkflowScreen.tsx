@@ -4,7 +4,7 @@ import {
   ShieldCheck, Tag, Layers,
   Image as ImageIcon, Upload,
   Loader2, Check, Maximize2, Minimize2, ZoomIn, ZoomOut, X,
-  ChevronDown, ChevronUp, AlertTriangle, RefreshCw
+  ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Sparkles
 } from 'lucide-react';
 import { 
   CategoryType, Outlet, CategoryAuditRecord, BoundingBox, 
@@ -681,6 +681,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   // Post-capture inline prompt state: when true, shows "Scan next bay" & "Done shooting"
   const [showPostCapturePrompt, setShowPostCapturePrompt] = useState<boolean>(false);
   const [lastCapturedAisle, setLastCapturedAisle] = useState<string>('bay_1');
+  // In POSM step: which bay is active in the Web/Tablet preview switcher
+  const [posmActiveBayKey, setPosmActiveBayKey] = useState<string>('bay_1');
 
   // POSM Questionnaire state (visibility driven solely by step === 'POSM')
   const [priceTagOk, setPriceTagOk] = useState<boolean>(existingAudit?.priceTagOk ?? true);
@@ -1890,6 +1892,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       }
     });
 
+    setPosmActiveBayKey(lastCapturedAisle || currentAisle || capturedAisles[0] || 'bay_1');
     setStep('POSM');
   };
 
@@ -2611,16 +2614,21 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           }`}
         >
           <ArrowLeft size={15} />
-          <span className="truncate max-w-[105px]">{outlet.name}</span>
+          <span className={`truncate ${step === 'RESULTS' ? 'max-w-[105px] sm:max-w-[150px]' : 'max-w-[180px] sm:max-w-xs md:max-w-md'}`}>
+            {outlet.name}
+          </span>
         </button>
 
-        <LiveLocationBadge
-          compact
-          outletName={outlet.name}
-          targetLatitude={outlet.latitude}
-          targetLongitude={outlet.longitude}
-          onLocationCaptured={setGpsCoords}
-        />
+        {/* Location coordinates visible only in final RESULTS stage */}
+        {step === 'RESULTS' && (
+          <LiveLocationBadge
+            compact
+            outletName={outlet.name}
+            targetLatitude={outlet.latitude}
+            targetLongitude={outlet.longitude}
+            onLocationCaptured={setGpsCoords}
+          />
+        )}
 
         <div className="flex items-center gap-1.5 shrink-0">
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
@@ -2708,11 +2716,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   </span>
                 </div>
 
-                {/* Zoom / Expand Tag */}
+                {/* Zoom / Expand Tag (hidden on mobile to maximize canvas clarity) */}
                 <button
                   type="button"
                   onClick={() => setIsFullScreenOpen(true)}
-                  className="absolute bottom-4 right-4 bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-xl text-[10px] font-bold text-slate-200 border border-white/10 shadow-md flex items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
+                  className="hidden md:flex absolute bottom-4 right-4 bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-xl text-[10px] font-bold text-slate-200 border border-white/10 shadow-md items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
                 >
                   <Maximize2 size={12} className="text-emerald-400" />
                   <span>Tap to Zoom</span>
@@ -2783,28 +2791,26 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             })()}
 
             {/* Camera Guidance: Level Line & Banner */}
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10">
+            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-4 z-10">
               {/* Top Viewfinder Banner */}
-              <div className="w-full flex items-center justify-between pointer-events-auto">
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-black/75 px-2.5 py-1 rounded-lg border border-emerald-500/40 backdrop-blur-md">
-                  Target: {category} &bull; {currentSession?.label || 'Bay 1'}
+              <div className="w-full flex items-center justify-between pointer-events-auto gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-black/80 px-2.5 py-1 rounded-xl border border-emerald-500/40 backdrop-blur-md shadow-md truncate">
+                  {currentSession?.label || 'Bay 1'} &bull; {category}
                 </span>
 
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 backdrop-blur-md ${
-                    isLevel 
-                      ? 'text-emerald-400 bg-black/75 border-emerald-500/50' 
-                      : 'text-rose-400 bg-black/75 border-rose-500/50'
-                  }`}>
-                    {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
-                  </span>
-                </div>
+                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-xl border flex items-center gap-1 backdrop-blur-md shadow-md shrink-0 ${
+                  isLevel 
+                    ? 'text-emerald-400 bg-black/80 border-emerald-500/50' 
+                    : 'text-rose-400 bg-black/80 border-rose-500/50'
+                }`}>
+                  {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
+                </span>
               </div>
 
               {/* Horizontal Level Line drawn across live camera view */}
               <div className="relative w-full flex items-center justify-center my-auto z-10">
                 <div 
-                  className={`w-full h-[2.5px] transition-colors duration-200 ${
+                  className={`w-full h-[2px] transition-colors duration-200 ${
                     sensorsAvailable 
                       ? isLevel 
                         ? 'bg-[#22C55E] shadow-md shadow-emerald-400' 
@@ -2814,7 +2820,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 />
                 {/* Center tick indicator */}
                 <div 
-                  className={`absolute w-4 h-4 rounded-full border-2 transition-colors ${
+                  className={`absolute w-3.5 h-3.5 rounded-full border-2 transition-colors ${
                     sensorsAvailable
                       ? isLevel
                         ? 'bg-[#22C55E] border-white shadow-lg shadow-emerald-400'
@@ -2824,8 +2830,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 />
               </div>
 
-              {/* Bottom Guidance Cue */}
-              <div className="w-full flex items-center justify-center pointer-events-auto">
+              {/* Bottom Guidance Cue (Desktop Only - Hidden on Mobile to avoid screen clutter) */}
+              <div className="w-full hidden md:flex items-center justify-center pointer-events-auto">
                 <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md text-center max-w-sm truncate">
                   {ghostGuideUrl
                     ? 'Line up the faded strip with the shelf • Tap shutter to snap'
@@ -3024,12 +3030,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           </div>
 
           {/* Capture Controls Dock: Desktop Left Sidebar + Mobile Bottom Shutter Bar */}
-          <div className={`order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-6 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border shadow-2xl z-20 select-none overflow-hidden transition-colors ${
+          <div className={`order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 py-2 px-3 md:p-5 mt-1 md:mt-0 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border shadow-2xl z-20 select-none overflow-hidden transition-colors ${
             isDark ? 'bg-[#132219]/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-950/15 text-slate-900'
           }`}>
-            {/* Visual grip bar hint for mobile viewports */}
-            <div className={`w-10 h-1 rounded-full mx-auto mb-1 md:hidden ${isDark ? 'bg-emerald-800/40' : 'bg-slate-300'}`} />
-
             {/* Desktop-only Bay Queue & Operational Guidance */}
             <div className="hidden md:flex flex-col gap-3">
               <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
@@ -3102,7 +3105,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
 
             {/* Common Primary Actions: Single Unified Cardholder Deck */}
-            <div className="space-y-2.5 pt-2 md:pt-4">
+            <div className="space-y-2 pt-1 md:pt-4">
               {(() => {
                 const isPending = Boolean(pendingCapture);
                 const hasPhotoForCurrentBay = Boolean(
@@ -3115,13 +3118,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 {/* State 1: Photo Clicked / Selected (Pending Upload Review) -> 70% Upload Bay [X] | 30% Retake */}
                 if (isPending) {
                   return (
-                    <div className="flex items-center gap-2.5 w-full">
+                    <div className="flex items-center gap-2 w-full">
                       {/* Primary 1: Upload Bay [X] - 70% Width */}
                       <button
                         type="button"
                         onClick={handleConfirmUpload}
                         disabled={isMeasuringSeam}
-                        className="w-[70%] h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg shadow-emerald-950/30 ring-2 ring-emerald-500/30 rounded-2xl hover:brightness-110"
+                        className="w-[70%] h-12 md:h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg shadow-emerald-950/30 ring-2 ring-emerald-500/30 rounded-2xl hover:brightness-110"
                       >
                         <Upload size={16} />
                         <span>Upload {currentLabel}</span>
@@ -3131,7 +3134,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       <button
                         type="button"
                         onClick={handleDiscardPending}
-                        className={`w-[30%] h-14 border active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md rounded-2xl transition-all ${
+                        className={`w-[30%] h-12 md:h-14 border active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md rounded-2xl transition-all ${
                           isDark
                             ? 'border-rose-500/60 bg-rose-950/60 hover:bg-rose-900/80 text-rose-200'
                             : 'border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-900 font-bold'
@@ -3147,11 +3150,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 {/* State 2: Once Uploaded / Confirmed -> 50% Continue to POSM | 50% Add One More Bay */}
                 if (hasPhotoForCurrentBay) {
                   return (
-                    <div className="flex items-center gap-2.5 w-full">
+                    <div className="flex items-center gap-2 w-full">
                       <button
                         type="button"
                         onClick={handleDoneShooting}
-                        className="w-1/2 h-14 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                        className="w-1/2 h-12 md:h-14 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
                       >
                         <CheckCircle2 size={16} className="text-white stroke-[2.5]" />
                         <span>Continue to POSM</span>
@@ -3160,7 +3163,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       <button
                         type="button"
                         onClick={handleAddNewBay}
-                        className={`w-1/2 h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                        className={`w-1/2 h-12 md:h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
                           isDark
                             ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-500/50 text-emerald-200'
                             : 'bg-emerald-100/90 hover:bg-emerald-200 border-emerald-400 text-emerald-950 font-bold shadow-xs'
@@ -3175,14 +3178,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
                 {/* State 3: Initial -> 70% Shoot Bay [X] | 30% Gallery */}
                 return (
-                  <div className="flex items-center gap-2.5 w-full">
+                  <div className="flex items-center gap-2 w-full">
                     <button
                       type="button"
                       onClick={handleManualShutter}
-                      className="w-[70%] h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                      className="w-[70%] h-12 md:h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
                     >
-                      <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                        <Camera size={16} className="text-white stroke-[2.5]" />
+                      <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                        <Camera size={15} className="text-white stroke-[2.5]" />
                       </div>
                       <span>Shoot {currentLabel}</span>
                     </button>
@@ -3191,13 +3194,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       type="button"
                       onClick={() => galleryInputRef.current?.click()}
                       disabled={Boolean(pendingCapture)}
-                      className={`w-[30%] h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                      className={`w-[30%] h-12 md:h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
                         isDark
                           ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
                           : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
                       }`}
                     >
-                      <Upload size={15} className="text-emerald-500" />
+                      <Upload size={14} className="text-emerald-500" />
                       <span>Gallery</span>
                     </button>
                   </div>
@@ -3307,7 +3310,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     <Tag size={14} className="text-emerald-400" />
                     Price tags legible &amp; present?
                   </h4>
-                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                     Shelf edge label or neck promotional pricing active
                   </p>
                 </div>
@@ -3346,7 +3349,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     <ShieldCheck size={14} className="text-emerald-400" />
                     POSM shelf strips &amp; stickers intact?
                   </h4>
-                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                     Primary brand shelf divider &amp; rail branding in place
                   </p>
                 </div>
@@ -3385,7 +3388,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     <Layers size={14} className="text-amber-400" />
                     Promotional wobblers deployed?
                   </h4>
-                  <p className={`text-[10px] mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
                     Active campaign shelf talker or special offer danglers
                   </p>
                 </div>
@@ -3464,40 +3467,191 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
           </div>
 
-          {/* Right Column (Desktop Only): Shelf Reference Canvas */}
-          <div className="order-2 hidden md:flex md:flex-1 h-full bg-black rounded-3xl border border-emerald-900/60 p-4 overflow-hidden relative flex-col justify-between shadow-2xl">
-            <div className="flex items-center justify-between pb-2 z-10">
-              <span className="text-xs font-bold text-white flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                Shelf Photo Reference ({capturedAisles.length} Bay{capturedAisles.length > 1 ? 's' : ''})
-              </span>
-              <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-md border border-emerald-800/60">
-                Visual Inspection Mode
-              </span>
+          {/* Right Column (Web & Tablet): Multi-Bay Switcher & AI Scanning Canvas */}
+          <div className={`order-2 hidden md:flex md:flex-1 h-full rounded-3xl p-4 overflow-hidden relative flex-col justify-between shadow-2xl border transition-colors ${
+            isDark ? 'bg-black border-emerald-900/60' : 'bg-white border-emerald-950/15'
+          }`}>
+            {/* Top Bar: Shelf Reference & Horizontal Bay Pill Switcher */}
+            {(() => {
+              const activeSession = aisleSessions[posmActiveBayKey] || aisleSessions[lastCapturedAisle] || aisleSessions[capturedAisles[0]];
+              const isCurrentBayDone = activeSession?.status === 'done';
+
+              return (
+                <div className="flex flex-col gap-2 pb-2.5 z-10 shrink-0 border-b border-emerald-900/30">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                      <span className={`w-2.5 h-2.5 rounded-full ${isCurrentBayDone ? 'bg-emerald-400 shadow-md shadow-emerald-400' : 'bg-emerald-400 animate-pulse shadow-md shadow-emerald-400'}`} />
+                      {isCurrentBayDone
+                        ? `Shelf AI Analysis Complete (${capturedAisles.length} Bay${capturedAisles.length > 1 ? 's' : ''})`
+                        : `Shelf AI Scanning Preview (${capturedAisles.length} Bay${capturedAisles.length > 1 ? 's' : ''})`}
+                    </span>
+                    <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-md border font-bold transition-colors ${
+                      isCurrentBayDone
+                        ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/50 shadow-xs'
+                        : isDark
+                        ? 'text-emerald-400 bg-emerald-950/80 border-emerald-800/60'
+                        : 'text-emerald-900 bg-emerald-100 border-emerald-300'
+                    }`}>
+                      {isCurrentBayDone ? '✓ Analysis Complete' : 'AI Processing Mode'}
+                    </span>
+                  </div>
+
+                  {/* Horizontal Bay Pill Switcher */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    {capturedAisles.map((bayKey, idx) => {
+                      const s = aisleSessions[bayKey];
+                      const label = s?.label || `Bay ${idx + 1}`;
+                      const isSelected = (posmActiveBayKey === bayKey) || (!posmActiveBayKey && idx === 0);
+                      const isThisBayDone = s?.status === 'done';
+
+                      return (
+                        <button
+                          key={bayKey}
+                          type="button"
+                          onClick={() => setPosmActiveBayKey(bayKey)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                            isSelected
+                              ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
+                              : isDark
+                              ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white hover:border-emerald-500'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-emerald-50 hover:text-emerald-950'
+                          }`}
+                        >
+                          <span>{label}</span>
+                          {isThisBayDone ? (
+                            <Check size={11} className={isSelected ? 'text-white stroke-[2.5]' : 'text-emerald-400 stroke-[2.5]'} />
+                          ) : (
+                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white animate-ping' : 'bg-emerald-400'}`} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* AI Scanning Visual Canvas for Selected Bay (No raw annotations, no zoom lightbox) */}
+            <div className="flex-1 relative rounded-2xl overflow-hidden bg-black flex items-center justify-center my-2 shadow-inner select-none">
+              {(() => {
+                const targetBaySession = aisleSessions[posmActiveBayKey] || aisleSessions[lastCapturedAisle] || aisleSessions[capturedAisles[0]];
+                const photoUrl = targetBaySession?.capturedPhotoUrl || targetBaySession?.annotatedPhotoUrl;
+                const bayLabel = targetBaySession?.label || 'Bay 1';
+                const isBayDone = targetBaySession?.status === 'done';
+
+                if (!photoUrl) {
+                  return (
+                    <div className="text-slate-500 text-xs font-medium">
+                      No photo captured for {bayLabel}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden">
+                    {/* Soft blur: kept softly blurred (2.5px) when ready, 4px while in-flight */}
+                    <img
+                      src={photoUrl}
+                      alt={`${bayLabel} Preview`}
+                      className={`w-full h-full object-contain transition-all duration-700 ease-out ${
+                        isBayDone ? 'blur-[2.5px] opacity-90 scale-[1.01]' : 'blur-[4px] opacity-80 scale-[1.02]'
+                      }`}
+                    />
+
+                    {/* AI Laser Rod Bot Scanning Beam Line (Active ONLY while in-flight) */}
+                    {!isBayDone && (
+                      <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+                        {/* Sweeping Laser Rod with intense emerald neon glow */}
+                        <div 
+                          className="w-full h-3 bg-gradient-to-r from-transparent via-emerald-300 to-transparent shadow-[0_0_40px_#10B981,0_0_15px_#34D399] animate-scan-laser-rod absolute left-0"
+                          style={{
+                            animation: 'scanLaserRod 2.2s ease-in-out infinite'
+                          }}
+                        >
+                          {/* High-intensity center core filament */}
+                          <div className="w-full h-[2px] bg-white opacity-90 mx-auto" />
+                        </div>
+                        {/* Ambient scanning grid tint */}
+                        <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
+                      </div>
+                    )}
+
+                    {/* Corner Target Reticles (AI Targeting Brackets) */}
+                    <div className="absolute inset-4 pointer-events-none z-20 transition-all duration-500">
+                      <div className={`absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 rounded-tl-md transition-all duration-500 ${
+                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
+                      }`} />
+                      <div className={`absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 rounded-tr-md transition-all duration-500 ${
+                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
+                      }`} />
+                      <div className={`absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 rounded-bl-md transition-all duration-500 ${
+                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
+                      }`} />
+                      <div className={`absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 rounded-br-md transition-all duration-500 ${
+                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
+                      }`} />
+                    </div>
+
+                    {/* Status Display: 2026 Modern iOS Dynamic Island morphing pill in DEAD CENTER of image */}
+                    {isBayDone ? (
+                      <div className="absolute inset-0 m-auto w-fit h-fit max-w-[92%] bg-black/85 backdrop-blur-2xl border border-emerald-400/60 shadow-[0_20px_50px_rgba(0,0,0,0.85),0_0_40px_rgba(16,185,129,0.35)] rounded-3xl p-4 sm:px-5 sm:py-3.5 flex items-center gap-3.5 z-30 animate-dynamic-island-center select-none">
+                        {/* Animated pulsing iOS checkmark badge */}
+                        <div className="w-8 h-8 rounded-2xl bg-gradient-to-tr from-emerald-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shrink-0 animate-pulse-check-glow shadow-lg shadow-emerald-400/50">
+                          <Check size={18} className="stroke-[3]" />
+                        </div>
+
+                        {/* Center modern iOS typography */}
+                        <div className="flex flex-col min-w-0 pr-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs sm:text-sm font-black tracking-wide text-white uppercase">
+                              Picture Ready
+                            </span>
+                            <span className="text-slate-400 font-normal">&bull;</span>
+                            <span className="text-xs sm:text-sm font-bold text-emerald-300">
+                              {bayLabel}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-300 font-medium truncate">
+                            AI Analysis Complete &bull; {targetBaySession?.totalFacings ?? 0} facings verified
+                          </span>
+                        </div>
+
+                        {/* Right micro badge */}
+                        <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/50 px-2.5 py-1 rounded-full shrink-0 shadow-sm">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300">
+                            Ready
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="absolute top-3.5 left-3.5 bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/60 flex items-center gap-2 shadow-xl z-30 pointer-events-none">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0 shadow-md shadow-emerald-400" />
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">
+                          AI Scanning &bull; {bayLabel}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Bottom Guidance Banner: Sparkle ready cue when done vs Locked cue while scanning */}
+                    {isBayDone ? (
+                      <div className="absolute bottom-3.5 inset-x-0 mx-auto w-fit max-w-[92%] bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-2xl text-[11px] font-bold text-emerald-300 border border-emerald-500/40 shadow-xl flex items-center gap-2 z-30 pointer-events-none">
+                        <Sparkles size={13} className="text-emerald-400 shrink-0 animate-pulse" />
+                        <span>Results ready &bull; Submit POSM below to reveal detections</span>
+                      </div>
+                    ) : (
+                      <div className="absolute bottom-3.5 left-3.5 bg-black/85 backdrop-blur-md px-3 py-1 rounded-xl text-[10px] font-bold text-emerald-300 border border-emerald-500/40 shadow-md flex items-center gap-1.5 z-30 pointer-events-none">
+                        <ShieldCheck size={12} className="text-emerald-400" />
+                        <span>Results unlock on POSM submit</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
-            <div
-              onClick={() => setIsFullScreenOpen(true)}
-              className="flex-1 relative rounded-2xl overflow-hidden bg-black/95 flex items-center justify-center cursor-pointer group"
-            >
-              {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl ? (
-                <img
-                  src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
-                  alt="Shelf Reference"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="text-slate-500 text-xs font-medium">No photo available</div>
-              )}
-
-              <div className="absolute top-2.5 right-2.5 bg-black/75 px-2.5 py-1 rounded-lg text-[10px] text-slate-200 border border-white/10 opacity-75 group-hover:opacity-100 flex items-center gap-1">
-                <Maximize2 size={11} />
-                <span>Tap to enlarge</span>
-              </div>
-            </div>
-
-            <div className="pt-2 text-center text-[11px] text-emerald-300/80">
-              Compare physical POSM status against the photographed shelf before proceeding to final count results.
+            <div className={`pt-1.5 text-center text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
+              Verify physical POSM compliance while AI computer vision prepares multi-bay facings in the background.
             </div>
           </div>
         </div>
@@ -3625,12 +3779,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
                   {/* Desktop Inline Expanded Overlap Panel */}
                   {isDuplicatePanelExpanded && (
-                    <div className="hidden md:block p-2.5 rounded-2xl bg-black/90 border border-emerald-900/60 space-y-2 text-left">
+                    <div className={`hidden md:block p-2.5 rounded-2xl space-y-2 text-left border ${
+                      isDark ? 'bg-black/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-200 text-slate-900 shadow-sm'
+                    }`}>
                       {seamSummaries.map((j) => (
                         <div
                           key={`${j.leftKey}-${j.rightKey}`}
                           className={`flex items-center justify-between text-[11px] px-2 py-1.5 rounded-lg border ${
-                            isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100'
+                            isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-200' : isDark ? 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
                           }`}
                         >
                           <span className="font-bold">
@@ -3718,7 +3874,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   return (
                     <div
                       key={brand}
-                      className={`border rounded-2xl px-3 py-1.5 flex items-center justify-between transition-all ${
+                      className={`border rounded-2xl px-2.5 py-1 md:py-1.5 flex items-center justify-between transition-all ${
                         hasChangedFromInitial
                           ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30'
                           : isPrimary
@@ -3762,11 +3918,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       </div>
 
                       {/* Steppers visible at all times */}
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1.5 md:space-x-2">
                         <button
                           type="button"
                           onClick={() => handleUpdateCount(brand, -1)}
-                          className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
+                          className={`w-6 h-6 md:w-7 md:h-7 rounded-lg md:rounded-xl font-bold text-sm md:text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
                             isDark
                               ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
                               : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
@@ -3775,7 +3931,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                         >
                           -
                         </button>
-                        <span className={`w-6 text-center text-sm font-black tabular-nums ${
+                        <span className={`w-5 md:w-6 text-center text-xs md:text-sm font-black tabular-nums ${
                           isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
                         }`}>
                           {count}
@@ -3783,7 +3939,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                         <button
                           type="button"
                           onClick={() => handleUpdateCount(brand, 1)}
-                          className={`w-7 h-7 rounded-xl font-bold text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
+                          className={`w-6 h-6 md:w-7 md:h-7 rounded-lg md:rounded-xl font-bold text-sm md:text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
                             isDark
                               ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
                               : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
@@ -3799,7 +3955,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
 
               {/* Save Action Bar Dock */}
-              <div className="pt-2 pb-1 space-y-1.5 shrink-0 border-t border-emerald-900/40">
+              <div className={`pt-2 pb-1 space-y-1.5 shrink-0 border-t ${
+                isDark ? 'border-emerald-900/40' : 'border-slate-200'
+              }`}>
                 <button
                   type="button"
                   onClick={handleFinalSave}

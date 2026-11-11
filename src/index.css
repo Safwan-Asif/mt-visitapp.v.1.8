@@ -36,11 +36,37 @@
   animation: scan-sweep 1.6s ease-in-out infinite;
 }
 
+/* AI Laser Rod Vertical Scanning Beam */
+@keyframes scanLaserRod {
+  0% {
+    top: 2%;
+    opacity: 0.85;
+  }
+  50% {
+    top: 94%;
+    opacity: 1;
+  }
+  100% {
+    top: 2%;
+    opacity: 0.85;
+  }
+}
+
+.animate-scan-laser-rod {
+  animation: scanLaserRod 2.2s ease-in-out infinite;
+  will-change: top, opacity;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-scan-sweep {
     animation: none;
     top: 50%;
     opacity: 0.4;
+  }
+  .animate-scan-laser-rod {
+    animation: none;
+    top: 50%;
+    opacity: 0.8;
   }
 }
 
@@ -74,4 +100,64 @@
 
 .animate-leaf-glow {
   animation: leaf-glow 8s ease-in-out infinite;
+}
+
+/* 2026 Modern iOS Dynamic Island morphing entrance and glow */
+@keyframes dynamicIslandExpand {
+  0% {
+    opacity: 0;
+    transform: scale(0.86) translateY(-8px);
+    filter: blur(4px);
+  }
+  60% {
+    transform: scale(1.02) translateY(1px);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-dynamic-island {
+  animation: dynamicIslandExpand 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity, filter;
+}
+
+@keyframes pulseCheckGlow {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.4), 0 0 20px rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 18px rgba(52, 211, 153, 0.8), 0 0 30px rgba(16, 185, 129, 0.5);
+  }
+}
+
+.animate-pulse-check-glow {
+  animation: pulseCheckGlow 2.4s ease-in-out infinite;
+}
+
+@keyframes dynamicIslandCenter {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+    filter: blur(6px);
+  }
+  60% {
+    transform: scale(1.03);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0px);
+  }
+}
+
+.animate-dynamic-island-center {
+  animation: dynamicIslandCenter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: center center;
+  will-change: transform, opacity, filter;
 }

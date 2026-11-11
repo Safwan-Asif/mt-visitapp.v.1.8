@@ -204,8 +204,8 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
       </div>
 
       {/* Completion Banner or Action */}
-      <div className="pt-2 shrink-0">
-        {allDone ? (
+      {allDone && (
+        <div className="pt-2 shrink-0">
           <div
             className={`p-3.5 border rounded-3xl text-center space-y-2 shadow-lg ${
               isDark
@@ -223,21 +223,8 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
               Finish &amp; Return to Route PJP
             </button>
           </div>
-        ) : (
-          <div
-            className={`backdrop-blur-xl border rounded-2xl p-2.5 flex items-center justify-between text-xs ${
-              isDark
-                ? 'bg-[#132219]/70 border-emerald-900/50 text-slate-400'
-                : 'bg-white border-emerald-950/10 text-slate-600 shadow-xs'
-            }`}
-          >
-            <span>Next Category Priority:</span>
-            <span className={`font-bold ${isDark ? 'text-[#10B981]' : 'text-[#047857]'}`}>
-              {categories.find((c) => outlet.progress[c] !== 'Completed') || 'None'}
-            </span>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

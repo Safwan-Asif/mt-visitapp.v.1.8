@@ -1,44 +1,60 @@
-# Implementation Plan - AI Scanning Blur & Interactive Action Buttons
+# Implementation Plan: 2026 iOS Dynamic Island Ready State in POSM Review
 
-Enhance the uploaded photo canvas with a medium 4px blur, high-contrast emerald laser rod scanning beam animation, and corner target reticles, paired with clean 50/50 action buttons.
+## Overview
+When the background AI/n8n analysis for a bay finishes (`status === 'done'`), update the POSM Review preview canvas on Web and Tablet viewports. Specifically, stop the laser rod scanning animation, smoothly unblur the photo, and display a high-fidelity 2026 iOS Dynamic Island morphing pill with a pulsing checkmark and ready metrics.
 
 ---
 
-## Visual & Functional Requirements
-
-1. **Scanned Photo Canvas (`isUploaded` state)**:
-   - **Medium Blur**: Apply a `blur-[4px]` CSS class to the captured photo image element.
-   - **Emerald Laser Rod Beam**: An animated horizontal beam line with a glowing drop-shadow trail sweeping up and down across the blurred image.
-   - **Corner Target Reticles**: Add 4 glowing emerald corner brackets (`border-t-2 border-l-2`, etc.) giving the canvas a futuristic AI targeting frame look.
-   - **AI Scanning Badge**: Display a top badge with a pulsing radar indicator ("AI Scanning Bay [X]...").
-   - **No Annotations**: Explicitly omit bounding box annotations and raw detection counts during this phase.
-
-2. **Interactive 50/50 Action Deck**:
-   - **`Continue to POSM`** (50% width): Primary action button with check icon. Proceeds to Step 2 POSM compliance form.
-   - **`Add One More Bay`** (50% width): Interactive secondary button with plus icon. Launches camera for Bay 2 with ghost guide overlay.
+## User-Confirmed Requirements
+1. **Image Transition**: Smoothly unblur the preview image (`blur-[4px]` &rarr; `blur-0`) with a subtle pulse/spring effect when analysis completes.
+2. **Animation Stop**: Cease the sweeping laser rod and scanning ambient tint once `status === 'done'`.
+3. **2026 Modern iOS Ready Element**:
+   - Centered **Dynamic Island morphing pill** (`bg-black/90 backdrop-blur-2xl border border-emerald-400/60 rounded-full shadow-2xl`).
+   - Left: Animated glowing emerald badge with an iOS-style pulsing checkmark.
+   - Middle: High-tech copy: **"Analysis Complete &bull; [Bay Label]"** and detected SKU/facing summary.
+   - Right: Modern micro status pill indicating **"Ready for Review"**.
+4. **Bay Switcher Sync**: If the user switches between multiple bays in POSM Review, each bay accurately reflects its own state (in-flight scanning vs. completed ready state).
+5. **Guidance Hint**: Update the bottom canvas pill to an iOS-style prompt: **"Results ready &bull; Submit POSM to view facings &amp; bounding boxes"**.
 
 ---
 
 ## Proposed Changes
 
-### `src/components/CameraWorkflowScreen.tsx`
+### 1. `src/index.css`
+- Add modern CSS keyframes for iOS Dynamic Island fluid morphing entrance:
+  - `@keyframes dynamicIslandExpand`: fluid spring scale from `scale(0.85)` to `scale(1)` with subtle overshoot.
+  - `@keyframes pulseCheckGlow`: gentle radial emerald glow pulse around the ready checkmark icon.
 
-- **Canvas Container Updates**:
-  - Add `blur-[4px]` filter to the `<img>` element when `aisleSessions[currentAisle]?.capturedPhotoUrl` is present and `!pendingCapture`.
-  - Add corner target reticles in absolute positions (`top-3 left-3`, `top-3 right-3`, `bottom-3 left-3`, `bottom-3 right-3`).
-  - Update keyframe animation `scanLaser` for a high-contrast glowing emerald laser rod beam (`h-2 bg-gradient-to-r from-emerald-500 via-emerald-300 to-emerald-500 shadow-[0_0_25px_#10B981]`).
+### 2. `src/components/CameraWorkflowScreen.tsx`
+- In the right-hand Web/Tablet POSM Review panel (`{step === 'POSM' && ...}`):
+  - Check the active bay session state: `const isBayDone = targetBaySession?.status === 'done';`
+  - **Image Rendering**: Apply `transition-all duration-700 ease-out` with conditional `isBayDone ? 'blur-0 scale-100' : 'blur-[4px] scale-[1.02]'`.
+  - **Scanning Animation**: Conditionally render the sweeping laser rod and scanning grid overlay only when `!isBayDone` (and `targetBaySession?.status !== 'error'`).
+  - **Dynamic Island Morphing Pill**:
+    - When `isBayDone`: render the floating iOS pill at the top of the canvas with smooth animation, animated checkmark, bay label, total facings detected, and "Ready for Review" badge.
+    - When in-flight: retain the active scanning pill (`AI Scanning • Bay X`).
+  - **Corner Reticles**:
+    - When in-flight: sweeping emerald corner brackets.
+    - When done: settle into solid, locked precision target corners with a soft glow.
+  - **Bottom Dock Guidance**:
+    - When `isBayDone`: show modern pill with a sparkle icon: *"Analysis ready &bull; Submit POSM below to reveal detections"*.
 
 ---
 
 ## Verification Plan
 
-### Automated Build & Lint Check
-1. Co-execute `compile_applet` and `lint_applet` to verify TypeScript types and syntax.
-2. Restart the dev server with `restart_dev_server`.
+### Automated Build & Lint Verification
+1. Run `compile_applet` and `lint_applet` to confirm zero TypeScript or Tailwind syntax errors.
+2. Dev server restart to ensure hot module reload is active.
 
-### Manual Workflow Check
-1. Snap or select a photo for Bay 1.
-2. Tap "Upload Bay 1".
-3. Verify the photo card displays the **4px blur**, **emerald laser rod beam animation**, and **corner reticles** with no bounding box annotations.
-4. Verify the two buttons (**`Continue to POSM`** and **`Add One More Bay`**) render as a clean 50/50 row.
-5. Tap **`Add One More Bay`** and verify it opens Bay 2 camera with the ghost guide overlay.
+### Browser & Interactive Verification
+1. Navigate to Camera Workflow &rarr; Capture Bay 1 &rarr; click **Upload Bay 1** &rarr; click **Continue to POSM**.
+2. Observe POSM Review on Web/Tablet view:
+   - While in-flight: the 4px blur and vertical sweeping emerald laser rod animate continuously.
+   - Once n8n / AI returns result (`status === 'done'`):
+     - Laser rod stops smoothly.
+     - Preview image transitions from 4px blur to crisp unblurred image.
+     - iOS Dynamic Island pill animates in with glowing pulsing checkmark, bay name, and detected facings.
+     - Corner reticles lock into precision corners.
+3. Test multi-bay switching (Bay 1 vs Bay 2) to verify independent state transitions per bay.
+4. Verify both Light and Dark modes.
