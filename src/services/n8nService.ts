@@ -1176,7 +1176,7 @@ export async function sendAuditToN8n(
     success: false,
     source: 'simulated_fallback',
     isMissingRespondNode: false,
-    errorDetail: 'Could not connect to n8n webhook. Using on-device AI analysis mode.',
+    errorDetail: "Couldn't analyze this photo. Retry",
     message: 'Analysis complete (on-device mode)',
     counts: { ...DEFAULT_AI_COUNTS[fallbackCatKey] },
     boxes: SAMPLE_BOUNDING_BOXES[fallbackCatKey] || [],

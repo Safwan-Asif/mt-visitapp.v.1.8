@@ -364,7 +364,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
         </div>
 
-        {/* n8n Webhook Integration Card */}
+        {/* Analysis Webhook Integration Card */}
         <div className={`backdrop-blur-xl border rounded-2xl p-3.5 space-y-2 transition-colors ${
           isDark
             ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
@@ -395,7 +395,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <span className="text-slate-500 block text-[9px] uppercase font-bold">Default Endpoint</span>
               <span className={`font-mono text-[9px] truncate block font-bold ${
                 isDark ? 'text-emerald-400' : 'text-emerald-800'
-              }`} title={DEFAULT_N8N_WEBHOOK_URL}>
+              }`} title="Analysis API Endpoint">
                 Analysis API Endpoint
               </span>
             </div>

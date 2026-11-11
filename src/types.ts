@@ -91,7 +91,7 @@ export interface CategoryAuditRecord {
 
 export type AisleKey = string;
 
-export type AisleStatus = 'idle' | 'uploading' | 'analysing' | 'done' | 'error' | 'pending';
+export type AisleStatus = 'idle' | 'uploading' | 'analysing' | 'analyzing' | 'done' | 'completed' | 'error' | 'pending';
 
 export interface AisleSessionData {
   key: AisleKey;

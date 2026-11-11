@@ -4,6 +4,7 @@ import {
   Check, Clock, ShieldCheck 
 } from 'lucide-react';
 import { Outlet, CategoryType, CategoryAuditRecord } from '../types';
+import { CATEGORIES } from '../constants';
 import { useTheme } from '../ThemeContext';
 
 interface OutletOverviewProps {
@@ -20,7 +21,7 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
   onSelectCategory
 }) => {
   const { isDark } = useTheme();
-  const categories: CategoryType[] = ['Edible Oil', 'Flour', 'Pasta'];
+  const categories = CATEGORIES;
   const completedCount = categories.filter((cat) => outlet.progress[cat] === 'Completed').length;
   const allDone = completedCount === categories.length;
 

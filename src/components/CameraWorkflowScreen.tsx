@@ -1667,6 +1667,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       });
     }
 
+    setCameraStreamActive(false);
+    setCurrentAisle(bayKey);
     pendingDataUrlRef.current = null;
     setPendingCapture(null);
     setPendingSeam(null);
@@ -1677,7 +1679,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       setShowPostCapturePrompt(false);
       setStep('POSM');
     } else {
-      setShowPostCapturePrompt(true);
+      setShowPostCapturePrompt(false);
     }
   };
 
@@ -2654,7 +2656,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       )}
 
       {/* ================= STEP 1: CAPTURE ================= */}
-      {step === 'CAPTURE' && !showPostCapturePrompt && (
+      {step === 'CAPTURE' && (
         <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
           {/* Camera Guidance Viewfinder & Auto-Capture (Snapchat-style Live Video Feed) */}
           <div 
@@ -2664,6 +2666,60 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             }}
             className="order-1 md:order-2 flex-1 relative rounded-3xl border border-emerald-900/60 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group cursor-pointer"
           >
+            {/* Confirmed / Uploaded Photo Canvas View with AI Rod Scanning Animation */}
+            {Boolean(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl) && !pendingCapture && (
+              <div className="absolute inset-0 z-30 bg-black flex items-center justify-center overflow-hidden">
+                <style>{`
+                  @keyframes scanLaserRod {
+                    0% { top: 0%; opacity: 0.9; }
+                    50% { top: 93%; opacity: 1; }
+                    100% { top: 0%; opacity: 0.9; }
+                  }
+                  .animate-scan-laser-rod {
+                    animation: scanLaserRod 2.2s ease-in-out infinite;
+                  }
+                `}</style>
+                {/* 4px Blurred Photo */}
+                <img
+                  src={(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl)!}
+                  alt={`${currentSession?.label || 'Bay'} Photo`}
+                  className="w-full h-full object-contain blur-[4px] scale-[1.02] transition-all duration-500"
+                />
+
+                {/* AI Laser Rod Bot Scanning Beam Line */}
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                  <div className="w-full h-2.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_35px_#10B981] animate-scan-laser-rod absolute top-0 left-0 z-20" />
+                  <div className="absolute inset-0 bg-emerald-500/10 animate-pulse" />
+                </div>
+
+                {/* Corner Target Reticles (AI Targeting Brackets) */}
+                <div className="absolute inset-4 pointer-events-none z-20">
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-md shadow-[0_0_12px_#10B981]" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-md shadow-[0_0_12px_#10B981]" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-400 rounded-bl-md shadow-[0_0_12px_#10B981]" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-md shadow-[0_0_12px_#10B981]" />
+                </div>
+
+                {/* AI Scanning Status Badge */}
+                <div className="absolute top-4 left-4 bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/60 flex items-center gap-2 shadow-xl z-30">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0 shadow-md shadow-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">
+                    AI Rod Scanning &bull; {currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1'}
+                  </span>
+                </div>
+
+                {/* Zoom / Expand Tag */}
+                <button
+                  type="button"
+                  onClick={() => setIsFullScreenOpen(true)}
+                  className="absolute bottom-4 right-4 bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-xl text-[10px] font-bold text-slate-200 border border-white/10 shadow-md flex items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
+                >
+                  <Maximize2 size={12} className="text-emerald-400" />
+                  <span>Tap to Zoom</span>
+                </button>
+              </div>
+            )}
+
             {/* Live WebRTC Video Stream (Fills viewfinder) */}
             {/* object-contain: the viewfinder shows exactly the frame that will be saved (no hidden edges) */}
             <video
@@ -2940,65 +2996,26 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   </div>
 
                   {/* Header */}
-                  <div className="absolute top-0 left-0 right-0 p-2 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between pointer-events-none">
+                  <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/90 via-black/70 to-transparent flex items-center justify-between pointer-events-auto z-10">
                     <span className="text-[11px] font-black uppercase tracking-wider text-white">{label} &bull; Review before upload</span>
-                    {prevKey && isMeasuringSeam && (
-                      <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
-                        <Loader2 size={12} className="animate-spin" /> Measuring overlap…
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Footer: status + actions */}
-                  <div className="absolute bottom-0 left-0 right-0 p-2.5 space-y-2 bg-gradient-to-t from-black/95 via-black/85 to-transparent">
-                    {prevKey && seam && !isMeasuringSeam && (
-                      <div className={`text-[11px] rounded-xl px-2.5 py-1.5 border ${
-                        needsCheck ? 'bg-amber-500/15 border-amber-500/50 text-amber-200' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
-                      }`}>
-                        {needsCheck ? (
-                          <span className="flex items-start gap-1.5">
-                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                            <span>Couldn't measure the overlap reliably. Drag the amber edge to where {prevLabel}'s photo ends, or set it to the far left if there's no overlap.</span>
-                          </span>
-                        ) : (
-                          <span>
-                            Overlap with {prevLabel}: <strong>{Math.round(ovPct)}%</strong>
-                            {seam.method === 'manual' ? ' (set by you)' : ` · ${confidenceText[seam.confidence]} confidence`}
-                            . Bottles left of the count line are counted in {prevLabel}.
-                          </span>
-                        )}
-                      </div>
-                    )}
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleDiscardPending}
-                        className="h-11 px-3 rounded-2xl border border-slate-600 bg-slate-900/90 text-slate-200 font-bold text-xs flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                      >
-                        <RefreshCw size={14} />
-                        <span>Retake</span>
-                      </button>
                       {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
                         <button
                           type="button"
                           onClick={() => setShowAlignmentCheck((v) => !v)}
-                          className={`h-11 px-3 rounded-2xl border font-bold text-xs active:scale-95 cursor-pointer ${
-                            showAlignmentCheck ? 'bg-amber-500 text-black border-amber-300' : 'bg-slate-900/90 text-amber-200 border-amber-600/60'
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md transition-colors cursor-pointer ${
+                            showAlignmentCheck ? 'bg-amber-400 text-black border border-amber-300' : 'bg-black/80 text-amber-300 border border-amber-500/50'
                           }`}
-                          title={`Overlay ${prevLabel} on the overlap to check the alignment`}
+                          title={`Overlay ${prevLabel} on the overlap to check alignment`}
                         >
-                          {showAlignmentCheck ? 'Hide check' : 'Check'}
+                          {showAlignmentCheck ? 'Hide check' : 'Check overlap'}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={handleConfirmUpload}
-                        disabled={isMeasuringSeam}
-                        className="flex-1 h-11 rounded-2xl bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-[0.98] cursor-pointer"
-                      >
-                        <Upload size={15} />
-                        <span>Upload {label}</span>
-                      </button>
+                      {prevKey && isMeasuringSeam && (
+                        <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
+                          <Loader2 size={12} className="animate-spin" /> Measuring overlap…
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3007,237 +3024,185 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           </div>
 
           {/* Capture Controls Dock: Desktop Left Sidebar + Mobile Bottom Shutter Bar */}
-          {!showPostCapturePrompt && (
-            <div className="order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-6 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 bg-gradient-to-t md:bg-none from-black via-black/95 to-black/80 md:bg-[#132219]/90 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border border-emerald-900/60 shadow-2xl z-20 select-none overflow-hidden">
-              {/* Visual grip bar hint for mobile viewports */}
-              <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto mb-1 md:hidden" />
+          <div className={`order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-6 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border shadow-2xl z-20 select-none overflow-hidden transition-colors ${
+            isDark ? 'bg-[#132219]/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-950/15 text-slate-900'
+          }`}>
+            {/* Visual grip bar hint for mobile viewports */}
+            <div className={`w-10 h-1 rounded-full mx-auto mb-1 md:hidden ${isDark ? 'bg-emerald-800/40' : 'bg-slate-300'}`} />
 
-              {/* Desktop-only Bay Queue & Operational Guidance */}
-              <div className="hidden md:flex flex-col gap-3">
-                <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
-                  <div>
-                    <h3 className="text-sm font-black uppercase tracking-wider text-white">
-                      Shelf Capture
-                    </h3>
-                    <p className="text-[11px] text-emerald-300/80">
-                      Target: {category} &bull; {currentSession?.label || 'Bay 1'}
-                    </p>
-                  </div>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300">
-                    {capturedAisles.length} Captured
-                  </span>
-                </div>
-
-                {/* Bay Sequence Progress Card */}
-                <div className="p-3 rounded-2xl bg-black/50 border border-emerald-900/50 space-y-2">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                    Bay Sequence Queue
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {bayKeys.map((k, idx) => {
-                      const s = aisleSessions[k];
-                      const isCaptured = Boolean(s?.capturedPhotoUrl);
-                      const isCurrent = currentAisle === k;
-                      return (
-                        <div
-                          key={k}
-                          className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
-                            isCurrent
-                              ? 'bg-emerald-500/25 border-emerald-400 text-white ring-1 ring-emerald-400/50'
-                              : isCaptured
-                              ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300'
-                              : 'bg-black/40 border-slate-800 text-slate-500'
-                          }`}
-                        >
-                          <span>{s?.label || `Bay ${idx + 1}`}</span>
-                          {isCaptured && <CheckCircle2 size={12} className="text-emerald-400" />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Guidance & Alignment Helper */}
-                <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-800/30 space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
-                    <Layers size={13} className="text-emerald-400" />
-                    <span>Alignment Guidance</span>
-                  </div>
-                  <p className="text-[11px] text-emerald-200/80 leading-relaxed">
-                    {ghostGuideUrl
-                      ? 'Align the faded edge on the left with the shelf you previously photographed to ensure seamless multi-bay stitching.'
-                      : 'Hold camera upright and level with the middle shelf. Tap Shutter when the center line turns green.'}
+            {/* Desktop-only Bay Queue & Operational Guidance */}
+            <div className="hidden md:flex flex-col gap-3">
+              <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
+                <div>
+                  <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    Shelf Capture
+                  </h3>
+                  <p className={`text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
+                    Target: {category} &bull; {currentSession?.label || 'Bay 1'}
                   </p>
                 </div>
-              </div>
-
-              {/* Common Primary Actions: Shutter & Gallery Buttons */}
-              <div className="space-y-2.5 pt-2 md:pt-4">
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Primary 1: Shutter Button */}
-                  <button
-                    type="button"
-                    onClick={handleManualShutter}
-                    className="h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                      <Camera size={16} className="text-white stroke-[2.5]" />
-                    </div>
-                    <span>Shoot {currentSession?.label || 'Bay 1'}</span>
-                  </button>
-
-                  {/* Primary 2: Device Gallery / Library Upload */}
-                  <button
-                    type="button"
-                    onClick={() => galleryInputRef.current?.click()}
-                    disabled={Boolean(pendingCapture)}
-                    className={`h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
-                      isDark
-                        ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
-                        : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
-                    }`}
-                  >
-                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                      <Upload size={15} className="text-emerald-400" />
-                    </div>
-                    <span>Gallery</span>
-                  </button>
-                </div>
-
-                {/* Bottom auxiliary link: Done Shooting or Sample Shelf */}
-                <div className="flex items-center justify-between px-1 pt-1 text-[11px]">
-                  {capturedAisles.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={handleDoneShooting}
-                      className="text-emerald-400 font-bold flex items-center gap-1.5 hover:underline cursor-pointer bg-emerald-950/40 px-2.5 py-1.5 rounded-xl border border-emerald-800/40 w-full justify-center md:w-auto"
-                    >
-                      <CheckCircle2 size={13} className="text-emerald-400" />
-                      <span>Proceed to POSM ({capturedAisles.length} captured)</span>
-                    </button>
-                  ) : <div />}
-
-                  {isDebugMode && (
-                    <button
-                      type="button"
-                      onClick={handleUseDemoSample}
-                      className="text-emerald-500 hover:text-emerald-400 font-bold flex items-center gap-1 hover:underline cursor-pointer hidden md:flex"
-                    >
-                      <span>Sample {category} ({currentSession?.label || 'Bay 1'})</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Dedicated Post-Capture Photo Review Screen: Split on Desktop, Stacked on Mobile */}
-      {step === 'CAPTURE' && showPostCapturePrompt && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden animate-fade-in py-1 select-none">
-          {/* Controls Dock (Desktop Left Sidebar, Mobile Bottom Deck) */}
-          <div className="order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 pt-2 pb-5 sm:pb-3 px-3 md:p-5 mt-1 md:mt-0 bg-[#132219]/90 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border border-emerald-900/60 shadow-2xl z-20 space-y-3">
-            {/* Review Status Header */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 animate-pulse" />
-                  <span className="text-xs font-bold text-white tracking-wide">
-                    {aisleSessions[lastCapturedAisle]?.label || 'Bay 1'} Captured
-                  </span>
-                </div>
-                <span className="text-[10px] text-emerald-400/90 font-mono bg-black/60 px-2.5 py-0.5 rounded-full border border-emerald-800/40">
-                  Standard HD
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-bold ${
+                  isDark ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-100 border-emerald-300 text-emerald-900'
+                }`}>
+                  {capturedAisles.length} Captured
                 </span>
               </div>
 
-              {/* Status Notice */}
-              <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-                  <div className="flex flex-col text-left">
-                    <span className="text-[11px] font-bold text-emerald-200">
-                      Photo Stored Locally
-                    </span>
-                    <span className="text-[10px] text-emerald-400/80">
-                      Processed securely with n8n AI workflow
-                    </span>
-                  </div>
+              {/* Bay Sequence Progress Card */}
+              <div className={`p-3 rounded-2xl border space-y-2 ${
+                isDark ? 'bg-black/50 border-emerald-900/50' : 'bg-emerald-50/70 border-emerald-200/80 shadow-xs'
+              }`}>
+                <div className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-800'}`}>
+                  Bay Sequence Queue
                 </div>
-                <span className="text-[10px] text-emerald-300 font-mono bg-black/50 px-2 py-0.5 rounded border border-emerald-800/40">
-                  Ready
-                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {bayKeys.map((k, idx) => {
+                    const s = aisleSessions[k];
+                    const isCaptured = Boolean(s?.capturedPhotoUrl);
+                    const isCurrent = currentAisle === k;
+                    return (
+                      <button
+                        type="button"
+                        key={k}
+                        onClick={() => setCurrentAisle(k)}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-emerald-600 border-emerald-600 text-white ring-1 ring-emerald-500/40 shadow-xs'
+                            : isCaptured
+                            ? isDark
+                              ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300 hover:border-emerald-500'
+                              : 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold hover:border-emerald-500'
+                            : isDark
+                            ? 'bg-black/40 border-slate-800 text-slate-500'
+                            : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <span>{s?.label || `Bay ${idx + 1}`}</span>
+                        {isCaptured && <CheckCircle2 size={12} className={isCurrent ? 'text-white' : 'text-emerald-500'} />}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* Desktop-only bay sequence recap */}
-              <div className="hidden md:block p-3 rounded-2xl bg-black/40 border border-emerald-900/40 space-y-1.5">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                  Audit Progress
+              {/* Guidance & Alignment Helper */}
+              <div className={`p-3 rounded-2xl border space-y-1.5 ${
+                isDark ? 'bg-emerald-950/30 border-emerald-800/30' : 'bg-emerald-50/80 border-emerald-200'
+              }`}>
+                <div className={`flex items-center gap-1.5 text-xs font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-900'}`}>
+                  <Layers size={13} className="text-emerald-500" />
+                  <span>Alignment Guidance</span>
                 </div>
-                <p className="text-[11px] text-slate-300">
-                  You have captured {capturedAisles.length} bay{capturedAisles.length > 1 ? 's' : ''} for {category}. You can proceed to the POSM compliance form or add another bay.
+                <p className={`text-[11px] leading-relaxed ${isDark ? 'text-emerald-200/80' : 'text-slate-700'}`}>
+                  {ghostGuideUrl
+                    ? 'Align the faded edge on the left with the shelf you previously photographed to ensure seamless multi-bay stitching.'
+                    : 'Hold camera upright and level with the middle shelf. Tap Shutter when the center line turns green.'}
                 </p>
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={handleDoneShooting}
-                className="w-full h-12 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 hover:brightness-110 active:scale-[0.98] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all border border-emerald-400/40"
-              >
-                <CheckCircle2 size={16} />
-                <span>Proceed to POSM Form</span>
-              </button>
+            {/* Common Primary Actions: Single Unified Cardholder Deck */}
+            <div className="space-y-2.5 pt-2 md:pt-4">
+              {(() => {
+                const isPending = Boolean(pendingCapture);
+                const hasPhotoForCurrentBay = Boolean(
+                  aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl
+                );
+                const currentLabel = pendingCapture
+                  ? (aisleSessions[pendingCapture.bayKey]?.label || 'Bay 1')
+                  : (currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1');
 
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleRetakeBay(lastCapturedAisle)}
-                  className="h-11 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/50 active:scale-[0.98] text-rose-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-                >
-                  <RefreshCw size={13} className="text-rose-400" />
-                  <span>Retake Picture</span>
-                </button>
+                {/* State 1: Photo Clicked / Selected (Pending Upload Review) -> 70% Upload Bay [X] | 30% Retake */}
+                if (isPending) {
+                  return (
+                    <div className="flex items-center gap-2.5 w-full">
+                      {/* Primary 1: Upload Bay [X] - 70% Width */}
+                      <button
+                        type="button"
+                        onClick={handleConfirmUpload}
+                        disabled={isMeasuringSeam}
+                        className="w-[70%] h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg shadow-emerald-950/30 ring-2 ring-emerald-500/30 rounded-2xl hover:brightness-110"
+                      >
+                        <Upload size={16} />
+                        <span>Upload {currentLabel}</span>
+                      </button>
 
-                <button
-                  type="button"
-                  onClick={handleAddNewBay}
-                  className="h-11 bg-emerald-950/40 hover:bg-emerald-950/70 border border-emerald-500/50 active:scale-[0.98] text-emerald-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-                >
-                  <Plus size={14} className="text-emerald-400" />
-                  <span>+ Add a Bay</span>
-                </button>
-              </div>
-            </div>
-          </div>
+                      {/* Primary 2: Retake - 30% Width */}
+                      <button
+                        type="button"
+                        onClick={handleDiscardPending}
+                        className={`w-[30%] h-14 border active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md rounded-2xl transition-all ${
+                          isDark
+                            ? 'border-rose-500/60 bg-rose-950/60 hover:bg-rose-900/80 text-rose-200'
+                            : 'border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-900 font-bold'
+                        }`}
+                      >
+                        <RefreshCw size={14} className={isDark ? 'text-rose-400' : 'text-rose-700'} />
+                        <span>Retake</span>
+                      </button>
+                    </div>
+                  );
+                }
 
-          {/* Large, High-Fidelity Photo Preview Frame (Desktop Right Canvas, Mobile Top Preview) */}
-          <div
-            onClick={() => setIsFullScreenOpen(true)}
-            className="order-1 md:order-2 flex-1 relative min-h-[280px] md:min-h-0 rounded-3xl overflow-hidden border border-emerald-500/40 bg-black/95 flex items-center justify-center shadow-2xl cursor-pointer group"
-          >
-            {aisleSessions[lastCapturedAisle]?.capturedPhotoUrl ? (
-              <img
-                src={aisleSessions[lastCapturedAisle]?.capturedPhotoUrl!}
-                alt="Captured Shelf Preview"
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="text-slate-400 text-xs font-medium">No photo available</div>
-            )}
+                {/* State 2: Once Uploaded / Confirmed -> 50% Continue to POSM | 50% Add One More Bay */}
+                if (hasPhotoForCurrentBay) {
+                  return (
+                    <div className="flex items-center gap-2.5 w-full">
+                      <button
+                        type="button"
+                        onClick={handleDoneShooting}
+                        className="w-1/2 h-14 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                      >
+                        <CheckCircle2 size={16} className="text-white stroke-[2.5]" />
+                        <span>Continue to POSM</span>
+                      </button>
 
-            {/* Discreet Filename & Resolution Tag */}
-            <div className="absolute bottom-2.5 left-2.5 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] text-slate-300 font-mono border border-white/10 shadow-md">
-              {aisleSessions[lastCapturedAisle]?.capturedFileName || 'shelf-photo.jpg'}
-            </div>
+                      <button
+                        type="button"
+                        onClick={handleAddNewBay}
+                        className={`w-1/2 h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                          isDark
+                            ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-500/50 text-emerald-200'
+                            : 'bg-emerald-100/90 hover:bg-emerald-200 border-emerald-400 text-emerald-950 font-bold shadow-xs'
+                        }`}
+                      >
+                        <Plus size={15} className={isDark ? 'text-emerald-400' : 'text-emerald-800'} />
+                        <span>Add One More Bay</span>
+                      </button>
+                    </div>
+                  );
+                }
 
-            {/* Tap to zoom tooltip hint */}
-            <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md px-2 py-1 rounded-md text-[10px] text-slate-200 opacity-75 group-hover:opacity-100 transition-opacity flex items-center gap-1 border border-white/10 shadow-md">
-              <Maximize2 size={11} />
-              <span>Tap to zoom</span>
+                {/* State 3: Initial -> 70% Shoot Bay [X] | 30% Gallery */}
+                return (
+                  <div className="flex items-center gap-2.5 w-full">
+                    <button
+                      type="button"
+                      onClick={handleManualShutter}
+                      className="w-[70%] h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                        <Camera size={16} className="text-white stroke-[2.5]" />
+                      </div>
+                      <span>Shoot {currentLabel}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      disabled={Boolean(pendingCapture)}
+                      className={`w-[30%] h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                        isDark
+                          ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
+                          : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
+                      }`}
+                    >
+                      <Upload size={15} className="text-emerald-500" />
+                      <span>Gallery</span>
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -3248,7 +3213,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       {step === 'POSM' && (
         <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
           {/* Left Column: POSM Form & Submission Controls */}
-          <div className="order-1 md:w-[450px] md:shrink-0 flex flex-col justify-between h-full bg-[#132219]/90 border border-emerald-900/60 rounded-3xl p-3 sm:p-4 md:p-5 overflow-hidden shadow-xl space-y-3">
+          <div className={`order-1 md:w-[450px] md:shrink-0 flex flex-col justify-between h-full rounded-3xl p-3 sm:p-4 md:p-5 overflow-hidden border shadow-xl space-y-3 ${
+            isDark ? 'bg-[#132219]/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-950/15 text-slate-900'
+          }`}>
             {/* Header Card with In-Flight Analysis Background Indicator */}
             <div className={`p-3.5 rounded-2xl border space-y-2 shrink-0 ${
               isDark ? 'bg-black/40 border-emerald-900/50' : 'bg-white border-emerald-950/10 shadow-xs'
@@ -3541,7 +3508,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       {step === 'RESULTS' && (
         <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 h-full overflow-hidden">
           {/* Controls & Brand Facings Dock (Desktop Left Column, Mobile Bottom 42% Area) */}
-          <div className="order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full bg-transparent md:bg-[#132219]/80 md:rounded-3xl md:border md:border-emerald-900/60 md:p-4 overflow-hidden shadow-xl min-h-0 pt-1 md:pt-4">
+          <div className={`order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full md:rounded-3xl md:border overflow-hidden shadow-xl min-h-0 pt-1 md:pt-4 ${
+            isDark ? 'bg-transparent md:bg-[#132219]/80 md:border-emerald-900/60 text-white' : 'bg-transparent md:bg-white md:border-emerald-950/15 text-slate-900'
+          }`}>
             {/* Dynamic Results Tab Strip: ALL | BAY 1 | BAY 2 ... + Add Bay */}
             <div className="flex items-center justify-between pb-1.5 gap-1 shrink-0">
               <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">

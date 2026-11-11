@@ -14,11 +14,11 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setThemeState] = useState<Theme>(() => {
     try {
-      const saved = localStorage.getItem('mta_theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-      return 'dark'; // Default to dark peacock mode
+      const saved = localStorage.getItem('mta_theme') || localStorage.getItem('shelf_audit_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      return 'light'; // Light mode is default on first load
     } catch {
-      return 'dark';
+      return 'light';
     }
   });
 

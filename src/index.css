@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;
@@ -9,6 +11,36 @@
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
+  }
+}
+
+/* Scanner Light-Band Processing Sweep Animation */
+@keyframes scan-sweep {
+  0% {
+    top: -20%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: 110%;
+    opacity: 0;
+  }
+}
+
+.animate-scan-sweep {
+  animation: scan-sweep 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-scan-sweep {
+    animation: none;
+    top: 50%;
+    opacity: 0.4;
   }
 }
 

@@ -3,6 +3,8 @@ import edibleOilImage from './assets/images/shelf_edible_oil_1792994653879.jpg';
 import flourImage from './assets/images/shelf_flour_aisle_1792994654371.jpg';
 import pastaImage from './assets/images/shelf_pasta_boxes_1792994654786.jpg';
 
+export const CATEGORIES: CategoryType[] = ['Edible Oil', 'Flour', 'Pasta'];
+
 export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-1',

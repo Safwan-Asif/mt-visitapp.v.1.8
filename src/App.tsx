@@ -308,7 +308,7 @@ export default function App() {
       posmWobblers: record.posmWobblers,
       needsReview: record.needsReview ?? false,
       photoDataUrl: annotatedImg,
-      replyText: record.replyText || record.n8nStatus?.message || 'QFI Visit Audit Record'
+      replyText: record.replyText || 'Visit Audit Record'
     }).catch((e) => console.warn('[App] Auto-save background note:', e));
 
     // Return to outlet overview
