@@ -80,54 +80,22 @@ try {
 export default function App() {
   const { isDark, toggleTheme } = useTheme();
 
+  // Always require login/password on startup
+  try {
+    localStorage.removeItem('mta_user');
+  } catch {}
+
   // Session User
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    try {
-      const saved = localStorage.getItem('mta_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   // Outlets List with route sequence and progress mapped to executive
-  const [outlets, setOutlets] = useState<Outlet[]>(() => {
-    try {
-      const savedUserStr = localStorage.getItem('mta_user');
-      if (savedUserStr) {
-        const u = JSON.parse(savedUserStr);
-        const savedUserOutlets = localStorage.getItem(`mta_outlets_${u.username}`);
-        if (savedUserOutlets) return JSON.parse(savedUserOutlets);
-        return getInitialOutletsForExecutive(u.name);
-      }
-      const saved = localStorage.getItem('mta_outlets');
-      return saved ? JSON.parse(saved) : INITIAL_OUTLETS;
-    } catch {
-      return INITIAL_OUTLETS;
-    }
-  });
+  const [outlets, setOutlets] = useState<Outlet[]>(INITIAL_OUTLETS);
 
   // Saved Audits per category (key: `${outletId}_${category}`)
-  const [audits, setAudits] = useState<Record<string, CategoryAuditRecord>>(() => {
-    try {
-      const savedUserStr = localStorage.getItem('mta_user');
-      if (savedUserStr) {
-        const u = JSON.parse(savedUserStr);
-        const userAudits = localStorage.getItem(`mta_audits_${u.username}`);
-        if (userAudits) return JSON.parse(userAudits);
-      }
-      const saved = localStorage.getItem('mta_audits');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [audits, setAudits] = useState<Record<string, CategoryAuditRecord>>({});
 
-  // Screen routing state
-  const [currentScreen, setCurrentScreen] = useState<ScreenType>(() => {
-    const savedUser = localStorage.getItem('mta_user');
-    return savedUser ? 'PJP' : 'LOGIN';
-  });
+  // Screen routing state always starts at LOGIN
+  const [currentScreen, setCurrentScreen] = useState<ScreenType>('LOGIN');
 
   const [selectedOutlet, setSelectedOutlet] = useState<Outlet | null>(() => {
     try {
@@ -366,7 +334,7 @@ export default function App() {
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h1 className={`text-xs font-extrabold tracking-wide truncate ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
-                  QFI Visit Audit
+                  QFI MARVIZ AI
                 </h1>
                 <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${
                   isDark
@@ -376,9 +344,6 @@ export default function App() {
                   PJP Active
                 </span>
               </div>
-              <p className={`text-[10px] font-medium truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                {user.name} &bull; <span className={isDark ? 'text-emerald-400' : 'text-emerald-700 font-bold'}>{user.repId}</span>
-              </p>
             </div>
           </div>
 
