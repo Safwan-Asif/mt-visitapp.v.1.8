@@ -331,9 +331,9 @@ export default function App() {
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#047857] via-[#065F46] to-[#10B981] flex items-center justify-center shadow-md shadow-emerald-950/30 text-xs font-black text-white shrink-0 border border-emerald-400/20">
               QFI
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h1 className={`text-xs font-extrabold tracking-wide truncate ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
+            <div className="min-w-0 flex flex-col">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h1 className={`text-sm sm:text-base font-black tracking-tight truncate ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
                   QFI MARVIZ AI
                 </h1>
                 <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${
@@ -344,6 +344,11 @@ export default function App() {
                   PJP Active
                 </span>
               </div>
+              <span className={`text-[10px] font-semibold leading-none mt-0.5 ${
+                isDark ? 'text-emerald-400/80' : 'text-emerald-700/80'
+              }`}>
+                Dev. by SF1
+              </span>
             </div>
           </div>
 
