@@ -25,39 +25,73 @@ if (!fs.existsSync(DATA_DIR)) {
 const AUDIT_LOGS_FILE = path.join(DATA_DIR, 'audit_logs.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'apps_script_config.json');
 
-// Load runtime Apps Script Web App URL if saved
+// Load runtime configuration (V1 and V2)
 let runtimeAppsScriptUrl = process.env.APPS_SCRIPT_URL || '';
+let useSheetsV2 = process.env.USE_SHEETS_V2 === 'true';
+let sheetsV2Url = process.env.SHEETS_V2_URL || '';
+let sheetsV2ApiKey = process.env.SHEETS_V2_API_KEY || 'mta_secret_key_2026';
+
 if (fs.existsSync(CONFIG_FILE)) {
   try {
     const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    if (savedConfig.appsScriptUrl) {
-      runtimeAppsScriptUrl = savedConfig.appsScriptUrl;
-    }
+    if (savedConfig.appsScriptUrl !== undefined) runtimeAppsScriptUrl = savedConfig.appsScriptUrl;
+    if (savedConfig.useSheetsV2 !== undefined) useSheetsV2 = Boolean(savedConfig.useSheetsV2);
+    if (savedConfig.sheetsV2Url !== undefined) sheetsV2Url = savedConfig.sheetsV2Url;
+    if (savedConfig.sheetsV2ApiKey !== undefined) sheetsV2ApiKey = savedConfig.sheetsV2ApiKey;
   } catch {}
 }
 
-// Config endpoints to get and update Apps Script Web App Endpoint URL
+// Config endpoints to get and update Apps Script Web App Endpoint URL and V2 toggle
 app.get('/api/sheets/config', (_req, res) => {
   return res.json({
     success: true,
+    // V1 Legacy config
     appsScriptUrl: runtimeAppsScriptUrl,
     spreadsheetId: TARGET_SPREADSHEET_ID,
     spreadsheetUrl: TARGET_SPREADSHEET_URL,
     driveFolderId: TARGET_DRIVE_FOLDER_ID,
-    driveFolderUrl: TARGET_DRIVE_FOLDER_URL
+    driveFolderUrl: TARGET_DRIVE_FOLDER_URL,
+    // V2 New Backend config & toggle
+    useSheetsV2,
+    sheetsV2Url,
+    hasSheetsV2ApiKey: Boolean(sheetsV2ApiKey)
   });
 });
 
 app.post('/api/sheets/config', (req, res) => {
   try {
-    const { appsScriptUrl } = req.body || {};
-    runtimeAppsScriptUrl = appsScriptUrl ? String(appsScriptUrl).trim() : '';
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ appsScriptUrl: runtimeAppsScriptUrl }, null, 2));
-    process.env.APPS_SCRIPT_URL = runtimeAppsScriptUrl;
+    const { appsScriptUrl, useSheetsV2: newUseV2, sheetsV2Url: newV2Url, sheetsV2ApiKey: newV2Key } = req.body || {};
+    if (appsScriptUrl !== undefined) {
+      runtimeAppsScriptUrl = String(appsScriptUrl).trim();
+      process.env.APPS_SCRIPT_URL = runtimeAppsScriptUrl;
+    }
+    if (newUseV2 !== undefined) {
+      useSheetsV2 = Boolean(newUseV2);
+      process.env.USE_SHEETS_V2 = useSheetsV2 ? 'true' : 'false';
+    }
+    if (newV2Url !== undefined) {
+      sheetsV2Url = String(newV2Url).trim();
+      process.env.SHEETS_V2_URL = sheetsV2Url;
+    }
+    if (newV2Key !== undefined) {
+      sheetsV2ApiKey = String(newV2Key).trim();
+      process.env.SHEETS_V2_API_KEY = sheetsV2ApiKey;
+    }
+
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({
+      appsScriptUrl: runtimeAppsScriptUrl,
+      useSheetsV2,
+      sheetsV2Url,
+      sheetsV2ApiKey
+    }, null, 2));
+
     return res.json({
       success: true,
-      message: '✓ Google Apps Script Web App URL updated successfully',
-      appsScriptUrl: runtimeAppsScriptUrl
+      message: '✓ Google Apps Script & Sheets V2 configuration updated successfully',
+      appsScriptUrl: runtimeAppsScriptUrl,
+      useSheetsV2,
+      sheetsV2Url,
+      hasSheetsV2ApiKey: Boolean(sheetsV2ApiKey)
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
@@ -187,6 +221,41 @@ app.post('/api/sheets/apps-script-proxy', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required payload body' });
     }
 
+    // Branch to Sheets V2 Backend if switch is active
+    if (useSheetsV2 && (sheetsV2Url || appsScriptUrl)) {
+      const targetUrl = sheetsV2Url || appsScriptUrl;
+      const v2Payload = {
+        api_key: sheetsV2ApiKey,
+        action: payload.action || 'sync_visit',
+        visit: payload.visit || null,
+        tables: payload.tables || {}
+      };
+
+      console.log('[Server Proxy V2] Dispatching to Google Sheets V2 Backend:', targetUrl);
+      try {
+        const response = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(v2Payload)
+        });
+        const v2Res = await response.json();
+        return res.json({
+          success: response.ok && v2Res.ok !== false,
+          backend: 'V2',
+          message: '✓ Synced to Google Sheets V2 Backend',
+          data: v2Res
+        });
+      } catch (err: any) {
+        console.warn('[Server Proxy V2] Forward error:', err?.message);
+        return res.status(502).json({
+          success: false,
+          backend: 'V2',
+          error: 'V2 forward error: ' + err?.message
+        });
+      }
+    }
+
+    // Legacy V1 Forwarding logic (Old Sheet & Script)
     const targetUrl = appsScriptUrl || runtimeAppsScriptUrl || process.env.APPS_SCRIPT_URL;
     let forwardStatus = 'stored_locally';
 
@@ -206,6 +275,7 @@ app.post('/api/sheets/apps-script-proxy', async (req, res) => {
 
     return res.json({
       success: true,
+      backend: 'V1',
       message: '✓ Apps script proxy payload received & processed',
       status: forwardStatus,
       payload
@@ -213,6 +283,98 @@ app.post('/api/sheets/apps-script-proxy', async (req, res) => {
   } catch (error: any) {
     console.error('Apps script proxy error:', error);
     return res.status(500).json({ success: false, error: error?.message || 'Proxy server error' });
+  }
+});
+
+// Dedicated Google Drive Photo Upload Endpoint
+app.post('/api/upload-drive-photo', async (req, res) => {
+  try {
+    const { photoId, visitId, photoLabel, image, outlet, category, field, filename, mime_type } = req.body || {};
+    if (!image) {
+      return res.status(400).json({ success: false, error: 'Missing image data' });
+    }
+
+    // Branch to Sheets V2 Backend if switch is active
+    if (useSheetsV2 && sheetsV2Url) {
+      try {
+        const v2PhotoPayload = {
+          api_key: sheetsV2ApiKey,
+          action: 'upload_drive_photo',
+          visit_id: visitId || 'visit_general',
+          outlet: outlet || 'General Outlet',
+          category: category || 'General',
+          field: field || photoLabel || 'photo',
+          filename: filename || `${visitId || 'visit'}_${category || 'cat'}_${photoLabel || 'photo'}.jpg`,
+          mime_type: mime_type || 'image/jpeg',
+          data_base64: image
+        };
+
+        const response = await fetch(sheetsV2Url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(v2PhotoPayload)
+        });
+
+        if (response.ok) {
+          const v2Res = await response.json();
+          if (v2Res && v2Res.url) {
+            return res.json({
+              success: true,
+              backend: 'V2',
+              driveUrl: v2Res.url,
+              fileId: v2Res.file_id,
+              folderPath: v2Res.folder_path
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn('[upload-drive-photo V2] Forward error to V2 Apps Script:', err?.message);
+      }
+    }
+
+    // Legacy V1 photo upload fallback
+    const targetUrl = runtimeAppsScriptUrl || process.env.APPS_SCRIPT_URL;
+    let driveUrl = '';
+
+    if (targetUrl) {
+      try {
+        const response = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'upload_drive_photo',
+            photoId: photoId || `photo_${Date.now()}`,
+            visitId: visitId || 'visit_general',
+            photoLabel: photoLabel || 'questionnaire_photo',
+            image
+          })
+        });
+        if (response.ok) {
+          const result = await response.json();
+          if (result && result.driveUrl) {
+            driveUrl = result.driveUrl;
+          }
+        }
+      } catch (err: any) {
+        console.warn('[upload-drive-photo V1] Forward error to Apps Script:', err?.message);
+      }
+    }
+
+    // Fallback Drive link representation if not yet connected
+    if (!driveUrl) {
+      const safeId = String(photoId || `photo_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+      driveUrl = `https://drive.google.com/file/d/audit_${visitId || 'visit'}_${safeId}/view`;
+    }
+
+    return res.json({
+      success: true,
+      backend: 'V1',
+      driveUrl,
+      folderId: TARGET_DRIVE_FOLDER_ID
+    });
+  } catch (error: any) {
+    console.error('Error in /api/upload-drive-photo:', error);
+    return res.status(500).json({ success: false, error: error?.message || 'Photo upload error' });
   }
 });
 

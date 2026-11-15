@@ -423,6 +423,41 @@ export default function App() {
               setSelectedCategory(category);
               setCurrentScreen('CAMERA_WORKFLOW');
             }}
+            onFinishOutlet={(confidence) => {
+              setOutlets((prev) =>
+                prev.map((o) =>
+                  o.id === selectedOutlet.id
+                    ? { ...o, status: 'Completed', dataConfidence: confidence }
+                    : o
+                )
+              );
+              // Dispatch master visit row finalization to Sheets V2
+              const visitId = selectedOutlet.visitId || `visit_${selectedOutlet.id}_${new Date().toISOString().slice(0, 10)}`;
+              fetch('/api/sheets/apps-script-proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  payload: {
+                    action: 'sync_visit',
+                    visit_id: visitId,
+                    visit: {
+                      visit_id: visitId,
+                      date: new Date().toISOString().slice(0, 10),
+                      start_time: '09:00',
+                      end_time: new Date().toTimeString().slice(0, 5),
+                      rep: user?.name || 'Safwan Asif',
+                      outlet: selectedOutlet.name,
+                      gps_lat: null,
+                      gps_lng: null,
+                      data_confidence: confidence,
+                      categories_completed: 'Flour, Edible Oil, Pasta',
+                      app_version: '2.0.0'
+                    },
+                    tables: {}
+                  }
+                })
+              }).catch(() => {});
+            }}
           />
         )}
 

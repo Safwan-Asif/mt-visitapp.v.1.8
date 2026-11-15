@@ -1,29 +1,46 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   ArrowLeft, CheckCircle2, ChevronRight, MapPin, 
-  Check, Clock, ShieldCheck 
+  Check, Clock, ShieldCheck, ArrowRight
 } from 'lucide-react';
 import { Outlet, CategoryType, CategoryAuditRecord } from '../types';
 import { CATEGORIES } from '../constants';
 import { useTheme } from '../ThemeContext';
+import { FinishOutletScreen } from './FinishOutletScreen';
 
 interface OutletOverviewProps {
   outlet: Outlet;
   audits: Record<string, CategoryAuditRecord>;
   onBack: () => void;
   onSelectCategory: (category: CategoryType) => void;
+  onFinishOutlet?: (confidence: string) => void;
 }
 
 export const OutletOverview: React.FC<OutletOverviewProps> = ({
   outlet,
   audits,
   onBack,
-  onSelectCategory
+  onSelectCategory,
+  onFinishOutlet
 }) => {
   const { isDark } = useTheme();
+  const [showFinishScreen, setShowFinishScreen] = useState<boolean>(false);
   const categories = CATEGORIES;
   const completedCount = categories.filter((cat) => outlet.progress[cat] === 'Completed').length;
   const allDone = completedCount === categories.length;
+
+  if (showFinishScreen) {
+    return (
+      <FinishOutletScreen
+        outlet={outlet}
+        visitId={outlet.visitId || `visit_${outlet.id}_${new Date().toISOString().slice(0, 10)}`}
+        onFinishOutlet={(confidence) => {
+          onFinishOutlet?.(confidence);
+          onBack();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col justify-between p-3.5 max-w-md mx-auto w-full h-full overflow-hidden select-none">
@@ -217,10 +234,11 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
               <CheckCircle2 size={16} /> All 3 Categories Completed for {outlet.name}!
             </div>
             <button
-              onClick={onBack}
-              className="w-full py-3 bg-gradient-to-r from-[#047857] via-[#065F46] to-[#10B981] hover:brightness-105 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md shadow-emerald-950/20"
+              onClick={() => setShowFinishScreen(true)}
+              className="w-full min-h-[56px] py-4 bg-gradient-to-r from-[#047857] via-[#065F46] to-[#10B981] hover:brightness-105 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md shadow-emerald-950/20 cursor-pointer flex items-center justify-center gap-2"
             >
-              Finish &amp; Return to Route PJP
+              <span>Finish Outlet &bull; Rate Confidence</span>
+              <ArrowRight size={16} />
             </button>
           </div>
         </div>

@@ -20,6 +20,8 @@ export interface Outlet {
   longitude?: number;
   isUnmapped?: boolean;
   unmappedRemark?: string;
+  visitId?: string;
+  dataConfidence?: string;
 }
 
 export interface BrandFacing {
@@ -52,10 +54,13 @@ export interface BoundingBox {
 
 export interface CategoryAuditRecord {
   outletId: string;
+  visitId?: string;
   category: CategoryType;
   priceTagOk: boolean;
   posmShelfSticker: boolean;
   posmWobblers: boolean;
+  questionnaireAnswers?: Record<string, any>;
+  questionnaireNewProducts?: Array<Record<string, any>>;
   aiCounts: Record<string, number>;
   counts?: Record<string, number>;
   originalAiCounts?: Record<string, number>;

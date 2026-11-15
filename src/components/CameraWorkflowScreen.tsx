@@ -23,8 +23,11 @@ import {
 import {
   autoSaveAuditToGoogleSheet,
   toDirectDriveImageUrl,
-  toAlternativeDriveImageUrl
+  toAlternativeDriveImageUrl,
+  transformQuestionnaireToTables,
+  syncFieldIntelToGoogleSheets
 } from '../services/googleSheetsService';
+import { QuestionnaireRenderer } from './QuestionnaireRenderer';
 import { getAuditCoordinates, GeoLocationResult } from '../services/geolocationService';
 import {
   SeamInfo,
@@ -683,6 +686,20 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   const [lastCapturedAisle, setLastCapturedAisle] = useState<string>('bay_1');
   // In POSM step: which bay is active in the Web/Tablet preview switcher
   const [posmActiveBayKey, setPosmActiveBayKey] = useState<string>('bay_1');
+
+  // Visit ID for visit-scoped autosave & table key columns
+  const visitId = useMemo(
+    () => outlet.visitId || `visit_${outlet.id}_${new Date().toISOString().split('T')[0].replace(/-/g, '')}`,
+    [outlet]
+  );
+
+  // Field-Intel Questionnaire Answers & Multi-Products
+  const [questionnaireAnswers, setQuestionnaireAnswers] = useState<Record<string, any>>(() => {
+    return existingAudit?.questionnaireAnswers || {};
+  });
+  const [questionnaireNewProducts, setQuestionnaireNewProducts] = useState<Array<Record<string, any>>>(() => {
+    return existingAudit?.questionnaireNewProducts || [];
+  });
 
   // POSM Questionnaire state (visibility driven solely by step === 'POSM')
   const [priceTagOk, setPriceTagOk] = useState<boolean>(existingAudit?.priceTagOk ?? true);
@@ -2291,12 +2308,20 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       : '';
     const fullDiscrepancyLog = `[${completedAisles.length} Bay(s): ${baySummaryStr}]${dupNote} ${currentDiscrepancyLog}`;
 
+    const detectedOosBrands = Object.entries(combinedCounts)
+      .filter(([_, count]) => count === 0)
+      .map(([brand]) => brand);
+    const hasOosFound = detectedOosBrands.length > 0;
+
     const record: CategoryAuditRecord = {
       outletId: outlet.id,
+      visitId,
       category,
       priceTagOk,
       posmShelfSticker,
       posmWobblers,
+      questionnaireAnswers,
+      questionnaireNewProducts,
       aiCounts: combinedCounts,
       counts: combinedCounts,
       originalAiCounts: combinedOrigCounts,
@@ -2317,7 +2342,69 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       activeAisleCount: completedAisles.length
     };
 
-    // Auto-Sync to Google Sheet in background
+    // 1. Transform questionnaire responses into the 5 target tables
+    const multiTables = transformQuestionnaireToTables(
+      questionnaireAnswers,
+      questionnaireNewProducts,
+      {
+        visitId,
+        outletName: outlet.name,
+        repIdOrName: userProfile?.repId || userProfile?.name || '#9',
+        category,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        totalFacings: combinedTotalFacings,
+        shareOfShelfPct: primarySharePct,
+        oosSkus: detectedOosBrands.join(', ') || 'None',
+        hasOosFound,
+        dataConfidence: questionnaireAnswers.fo_confidence || 'High'
+      }
+    );
+
+    const auditRecordForSync = {
+      timestamp: new Date().toISOString(),
+      outletId: outlet.id,
+      outletName: outlet.name,
+      accountName: outlet.name.split(' - ')[0] || outlet.name,
+      outletCode: outlet.id,
+      category,
+      repId: userProfile?.repId || '#9',
+      repName: userProfile?.name || 'Safwan Asif',
+      totalFacings: combinedTotalFacings,
+      shareOfShelfPct: primarySharePct,
+      shareOfShelfLabel: primaryLabel,
+      brandBreakdown: Object.entries(combinedCounts).map(([b, cnt]) => `${b}: ${cnt}`).join(' | '),
+      discrepancyLog: fullDiscrepancyLog,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      locationSource: coords.source,
+      priceTagOk,
+      posmShelfSticker,
+      posmWobblers,
+      needsReview: completedAisles.some((k) => Boolean(aisleSessions[k]?.n8nStatus?.needsReview)),
+      photoUrl: primaryPhoto,
+      annotatedImage: primaryCompleted?.annotatedPhotoUrl || primaryPhoto
+    };
+
+    // 2. Dispatch multi-table sync to Google Sheets & clear autosave key on success
+    syncFieldIntelToGoogleSheets(
+      multiTables,
+      visitId,
+      outlet.id,
+      category,
+      auditRecordForSync,
+      {
+        date: new Date().toISOString().slice(0, 10),
+        rep: userProfile?.name || 'Safwan Asif',
+        outlet: outlet.name,
+        gps_lat: coords.latitude,
+        gps_lng: coords.longitude,
+        data_confidence: questionnaireAnswers.fo_confidence || 'High',
+        categories_completed: category
+      }
+    );
+
+    // 3. Auto-Sync to Google Sheet in background (Audit_Logs combined row)
     autoSaveAuditToGoogleSheet({
       timestamp: new Date().toLocaleString(),
       outletId: outlet.id,
@@ -3211,450 +3298,26 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         </div>
       )}
 
-      {/* ================= STEP 2: POSM QUESTIONNAIRE ================= */}
-      {/* 1. Driven solely by step === 'POSM'. Split on Desktop, Compact on Mobile */}
+      {/* ================= STEP 2: FIELD-INTEL QUESTIONNAIRE ================= */}
       {step === 'POSM' && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
-          {/* Left Column: POSM Form & Submission Controls */}
-          <div className={`order-1 md:w-[450px] md:shrink-0 flex flex-col justify-between h-full rounded-3xl p-3 sm:p-4 md:p-5 overflow-hidden border shadow-xl space-y-3 ${
-            isDark ? 'bg-[#132219]/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-950/15 text-slate-900'
-          }`}>
-            {/* Header Card with In-Flight Analysis Background Indicator */}
-            <div className={`p-3.5 rounded-2xl border space-y-2 shrink-0 ${
-              isDark ? 'bg-black/40 border-emerald-900/50' : 'bg-white border-emerald-950/10 shadow-xs'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                    {category} POSM Compliance
-                  </h3>
-                  <p className={`text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
-                    Store shelf verification checklist
-                  </p>
-                </div>
-                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-xl border ${
-                  isDark ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-100 text-emerald-900 border-emerald-200'
-                }`}>
-                  {capturedAisles.length} Bay{capturedAisles.length > 1 ? 's' : ''} Photographed
-                </span>
-              </div>
-
-              {/* In-flight async analysis status */}
-              <div className={`text-[11px] p-2 rounded-xl border flex items-center justify-between ${
-                inFlightAisles.length > 0 
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
-                  : erroredAisles.length > 0
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-              }`}>
-                <div className="flex items-center gap-2 truncate pr-2">
-                  {inFlightAisles.length > 0 ? (
-                    <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
-                  ) : erroredAisles.length > 0 ? (
-                    <AlertCircle size={13} className="text-rose-400 shrink-0" />
-                  ) : (
-                    <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                  )}
-                  <span className="truncate">
-                    {inFlightAisles.length > 0
-                      ? `Background analysis in flight for ${inFlightAisles.length} bay(s)…`
-                      : erroredAisles.length > 0
-                      ? `${erroredAisles.length} bay analysis failed`
-                      : `All ${completedAisles.length} bay analyses complete`}
-                  </span>
-                </div>
-                <span className="text-[10px] font-mono shrink-0">
-                  {allCapturedDone ? 'Ready' : 'In Flight'}
-                </span>
-              </div>
-            </div>
-
-            {/* 3. Errored Bay Escape Hatch */}
-            {erroredAisles.length > 0 && (
-              <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 space-y-2 shrink-0">
-                <div className="flex items-center gap-2 text-rose-300 text-xs font-bold">
-                  <AlertCircle size={15} className="text-rose-400 shrink-0" />
-                  <span>Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}</span>
-                </div>
-                <p className="text-[11px] text-rose-200/80">
-                  A bay in error cannot proceed to results. Please retake to re-analyse.
-                </p>
-                <div className="space-y-1.5 pt-0.5">
-                  {erroredAisles.map((k) => (
-                    <div key={k} className="flex items-center justify-between p-2 rounded-xl bg-black/50 border border-rose-500/30">
-                      <span className="text-xs font-bold text-white">
-                        {aisleSessions[k]?.label || k}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRetakeBay(k)}
-                        className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                      >
-                        <Camera size={13} />
-                        <span>Retake {aisleSessions[k]?.label || k}</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Scrollable POSM Questionnaire Form */}
-            <div className="flex-1 overflow-y-auto space-y-2.5 px-0.5 min-h-0">
-              {/* Toggle 1: Price Tag */}
-              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
-                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-              }`}>
-                <div className="pr-2">
-                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                    <Tag size={14} className="text-emerald-400" />
-                    Price tags legible &amp; present?
-                  </h4>
-                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    Shelf edge label or neck promotional pricing active
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setPriceTagOk(true)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      priceTagOk
-                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPriceTagOk(false)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      !priceTagOk
-                        ? 'bg-rose-600 text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-
-              {/* Toggle 2: Shelf Sticker */}
-              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
-                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-              }`}>
-                <div className="pr-2">
-                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                    <ShieldCheck size={14} className="text-emerald-400" />
-                    POSM shelf strips &amp; stickers intact?
-                  </h4>
-                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    Primary brand shelf divider &amp; rail branding in place
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setPosmShelfSticker(true)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      posmShelfSticker
-                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPosmShelfSticker(false)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      !posmShelfSticker
-                        ? 'bg-rose-600 text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-
-              {/* Toggle 3: Wobblers */}
-              <div className={`p-3 rounded-2xl border flex items-center justify-between ${
-                isDark ? 'bg-black/30 border-emerald-900/40' : 'bg-white border-emerald-950/10 shadow-xs'
-              }`}>
-                <div className="pr-2">
-                  <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                    <Layers size={14} className="text-amber-400" />
-                    Promotional wobblers deployed?
-                  </h4>
-                  <p className={`text-[10px] mt-0.5 hidden md:block ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                    Active campaign shelf talker or special offer danglers
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setPosmWobblers(true)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      posmWobblers
-                        ? 'bg-gradient-to-r from-[#047857] to-[#10B981] text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPosmWobblers(false)}
-                    className={`min-h-[38px] min-w-[50px] px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                      !posmWobblers
-                        ? 'bg-rose-600 text-white shadow-md'
-                        : isDark ? 'bg-[#0B120E] text-slate-400 border border-emerald-900/40' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Submit POSM: gated on all captured bays status === 'done' */}
-            <div className="shrink-0 space-y-2 pt-1 border-t border-emerald-900/40">
-              {/* Live in-flight status line naming the bay still in flight */}
-              {inFlightAisles.length > 0 && (
-                <p className="text-xs font-semibold text-amber-400 text-center flex items-center justify-center gap-1.5 animate-pulse">
-                  <Loader2 size={13} className="animate-spin text-amber-400 shrink-0" />
-                  <span>
-                    Analyse still running for {inFlightAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}…
-                  </span>
-                </p>
-              )}
-
-              {erroredAisles.length > 0 && (
-                <p className="text-xs font-semibold text-rose-400 text-center flex items-center justify-center gap-1.5">
-                  <AlertCircle size={13} className="text-rose-400 shrink-0" />
-                  <span>
-                    Analysis failed for {erroredAisles.map((k) => aisleSessions[k]?.label || k).join(', ')}. Retake required.
-                  </span>
-                </p>
-              )}
-
-              <button
-                type="button"
-                disabled={!allCapturedDone || erroredAisles.length > 0}
-                onClick={handlePosmSubmit}
-                className={`w-full py-3.5 text-xs font-black uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                  allCapturedDone && erroredAisles.length === 0
-                    ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white shadow-xl shadow-emerald-950/40 hover:brightness-110'
-                    : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60'
-                }`}
-              >
-                <span>Submit POSM &bull; Proceed to Results</span>
-                <CheckCircle2 size={16} />
-              </button>
-
-              <div className="flex items-center justify-center">
-                <button
-                  type="button"
-                  onClick={() => setStep('CAPTURE')}
-                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
-                >
-                  <Camera size={12} />
-                  <span>Shoot Another Bay First</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column (Web & Tablet): Multi-Bay Switcher & AI Scanning Canvas */}
-          <div className={`order-2 hidden md:flex md:flex-1 h-full rounded-3xl p-4 overflow-hidden relative flex-col justify-between shadow-2xl border transition-colors ${
-            isDark ? 'bg-black border-emerald-900/60' : 'bg-white border-emerald-950/15'
-          }`}>
-            {/* Top Bar: Shelf Reference & Horizontal Bay Pill Switcher */}
-            {(() => {
-              const activeSession = aisleSessions[posmActiveBayKey] || aisleSessions[lastCapturedAisle] || aisleSessions[capturedAisles[0]];
-              const isCurrentBayDone = activeSession?.status === 'done';
-
-              return (
-                <div className="flex flex-col gap-2 pb-2.5 z-10 shrink-0 border-b border-emerald-900/30">
-                  <div className="flex items-center justify-between">
-                    <span className={`text-xs font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                      <span className={`w-2.5 h-2.5 rounded-full ${isCurrentBayDone ? 'bg-emerald-400 shadow-md shadow-emerald-400' : 'bg-emerald-400 animate-pulse shadow-md shadow-emerald-400'}`} />
-                      {isCurrentBayDone
-                        ? `Shelf AI Analysis Complete (${capturedAisles.length} Bay${capturedAisles.length > 1 ? 's' : ''})`
-                        : `Shelf AI Scanning Preview (${capturedAisles.length} Bay${capturedAisles.length > 1 ? 's' : ''})`}
-                    </span>
-                    <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-md border font-bold transition-colors ${
-                      isCurrentBayDone
-                        ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/50 shadow-xs'
-                        : isDark
-                        ? 'text-emerald-400 bg-emerald-950/80 border-emerald-800/60'
-                        : 'text-emerald-900 bg-emerald-100 border-emerald-300'
-                    }`}>
-                      {isCurrentBayDone ? '✓ Analysis Complete' : 'AI Processing Mode'}
-                    </span>
-                  </div>
-
-                  {/* Horizontal Bay Pill Switcher */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                    {capturedAisles.map((bayKey, idx) => {
-                      const s = aisleSessions[bayKey];
-                      const label = s?.label || `Bay ${idx + 1}`;
-                      const isSelected = (posmActiveBayKey === bayKey) || (!posmActiveBayKey && idx === 0);
-                      const isThisBayDone = s?.status === 'done';
-
-                      return (
-                        <button
-                          key={bayKey}
-                          type="button"
-                          onClick={() => setPosmActiveBayKey(bayKey)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                            isSelected
-                              ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
-                              : isDark
-                              ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white hover:border-emerald-500'
-                              : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-emerald-50 hover:text-emerald-950'
-                          }`}
-                        >
-                          <span>{label}</span>
-                          {isThisBayDone ? (
-                            <Check size={11} className={isSelected ? 'text-white stroke-[2.5]' : 'text-emerald-400 stroke-[2.5]'} />
-                          ) : (
-                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white animate-ping' : 'bg-emerald-400'}`} />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* AI Scanning Visual Canvas for Selected Bay (No raw annotations, no zoom lightbox) */}
-            <div className="flex-1 relative rounded-2xl overflow-hidden bg-black flex items-center justify-center my-2 shadow-inner select-none">
-              {(() => {
-                const targetBaySession = aisleSessions[posmActiveBayKey] || aisleSessions[lastCapturedAisle] || aisleSessions[capturedAisles[0]];
-                const photoUrl = targetBaySession?.capturedPhotoUrl || targetBaySession?.annotatedPhotoUrl;
-                const bayLabel = targetBaySession?.label || 'Bay 1';
-                const isBayDone = targetBaySession?.status === 'done';
-
-                if (!photoUrl) {
-                  return (
-                    <div className="text-slate-500 text-xs font-medium">
-                      No photo captured for {bayLabel}
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden">
-                    {/* Soft blur: kept softly blurred (2.5px) when ready, 4px while in-flight */}
-                    <img
-                      src={photoUrl}
-                      alt={`${bayLabel} Preview`}
-                      className={`w-full h-full object-contain transition-all duration-700 ease-out ${
-                        isBayDone ? 'blur-[2.5px] opacity-90 scale-[1.01]' : 'blur-[4px] opacity-80 scale-[1.02]'
-                      }`}
-                    />
-
-                    {/* AI Laser Rod Bot Scanning Beam Line (Active ONLY while in-flight) */}
-                    {!isBayDone && (
-                      <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-                        {/* Sweeping Laser Rod with intense emerald neon glow */}
-                        <div 
-                          className="w-full h-3 bg-gradient-to-r from-transparent via-emerald-300 to-transparent shadow-[0_0_40px_#10B981,0_0_15px_#34D399] animate-scan-laser-rod absolute left-0"
-                          style={{
-                            animation: 'scanLaserRod 2.2s ease-in-out infinite'
-                          }}
-                        >
-                          {/* High-intensity center core filament */}
-                          <div className="w-full h-[2px] bg-white opacity-90 mx-auto" />
-                        </div>
-                        {/* Ambient scanning grid tint */}
-                        <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none" />
-                      </div>
-                    )}
-
-                    {/* Corner Target Reticles (AI Targeting Brackets) */}
-                    <div className="absolute inset-4 pointer-events-none z-20 transition-all duration-500">
-                      <div className={`absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 rounded-tl-md transition-all duration-500 ${
-                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
-                      }`} />
-                      <div className={`absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 rounded-tr-md transition-all duration-500 ${
-                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
-                      }`} />
-                      <div className={`absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 rounded-bl-md transition-all duration-500 ${
-                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
-                      }`} />
-                      <div className={`absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 rounded-br-md transition-all duration-500 ${
-                        isBayDone ? 'border-emerald-400 shadow-[0_0_20px_#10B981]' : 'border-emerald-400 shadow-[0_0_15px_#10B981]'
-                      }`} />
-                    </div>
-
-                    {/* Status Display: 2026 Modern iOS Dynamic Island morphing pill in DEAD CENTER of image */}
-                    {isBayDone ? (
-                      <div className="absolute inset-0 m-auto w-fit h-fit max-w-[92%] bg-black/85 backdrop-blur-2xl border border-emerald-400/60 shadow-[0_20px_50px_rgba(0,0,0,0.85),0_0_40px_rgba(16,185,129,0.35)] rounded-3xl p-4 sm:px-5 sm:py-3.5 flex items-center gap-3.5 z-30 animate-dynamic-island-center select-none">
-                        {/* Animated pulsing iOS checkmark badge */}
-                        <div className="w-8 h-8 rounded-2xl bg-gradient-to-tr from-emerald-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shrink-0 animate-pulse-check-glow shadow-lg shadow-emerald-400/50">
-                          <Check size={18} className="stroke-[3]" />
-                        </div>
-
-                        {/* Center modern iOS typography */}
-                        <div className="flex flex-col min-w-0 pr-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs sm:text-sm font-black tracking-wide text-white uppercase">
-                              Picture Ready
-                            </span>
-                            <span className="text-slate-400 font-normal">&bull;</span>
-                            <span className="text-xs sm:text-sm font-bold text-emerald-300">
-                              {bayLabel}
-                            </span>
-                          </div>
-                          <span className="text-[11px] text-slate-300 font-medium truncate">
-                            AI Analysis Complete &bull; {targetBaySession?.totalFacings ?? 0} facings verified
-                          </span>
-                        </div>
-
-                        {/* Right micro badge */}
-                        <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/50 px-2.5 py-1 rounded-full shrink-0 shadow-sm">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300">
-                            Ready
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="absolute top-3.5 left-3.5 bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/60 flex items-center gap-2 shadow-xl z-30 pointer-events-none">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0 shadow-md shadow-emerald-400" />
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">
-                          AI Scanning &bull; {bayLabel}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Bottom Guidance Banner: Sparkle ready cue when done vs Locked cue while scanning */}
-                    {isBayDone ? (
-                      <div className="absolute bottom-3.5 inset-x-0 mx-auto w-fit max-w-[92%] bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-2xl text-[11px] font-bold text-emerald-300 border border-emerald-500/40 shadow-xl flex items-center gap-2 z-30 pointer-events-none">
-                        <Sparkles size={13} className="text-emerald-400 shrink-0 animate-pulse" />
-                        <span>Results ready &bull; Submit POSM below to reveal detections</span>
-                      </div>
-                    ) : (
-                      <div className="absolute bottom-3.5 left-3.5 bg-black/85 backdrop-blur-md px-3 py-1 rounded-xl text-[10px] font-bold text-emerald-300 border border-emerald-500/40 shadow-md flex items-center gap-1.5 z-30 pointer-events-none">
-                        <ShieldCheck size={12} className="text-emerald-400" />
-                        <span>Results unlock on POSM submit</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className={`pt-1.5 text-center text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
-              Verify physical POSM compliance while AI computer vision prepares multi-bay facings in the background.
-            </div>
-          </div>
-        </div>
+        <QuestionnaireRenderer
+          category={category}
+          outletId={outlet.id}
+          visitId={visitId}
+          isAiRunning={inFlightAisles.length > 0}
+          aiProgressPercent={Math.min(95, Math.round((completedAisles.length / Math.max(1, capturedAisles.length)) * 100))}
+          onComplete={(answers, newProducts) => {
+            setQuestionnaireAnswers(answers);
+            setQuestionnaireNewProducts(newProducts);
+            if (answers.os_price_tag_ok !== undefined) setPriceTagOk(answers.os_price_tag_ok === 'Yes');
+            if (answers.os_shelf_strip !== undefined) setPosmShelfSticker(answers.os_shelf_strip === 'Yes');
+            if (answers.os_wobblers !== undefined) setPosmWobblers(answers.os_wobblers === 'Yes');
+            applySeamDeduplication();
+            setStep('RESULTS');
+            setResultsAisleView('ALL');
+          }}
+          onBackToCapture={() => setStep('CAPTURE')}
+        />
       )}
 
       {/* ================= STEP 3: RESULTS ================= */}
