@@ -1,20 +1,15 @@
 import React from 'react';
-import { Home, Map as MapIcon, Inbox } from 'lucide-react';
+import { Map as MapIcon, Inbox } from 'lucide-react';
 import { AppTab } from './NavigationShell';
 
 interface PlaceholderTabScreenProps {
-  tab: Extract<AppTab, 'home' | 'map' | 'requests'>;
+  tab: Extract<AppTab, 'map' | 'requests'>;
 }
 
 const TAB_COPY: Record<
-  Extract<AppTab, 'home' | 'map' | 'requests'>,
+  Extract<AppTab, 'map' | 'requests'>,
   { title: string; subtitle: string; icon: React.ReactNode }
 > = {
-  home: {
-    title: 'Home',
-    subtitle: 'Executive workspace reserved for upcoming modules.',
-    icon: <Home size={22} strokeWidth={1.75} />
-  },
   map: {
     title: 'Map',
     subtitle: 'Territory routing view reserved for upcoming release.',

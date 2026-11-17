@@ -16,6 +16,7 @@ import { DashboardScreen } from './components/DashboardScreen';
 import { AddOutletModal } from './components/AddOutletModal';
 import { DesktopSidebar, MobileBottomNav, AppTab } from './components/NavigationShell';
 import { PlaceholderTabScreen } from './components/PlaceholderTabScreen';
+import { HomeAnalyticsScreen } from './components/HomeAnalyticsScreen';
 import { sendAuditToAppsScriptProxy, autoSaveAuditToGoogleSheet } from './services/googleSheetsService';
 import { fetchActivePlanograms, getCachedActivePlanograms } from './services/planogramService';
 import {
@@ -24,6 +25,7 @@ import {
   buildExecutiveOutletsFromLivePjp,
   enrichOutletsWithLivePjpSapCodes
 } from './services/pjpService';
+import { PjpVisitRow } from './data/pjpMasterData';
 
 /**
  * Strip heavy base64 image strings before saving to localStorage to prevent QuotaExceededError.
@@ -97,7 +99,7 @@ export default function App() {
   const [outlets, setOutlets] = useState<Outlet[]>(INITIAL_OUTLETS);
   const [audits, setAudits] = useState<Record<string, CategoryAuditRecord>>({});
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('LOGIN');
-  const [activeTab, setActiveTab] = useState<AppTab>('pjp');
+  const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [isFinishingOutlet, setIsFinishingOutlet] = useState<boolean>(false);
 
   const [selectedOutlet, setSelectedOutlet] = useState<Outlet | null>(() => {
@@ -126,6 +128,9 @@ export default function App() {
   const [liveMasterOutlets, setLiveMasterOutlets] = useState<MasterOutletOption[]>(
     () => getCachedLivePjpData().masterOutlets
   );
+  const [livePjpVisits, setLivePjpVisits] = useState<PjpVisitRow[]>(
+    () => getCachedLivePjpData().visits
+  );
   const [isSyncingMatch, setIsSyncingMatch] = useState<boolean>(false);
 
   const syncPjpAndPlanograms = async (execName?: string, hasSavedRoute: boolean = true) => {
@@ -137,6 +142,7 @@ export default function App() {
       ]);
       if (livePlans.length > 0) setPlanograms(livePlans);
       if (livePjp.masterOutlets.length > 0) setLiveMasterOutlets(livePjp.masterOutlets);
+      if (livePjp.visits.length > 0) setLivePjpVisits(livePjp.visits);
 
       if (!hasSavedRoute && execName) {
         setOutlets(buildExecutiveOutletsFromLivePjp(execName, livePjp));
@@ -212,8 +218,8 @@ export default function App() {
     setSelectedOutlet(null);
     setSelectedCategory(null);
     setIsFinishingOutlet(false);
-    setActiveTab('pjp');
-    setCurrentScreen('PJP');
+    setActiveTab('home');
+    setCurrentScreen('DASHBOARD');
 
     syncPjpAndPlanograms(userProfile.name, hasSavedOutlets);
   };
@@ -519,7 +525,21 @@ export default function App() {
 
           {isAuthenticated && currentScreen !== 'CAMERA_WORKFLOW' && currentScreen !== 'OUTLET_OVERVIEW' && (
             <>
-              {(activeTab === 'home' || activeTab === 'map' || activeTab === 'requests') && (
+              {activeTab === 'home' && (
+                <HomeAnalyticsScreen
+                  executive={user}
+                  outlets={outlets}
+                  masterOutlets={liveMasterOutlets}
+                  pjpVisits={livePjpVisits}
+                  audits={audits}
+                  planograms={planograms}
+                  isSyncingPjp={isSyncingMatch}
+                  onSyncPjp={() => syncPjpAndPlanograms(user?.name, true)}
+                  onNavigateToPendingPjp={navigateToPendingPjp}
+                />
+              )}
+
+              {(activeTab === 'map' || activeTab === 'requests') && (
                 <PlaceholderTabScreen tab={activeTab} />
               )}
 
