@@ -3,7 +3,7 @@ import {
   CategoryAuditRecord,
   CategoryType
 } from '../types';
-import { CATEGORIES, MasterOutletOption } from '../constants';
+import { CATEGORIES } from '../constants';
 import { PjpVisitRow } from '../data/pjpMasterData';
 
 export type CategoryFilter = 'All' | CategoryType;
@@ -43,7 +43,7 @@ export interface MasterOutletMetrics {
   shelfPhotoUrl?: string;
 }
 
-export interface CustomerMasterAccountGroup {
+export interface ExecutiveAccountGroup {
   account: string;
   outlets: MasterOutletMetrics[];
 }
@@ -240,7 +240,7 @@ export function buildExecutivePjpScheduleMeta(
     };
   }
 
-  // Fallback for supervisor / custom executive with Master Outlets but 0 PJP sheet rows (e.g. Safwan Asif)
+  // Fallback for supervisor / executive with 0 PJP sheet rows (e.g. Safwan Asif) using active route outlets
   const cutoffDay = 16;
   const fallbackPool =
     execOutlets.length > 0
@@ -292,15 +292,14 @@ export function buildExecutivePjpScheduleMeta(
   };
 }
 
-export function buildCustomerMasterAnalytics(
+export function buildExecutivePjpAnalytics(
   executiveName: string,
-  masterOutlets: MasterOutletOption[],
   routeOutlets: Outlet[],
   pjpVisits: PjpVisitRow[],
   audits: Record<string, CategoryAuditRecord>,
   periodScale: number
 ): {
-  accounts: CustomerMasterAccountGroup[];
+  accounts: ExecutiveAccountGroup[];
   allOutlets: MasterOutletMetrics[];
   competitorPromos: CompetitorPromoSpot[];
   scheduleMeta: ExecutivePjpCalendarMeta;
@@ -493,26 +492,7 @@ export function buildCustomerMasterAnalytics(
     });
   };
 
-  // 1. Filter Customer Master outlets strictly assigned to the signed-in executive
-  const execMasterOutlets = cleanExec
-    ? masterOutlets.filter(
-        (m) => (m.executive || '').trim().toLowerCase() === cleanExec
-      )
-    : masterOutlets;
-
-  const masterSource = execMasterOutlets.length > 0 ? execMasterOutlets : masterOutlets;
-  masterSource.forEach((m) => {
-    addOrMergeOutlet(
-      m.account,
-      m.id,
-      m.rawName || m.name,
-      m.branch || m.rawName || m.name,
-      m.code,
-      false
-    );
-  });
-
-  // 2. Also ensure every scheduled PJP outlet for this executive is included
+  // 1. Populate accounts & outlets strictly from executive's assigned PJP schedule (unsynced from MT Customer Master)
   const execPjpVisits = cleanExec
     ? (pjpVisits || []).filter(
         (v) => (v.executive || '').trim().toLowerCase() === cleanExec
@@ -529,12 +509,12 @@ export function buildCustomerMasterAnalytics(
     );
   });
 
-  // 3. Overlay executive's active today route outlets + live audits
+  // 2. Overlay executive's active today route outlets + live audits
   routeOutlets.forEach((o) => {
     addOrMergeOutlet(o.account, o.id, o.name, o.branch, o.code, true, o);
   });
 
-  const accounts: CustomerMasterAccountGroup[] = Array.from(byAccountMap.entries())
+  const accounts: ExecutiveAccountGroup[] = Array.from(byAccountMap.entries())
     .map(([account, map]) => {
       const outletsList = Array.from(map.values()).sort((a, b) => {
         if (a.isRouteOutlet !== b.isRouteOutlet) return a.isRouteOutlet ? -1 : 1;

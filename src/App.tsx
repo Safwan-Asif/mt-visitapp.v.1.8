@@ -529,7 +529,6 @@ export default function App() {
                 <HomeAnalyticsScreen
                   executive={user}
                   outlets={outlets}
-                  masterOutlets={liveMasterOutlets}
                   pjpVisits={livePjpVisits}
                   audits={audits}
                   planograms={planograms}

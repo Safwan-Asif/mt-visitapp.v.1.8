@@ -17,11 +17,11 @@ import {
   PlanogramRecord,
   UserProfile
 } from '../types';
-import { CATEGORIES, MasterOutletOption } from '../constants';
+import { CATEGORIES } from '../constants';
 import { PjpVisitRow } from '../data/pjpMasterData';
 import { useTheme } from '../ThemeContext';
 import {
-  buildCustomerMasterAnalytics,
+  buildExecutivePjpAnalytics,
   CategoryFilter,
   normalizeAccountLabel
 } from '../utils/homeAnalyticsData';
@@ -37,7 +37,6 @@ import {
 interface HomeAnalyticsScreenProps {
   executive: UserProfile | null;
   outlets: Outlet[];
-  masterOutlets: MasterOutletOption[];
   pjpVisits: PjpVisitRow[];
   audits: Record<string, CategoryAuditRecord>;
   planograms: PlanogramRecord[];
@@ -130,7 +129,6 @@ function getWeekdayShort(year: number, month: number, day: number): string {
 export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   executive,
   outlets,
-  masterOutlets,
   pjpVisits,
   audits,
   planograms,
@@ -172,21 +170,20 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   const [selectedPromoId, setSelectedPromoId] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(17);
 
-  // Build Customer Master + PJP Schedule scoped to signed-in Executive
-  const baseMasterData = useMemo(
+  // Build PJP Schedule + Account Analytics scoped to signed-in Executive (unsynced from MT Customer Master)
+  const basePjpData = useMemo(
     () =>
-      buildCustomerMasterAnalytics(
+      buildExecutivePjpAnalytics(
         executive?.name || '',
-        masterOutlets,
         outlets,
         pjpVisits,
         audits,
         1
       ),
-    [executive?.name, masterOutlets, outlets, pjpVisits, audits]
+    [executive?.name, outlets, pjpVisits, audits]
   );
 
-  const scheduleMeta = baseMasterData.scheduleMeta;
+  const scheduleMeta = basePjpData.scheduleMeta;
 
   const defaultFromDate = useMemo<CalendarDateValue>(
     () => ({ year: scheduleMeta.year, month: scheduleMeta.month, day: 1 }),
@@ -266,16 +263,16 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     : totalSelectedDaysCount;
   const periodScale = sliceDaysCount / Math.max(1, scheduleMeta.cutoffDay);
 
-  const masterData = baseMasterData;
+  const pjpData = basePjpData;
 
   // Cascading Outlets list dependent on selected Account (0B.4)
   const availableOutletsForDropdown = useMemo(() => {
     if (accountFilter === 'All') {
-      return masterData.allOutlets;
+      return pjpData.allOutlets;
     }
-    const foundGroup = masterData.accounts.find((g) => g.account === accountFilter);
+    const foundGroup = pjpData.accounts.find((g) => g.account === accountFilter);
     return foundGroup ? foundGroup.outlets : [];
-  }, [masterData, accountFilter]);
+  }, [pjpData, accountFilter]);
 
   const handleAccountDropdownChange = (nextAccount: string) => {
     setAccountFilter(nextAccount);
@@ -283,7 +280,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     if (nextAccount === 'All') {
       return;
     }
-    const stillValid = masterData.accounts
+    const stillValid = pjpData.accounts
       .find((g) => g.account === nextAccount)
       ?.outlets.some((o) => o.id === outletFilter);
     if (!stillValid) {
@@ -293,7 +290,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
 
   // Filtered Outlets according to Account + Outlet cascading filters
   const scopedOutlets = useMemo(() => {
-    let list = masterData.allOutlets;
+    let list = pjpData.allOutlets;
     if (accountFilter !== 'All') {
       list = list.filter((o) => o.account === accountFilter);
     }
@@ -301,16 +298,16 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       list = list.filter((o) => o.id === outletFilter);
     }
     return list;
-  }, [masterData, accountFilter, outletFilter]);
+  }, [pjpData, accountFilter, outletFilter]);
 
   // --- Global Computed Analytics ---
   const activeCategories = categoryFilter === 'All' ? CATEGORIES : [categoryFilter];
 
   const metrics = useMemo(() => {
-    const activeSet = scopedOutlets.length > 0 ? scopedOutlets : masterData.allOutlets;
+    const activeSet = scopedOutlets.length > 0 ? scopedOutlets : pjpData.allOutlets;
 
-    // 1. Account aggregation (preserving Customer Master hierarchy, filtered when outlet selected)
-    const displayAccountGroups = masterData.accounts
+    // 1. Account aggregation from executive PJP & active route outlets, filtered when outlet selected
+    const displayAccountGroups = pjpData.accounts
       .filter((g) => accountFilter === 'All' || g.account === accountFilter)
       .map((g) => {
         const childList = g.outlets
@@ -391,7 +388,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     // PJP % synced directly to signed-in executive's PJP schedule & route progress
     const targetOutletObj =
       outletFilter !== 'All'
-        ? masterData.allOutlets.find((o) => o.id === outletFilter)
+        ? pjpData.allOutlets.find((o) => o.id === outletFilter)
         : null;
     let pjpPlannedTotal = 0;
     let pjpCompletedTotal = 0;
@@ -436,7 +433,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     // 3. Sales Gauge & Cumulative Curve scaled to active slice
     const scopeRatio = Math.max(
       0.08,
-      Math.min(1, totalMton / Math.max(1, masterData.allOutlets.length * 10.5 * periodScale))
+      Math.min(1, totalMton / Math.max(1, pjpData.allOutlets.length * 10.5 * periodScale))
     );
     const targetScale = isInsidePjpMonth
       ? fromDate.day === 1 && toDate.day >= scheduleMeta.cutoffDay - 1
@@ -708,11 +705,11 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
           });
 
     // Execution: Competitor Promos Filtered by Category, Account & Outlet
-    const filteredCompetitorPromos = masterData.competitorPromos.filter((cp) => {
+    const filteredCompetitorPromos = pjpData.competitorPromos.filter((cp) => {
       if (categoryFilter !== 'All' && cp.category !== categoryFilter) return false;
       if (accountFilter !== 'All' && cp.account !== accountFilter) return false;
       if (outletFilter !== 'All') {
-        const selectedOutletObj = masterData.allOutlets.find((o) => o.id === outletFilter);
+        const selectedOutletObj = pjpData.allOutlets.find((o) => o.id === outletFilter);
         if (selectedOutletObj) {
           return (
             cp.outletName.toLowerCase().includes(selectedOutletObj.branch.toLowerCase()) ||
@@ -782,7 +779,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     };
   }, [
     scopedOutlets,
-    masterData,
+    pjpData,
     scheduleMeta,
     accountFilter,
     outletFilter,
@@ -804,7 +801,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       const acct = normalizeAccountLabel(o.account, o.name);
       if (accountFilter !== 'All' && acct !== accountFilter) return false;
       if (outletFilter !== 'All') {
-        const targetOutlet = masterData.allOutlets.find((m) => m.id === outletFilter);
+        const targetOutlet = pjpData.allOutlets.find((m) => m.id === outletFilter);
         if (targetOutlet) {
           const matchesId = o.id === targetOutlet.id;
           const matchesCode = Boolean(o.code && targetOutlet.code && o.code === targetOutlet.code);
@@ -873,7 +870,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       avgCompanyPct: Math.round(totalCompanyPct / matchingAudits.length),
       activePlanogramTemplates: planograms.length
     };
-  }, [outlets, audits, planograms, accountFilter, outletFilter, masterData.allOutlets, activeCategories]);
+  }, [outlets, audits, planograms, accountFilter, outletFilter, pjpData.allOutlets, activeCategories]);
 
   // --- Productivity & Workhours Schedule Sync from Executive PJP ---
   const scheduleMetrics = useMemo(() => {
@@ -976,7 +973,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
 
   const selectedOosOutletDetail = useMemo(() => {
     if (!selectedOosCell) return null;
-    const found = masterData.allOutlets.find((o) => o.id === selectedOosCell.outletId);
+    const found = pjpData.allOutlets.find((o) => o.id === selectedOosCell.outletId);
     if (!found) return null;
     return {
       outletName: found.name,
@@ -985,7 +982,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       lastVisit: found.lastVisit,
       photoUrl: found.shelfPhotoUrl || null
     };
-  }, [selectedOosCell, masterData.allOutlets]);
+  }, [selectedOosCell, pjpData.allOutlets]);
 
   const hasFilters =
     compareCalendarDates(fromDate, defaultFromDate) !== 0 ||
@@ -1105,9 +1102,9 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 className="min-h-[44px] px-3 rounded-xl glass-subtle text-xs sm:text-[13px] font-semibold text-[var(--text-primary)] bg-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] cursor-pointer"
               >
                 <option value="All" className="text-slate-900">
-                  All accounts ({masterData.accounts.length})
+                  All accounts ({pjpData.accounts.length})
                 </option>
-                {masterData.accounts.map((grp) => (
+                {pjpData.accounts.map((grp) => (
                   <option
                     key={grp.account}
                     value={grp.account}
