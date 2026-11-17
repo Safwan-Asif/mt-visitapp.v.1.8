@@ -1,11 +1,22 @@
 import React, { useState } from 'react';
-import { 
-  ArrowLeft, BarChart3, Clock, CheckCircle2, 
-  RotateCcw, Send, FileSpreadsheet, Loader2, ExternalLink,
-  Folder, ShieldCheck, Copy, Check, Code, Zap
+import {
+  ArrowLeft,
+  BarChart3,
+  Clock,
+  CheckCircle2,
+  RotateCcw,
+  Send,
+  FileSpreadsheet,
+  Loader2,
+  ExternalLink,
+  Folder,
+  ShieldCheck,
+  Copy,
+  Check,
+  Code,
+  Zap
 } from 'lucide-react';
 import { Outlet, CategoryAuditRecord } from '../types';
-import { DEFAULT_N8N_WEBHOOK_URL } from '../services/n8nService';
 import { useTheme } from '../ThemeContext';
 import {
   autoSaveAuditToGoogleSheet,
@@ -34,7 +45,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [sheetUrl] = useState<string>(TARGET_SPREADSHEET_URL);
 
-  // Apps Script Code Modal state
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
 
@@ -59,7 +69,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       let count = 0;
       for (const audit of auditList) {
         const outlet = outlets.find((o) => o.id === audit.outletId);
-        setExportStatus(`Exporting audit ${count + 1}/${auditList.length}: ${outlet?.name || 'Outlet'} (${audit.category})...`);
+        setExportStatus(
+          `Exporting audit ${count + 1}/${auditList.length}: ${outlet?.name || 'Outlet'} (${audit.category})...`
+        );
 
         const photoToUpload = audit.annotatedPhotoUrl || audit.photoUrl;
 
@@ -105,18 +117,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const totalAuditsList = Object.values(audits);
   const totalAuditsCount = totalAuditsList.length;
 
-  // Average time
   const avgSeconds =
     totalAuditsCount > 0
       ? Math.round(
           totalAuditsList.reduce((acc, curr) => acc + curr.auditDurationSeconds, 0) /
             totalAuditsCount
         )
-      : 102; // default 1m 42s
+      : 102;
 
   const avgMinutesStr = `${Math.floor(avgSeconds / 60)}m ${avgSeconds % 60}s`;
 
-  // Average Primary (YARA) Share of Shelf
   const avgYaraSos =
     totalAuditsCount > 0
       ? Math.round(
@@ -124,7 +134,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         )
       : 33;
 
-  // Compliance Rates
   const priceTagCompliance =
     totalAuditsCount > 0
       ? Math.round(
@@ -140,368 +149,276 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       : 92;
 
   return (
-    <div className="flex-1 flex flex-col justify-between p-3.5 max-w-md mx-auto w-full h-full overflow-hidden select-none relative">
-      {/* Top Header */}
+    <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full h-full overflow-hidden px-3.5 pt-3.5 md:px-8 md:pt-6 select-none animate-fade-in">
+      {/* Header Banner */}
       <div className="space-y-3 shrink-0">
-        <button
-          onClick={onBack}
-          className={`flex items-center gap-1.5 text-xs font-semibold py-1 group transition-colors cursor-pointer ${
-            isDark ? 'text-emerald-300/80 hover:text-white' : 'text-emerald-900/80 hover:text-emerald-950'
-          }`}
-        >
-          <ArrowLeft size={15} className="group-hover:-translate-x-0.5 transition-transform" />
-          <span>Back to Route PJP</span>
-        </button>
-
-        <div className={`backdrop-blur-xl border p-4 rounded-3xl shadow-xl flex items-center justify-between transition-colors ${
-          isDark
-            ? 'bg-[#132219]/80 border-emerald-900/50 shadow-black/30'
-            : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-        }`}>
-          <div>
-            <span className={`text-[10px] font-black uppercase tracking-widest ${
-              isDark ? 'text-emerald-400' : 'text-emerald-800'
-            }`}>
-              Performance Analytics
-            </span>
-            <h2 className={`text-base font-black ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
+        <div className="glass-panel rounded-3xl p-4 md:p-5 flex items-center justify-between gap-4">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--accent-primary)]">
+              <span>Today &middot; Performance Analytics</span>
+            </div>
+            <h2 className="text-lg md:text-xl font-extrabold tracking-tight text-[var(--text-primary)]">
               Executive Daily KPI
             </h2>
-            <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              Qatar Modern Trade Territory South
+            <p className="text-xs text-[var(--text-secondary)]">
+              Qatar Modern Trade Territory
             </p>
           </div>
-          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center border ${
-            isDark
-              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}>
-            <BarChart3 size={20} />
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onBack}
+              className="min-h-[40px] px-3 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-primary)] hover:bg-white/80 dark:hover:bg-white/10 inline-flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+            >
+              <ArrowLeft size={14} />
+              <span className="hidden sm:inline">Route PJP</span>
+            </button>
+            <div
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                isDark
+                  ? 'bg-[#10B981]/15 text-[#34D399]'
+                  : 'bg-[#084C41]/10 text-[#084C41]'
+              }`}
+            >
+              <BarChart3 size={20} />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* KPI Cards Strip */}
-      <div className="flex-1 overflow-y-auto space-y-3 py-2.5 pr-0.5">
-        
-        {/* Google Workspace Live Auto-Sync Status & Resource Quick Links */}
-        <div className={`backdrop-blur-xl border rounded-2xl p-3.5 space-y-2.5 transition-colors ${
-          isDark
-            ? 'bg-[#132219]/90 border-emerald-800/60 shadow-lg'
-            : 'bg-white border-emerald-950/10 shadow-xs'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap size={16} className="text-emerald-400" />
-              <h3 className={`text-xs font-black uppercase tracking-wider ${
-                isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-              }`}>
-                Google Sheet &amp; Drive Auto-Sync
-              </h3>
-            </div>
-            <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-              <ShieldCheck size={11} className="text-emerald-400" />
-              Zero Sign-In Active
-            </span>
-          </div>
-
-          <p className="text-[10px] text-slate-400 leading-tight">
-            All audit logs, shelf metrics, and annotated images are silently saved in real-time to your central Google Cloud destination without requiring field reps to log in.
-          </p>
-
-          <div className="space-y-1.5 text-[10px]">
-            <a
-              href={TARGET_SPREADSHEET_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`p-2 rounded-xl border flex items-center justify-between transition-colors ${
-                isDark
-                  ? 'bg-[#0B120E] border-emerald-900/50 hover:border-emerald-500/60 text-emerald-300'
-                  : 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-400 text-emerald-900'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <FileSpreadsheet size={13} className="text-emerald-400 shrink-0" />
-                <span className="truncate font-semibold">QFI Modern Trade Audit Sheet</span>
-              </div>
-              <ExternalLink size={12} className="shrink-0" />
-            </a>
-
-            <a
-              href={TARGET_DRIVE_FOLDER_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`p-2 rounded-xl border flex items-center justify-between transition-colors ${
-                isDark
-                  ? 'bg-[#0B120E] border-emerald-900/50 hover:border-emerald-500/60 text-emerald-300'
-                  : 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-400 text-emerald-900'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Folder size={13} className="text-emerald-400 shrink-0" />
-                <span className="truncate font-semibold">Google Drive Annotated Photos Folder</span>
-              </div>
-              <ExternalLink size={12} className="shrink-0" />
-            </a>
-
-            <a
-              href={PJP_SPREADSHEET_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`p-2 rounded-xl border flex items-center justify-between transition-colors ${
-                isDark
-                  ? 'bg-[#0B120E] border-emerald-900/50 hover:border-emerald-500/60 text-emerald-300'
-                  : 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-400 text-emerald-900'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <FileSpreadsheet size={13} className="text-teal-400 shrink-0" />
-                <span className="truncate font-semibold">Master PJP Journey Schedule Sheet</span>
-              </div>
-              <ExternalLink size={12} className="shrink-0" />
-            </a>
-          </div>
-
-          <div className="pt-0.5">
-            <button
-              type="button"
-              onClick={() => setShowScriptModal(true)}
-              className="w-full text-[10px] text-emerald-400 font-bold hover:underline flex items-center justify-center gap-1 py-1"
-            >
-              <Code size={12} />
-              <span>Get 1-Click Google Apps Script Setup Code</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          {/* Card 1: Route Coverage */}
-          <div className={`backdrop-blur-xl border p-3.5 rounded-2xl transition-colors ${
-            isDark
-              ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-              : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-          }`}>
-            <span className={`text-[10px] font-bold block uppercase tracking-wider ${
-              isDark ? 'text-emerald-300/70' : 'text-slate-500'
-            }`}>
+      {/* Main Scrollable Grid Body */}
+      <div className="flex-1 overflow-y-auto pt-3 pb-24 md:pb-8 space-y-3.5 pr-0.5">
+        {/* 4 KPI Summary Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="glass-panel rounded-2xl p-4 space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
               Route Coverage
             </span>
-            <div className="flex items-baseline gap-1 mt-1">
-              <span className={`text-xl font-black tabular-nums ${
-                isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-              }`}>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-extrabold tabular-nums text-[var(--accent-primary)]">
                 {completedOutlets}
               </span>
-              <span className="text-xs text-slate-500 font-semibold">/ {totalOutlets} Stores</span>
+              <span className="text-xs font-semibold text-[var(--text-secondary)] tabular-nums">
+                / {totalOutlets} Stores
+              </span>
             </div>
-            <p className="text-[9px] text-emerald-500 font-bold mt-1 flex items-center gap-0.5">
-              <CheckCircle2 size={10} /> On Target Track
+            <p className="text-[11px] text-[var(--accent-primary)] font-semibold flex items-center gap-1 pt-0.5">
+              <CheckCircle2 size={12} /> On Target Track
             </p>
           </div>
 
-          {/* Card 2: Average Audit Time */}
-          <div className={`backdrop-blur-xl border p-3.5 rounded-2xl transition-colors ${
-            isDark
-              ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-              : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-          }`}>
-            <span className={`text-[10px] font-bold block uppercase tracking-wider ${
-              isDark ? 'text-emerald-300/70' : 'text-slate-500'
-            }`}>
+          <div className="glass-panel rounded-2xl p-4 space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
               Avg Audit Time
             </span>
-            <div className="flex items-baseline gap-1 mt-1">
-              <span className={`text-xl font-black tabular-nums ${
-                isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-              }`}>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-extrabold tabular-nums text-[var(--accent-primary)]">
                 {avgMinutesStr}
               </span>
             </div>
-            <p className="text-[9px] text-emerald-500 font-bold mt-1 flex items-center gap-0.5">
-              <Clock size={10} /> Sub-2 Min Goal Met
+            <p className="text-[11px] text-[var(--accent-primary)] font-semibold flex items-center gap-1 pt-0.5">
+              <Clock size={12} /> Sub-2 Min Goal
             </p>
           </div>
 
-          {/* Card 3: Primary Brand Share */}
-          <div className={`backdrop-blur-xl border p-3.5 rounded-2xl transition-colors ${
-            isDark
-              ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-              : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-          }`}>
-            <span className={`text-[10px] font-bold block uppercase tracking-wider ${
-              isDark ? 'text-emerald-300/70' : 'text-slate-500'
-            }`}>
+          <div className="glass-panel rounded-2xl p-4 space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
               YARA Shelf Share
             </span>
-            <div className="flex items-baseline gap-1 mt-1">
-              <span className={`text-xl font-black tabular-nums ${
-                isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-              }`}>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-extrabold tabular-nums text-[var(--accent-primary)]">
                 {avgYaraSos}%
               </span>
-              <span className="text-xs text-slate-500 font-bold">SOS</span>
+              <span className="text-xs font-bold text-[var(--text-secondary)]">SOS</span>
             </div>
-            <p className="text-[9px] text-slate-400 mt-1">Gondola Front Facings</p>
+            <p className="text-[11px] text-[var(--text-secondary)] pt-0.5">
+              Gondola Front Facings
+            </p>
           </div>
 
-          {/* Card 4: POSM Compliance */}
-          <div className={`backdrop-blur-xl border p-3.5 rounded-2xl transition-colors ${
-            isDark
-              ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-              : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-          }`}>
-            <span className={`text-[10px] font-bold block uppercase tracking-wider ${
-              isDark ? 'text-emerald-300/70' : 'text-slate-500'
-            }`}>
+          <div className="glass-panel rounded-2xl p-4 space-y-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
               POSM Compliance
             </span>
-            <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-xl font-black text-amber-500 tabular-nums">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
                 {posmCompliance}%
               </span>
             </div>
-            <p className="text-[9px] text-slate-400 mt-1">Price Tag: {priceTagCompliance}%</p>
+            <p className="text-[11px] text-[var(--text-secondary)] tabular-nums pt-0.5">
+              Price Tag: {priceTagCompliance}%
+            </p>
           </div>
         </div>
 
-        {/* Analysis Webhook Integration Card */}
-        <div className={`backdrop-blur-xl border rounded-2xl p-3.5 space-y-2 transition-colors ${
-          isDark
-            ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-            : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Send size={13} className="text-emerald-500" />
-              <h3 className={`text-xs font-black uppercase tracking-wider ${
-                isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-              }`}>
-                Analysis Pipeline
-              </h3>
-            </div>
-            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
-              isDark
-                ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-                : 'text-emerald-800 bg-emerald-50 border-emerald-200'
-            }`}>
-              Multipart Binary JPEG
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-[10px]">
-            <div className={`p-2 rounded-xl border ${
-              isDark ? 'bg-[#0B120E] border-emerald-900/40' : 'bg-emerald-50/40 border-emerald-200'
-            }`}>
-              <span className="text-slate-500 block text-[9px] uppercase font-bold">Default Endpoint</span>
-              <span className={`font-mono text-[9px] truncate block font-bold ${
-                isDark ? 'text-emerald-400' : 'text-emerald-800'
-              }`} title="Analysis API Endpoint">
-                Analysis API Endpoint
+        {/* Two-Column Operations Section on Desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+          {/* Google Workspace Live Auto-Sync */}
+          <div className="glass-panel rounded-3xl p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Zap size={16} className="text-[var(--accent-primary)]" />
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
+                  Google Sheet &amp; Drive Auto-Sync
+                </h3>
+              </div>
+              <span className="text-[11px] font-semibold text-[var(--accent-primary)] flex items-center gap-1 shrink-0">
+                <ShieldCheck size={13} /> Zero Sign-In Active
               </span>
             </div>
-            <div className={`p-2 rounded-xl border ${
-              isDark ? 'bg-[#0B120E] border-emerald-900/40' : 'bg-emerald-50/40 border-emerald-200'
-            }`}>
-              <span className="text-slate-500 block text-[9px] uppercase font-bold">Fault Tolerance</span>
-              <span className="text-amber-500 font-bold block">Auto CV Fallback Active</span>
-            </div>
-          </div>
-        </div>
 
-        {/* Recent Category Audit Logs */}
-        <div className={`backdrop-blur-xl border rounded-2xl p-3.5 space-y-2 transition-colors ${
-          isDark
-            ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-            : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-        }`}>
-          <div className="flex items-center justify-between">
-            <h3 className={`text-xs font-black uppercase tracking-wider ${
-              isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-            }`}>
-              Completed Audits Log
-            </h3>
-            <span className={`text-[10px] font-bold tabular-nums ${
-              isDark ? 'text-emerald-400' : 'text-emerald-800'
-            }`}>
-              {totalAuditsCount} Logged
-            </span>
-          </div>
-
-          {totalAuditsCount === 0 ? (
-            <p className="text-[11px] text-slate-500 py-3 text-center">
-              Complete store category audits to view instant log history.
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              Audit logs, shelf metrics, and annotated images sync silently to Google Workspace without field login.
             </p>
-          ) : (
-            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-              {totalAuditsList.map((audit, idx) => {
-                const outlet = outlets.find((o) => o.id === audit.outletId);
-                const isRemote = audit.n8nStatus?.source === 'n8n_remote';
 
-                return (
-                  <div
-                    key={`${audit.outletId}_${audit.category}_${idx}`}
-                    className={`border rounded-xl px-2.5 py-1.5 flex items-center justify-between text-xs transition-colors ${
-                      isDark
-                        ? 'bg-[#0B120E] border-emerald-900/40'
-                        : 'bg-emerald-50/30 border-emerald-200'
-                    }`}
-                  >
-                    <div>
-                      <span className={`font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                        {outlet?.name || 'Store'} &bull;{' '}
-                        <span className="text-emerald-500">{audit.category}</span>
-                      </span>
-                      <p className="text-[10px] text-slate-500">
-                        {audit.timestamp} &bull; {audit.auditDurationSeconds}s &bull; {audit.totalFacings} Facings
-                      </p>
-                      {audit.latitude && audit.longitude && (
-                        <p className="text-[9px] text-emerald-400 font-mono flex items-center gap-1">
-                          <span>GPS: {audit.latitude.toFixed(4)}°N, {audit.longitude.toFixed(4)}°E</span>
-                          <span className="text-[8px] text-slate-400">({audit.locationSource === 'device_gps' ? 'Live GPS' : 'Store Mapped'})</span>
-                        </p>
-                      )}
-                      {audit.discrepancyLog && audit.discrepancyLog !== 'No manual overrides (AI counts accepted)' && (
-                        <p className="text-[9px] text-amber-500 font-medium truncate max-w-[220px]">
-                          Overrides: {audit.discrepancyLog}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${
-                        isRemote 
-                          ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' 
-                          : 'text-amber-500 bg-amber-500/10 border-amber-500/30'
-                      }`}>
-                        {isRemote ? 'Analysis Synced' : 'Offline Mode'}
-                      </span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
-                        isDark 
-                          ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-                          : 'text-emerald-800 bg-emerald-100 border-emerald-300'
-                      }`}>
-                        ✓ Done
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="space-y-2 text-xs">
+              <a
+                href={TARGET_SPREADSHEET_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2.5 rounded-2xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between transition-colors text-[var(--text-primary)]"
+              >
+                <span className="flex items-center gap-2 truncate font-semibold">
+                  <FileSpreadsheet size={14} className="text-[var(--accent-primary)] shrink-0" />
+                  <span className="truncate">QFI Modern Trade Audit Sheet</span>
+                </span>
+                <ExternalLink size={13} className="text-[var(--text-muted)] shrink-0" />
+              </a>
+
+              <a
+                href={TARGET_DRIVE_FOLDER_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2.5 rounded-2xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between transition-colors text-[var(--text-primary)]"
+              >
+                <span className="flex items-center gap-2 truncate font-semibold">
+                  <Folder size={14} className="text-[var(--accent-primary)] shrink-0" />
+                  <span className="truncate">Google Drive Annotated Photos Folder</span>
+                </span>
+                <ExternalLink size={13} className="text-[var(--text-muted)] shrink-0" />
+              </a>
+
+              <a
+                href={PJP_SPREADSHEET_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2.5 rounded-2xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between transition-colors text-[var(--text-primary)]"
+              >
+                <span className="flex items-center gap-2 truncate font-semibold">
+                  <FileSpreadsheet size={14} className="text-teal-600 dark:text-teal-400 shrink-0" />
+                  <span className="truncate">Master PJP Journey Schedule Sheet</span>
+                </span>
+                <ExternalLink size={13} className="text-[var(--text-muted)] shrink-0" />
+              </a>
             </div>
-          )}
+
+            <button
+              type="button"
+              onClick={() => setShowScriptModal(true)}
+              className="w-full min-h-[36px] text-xs text-[var(--accent-primary)] font-bold hover:underline flex items-center justify-center gap-1.5 pt-1 cursor-pointer"
+            >
+              <Code size={13} />
+              <span>Get 1-Click Google Apps Script Setup Code</span>
+            </button>
+          </div>
+
+          {/* Completed Category Audit Logs + Pipeline + Batch Export */}
+          <div className="space-y-3.5 flex flex-col">
+            <div className="glass-panel rounded-3xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Send size={14} className="text-[var(--accent-primary)]" />
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
+                    Analysis Pipeline
+                  </h3>
+                </div>
+                <span className="text-[11px] font-semibold text-[var(--accent-primary)]">
+                  Multipart JPEG
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="p-2.5 rounded-2xl glass-subtle">
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">
+                    Endpoint
+                  </span>
+                  <span className="font-mono text-[11px] font-bold text-[var(--accent-primary)] truncate block">
+                    Analysis API Proxy
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-2xl glass-subtle">
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">
+                    Fault Tolerance
+                  </span>
+                  <span className="text-amber-600 dark:text-amber-400 text-[11px] font-bold block">
+                    Auto CV Fallback
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Completed Audits Log */}
+            <div className="glass-panel rounded-3xl p-4 space-y-2.5 flex-1">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
+                  Completed Audits Log
+                </h3>
+                <span className="text-xs font-bold tabular-nums text-[var(--accent-primary)]">
+                  {totalAuditsCount} Logged
+                </span>
+              </div>
+
+              {totalAuditsCount === 0 ? (
+                <p className="text-xs text-[var(--text-secondary)] py-4 text-center">
+                  Complete store category audits to view instant log history.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {totalAuditsList.map((audit, idx) => {
+                    const outlet = outlets.find((o) => o.id === audit.outletId);
+                    const isRemote = audit.n8nStatus?.source === 'n8n_remote';
+
+                    return (
+                      <div
+                        key={`${audit.outletId}_${audit.category}_${idx}`}
+                        className="glass-subtle rounded-2xl px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-[var(--text-primary)] truncate">
+                            {outlet?.name || 'Store'} &middot;{' '}
+                            <span className="text-[var(--accent-primary)]">{audit.category}</span>
+                          </p>
+                          <p className="text-[11px] text-[var(--text-secondary)] tabular-nums truncate">
+                            {audit.timestamp} &middot; {audit.auditDurationSeconds}s &middot;{' '}
+                            {audit.totalFacings} Facings
+                          </p>
+                          {audit.latitude && audit.longitude && (
+                            <p className="text-[10px] text-[var(--accent-primary)] font-mono tabular-nums">
+                              GPS: {audit.latitude.toFixed(4)}°N, {audit.longitude.toFixed(4)}°E (
+                              {audit.locationSource === 'device_gps' ? 'Live GPS' : 'Store Mapped'})
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[11px] font-bold text-[var(--accent-primary)] shrink-0">
+                          {isRemote ? 'Synced' : 'Offline'} &middot; Done
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Google Sheets Master Export Card */}
-        <div className={`backdrop-blur-xl border rounded-2xl p-3.5 space-y-2 transition-colors ${
-          isDark
-            ? 'bg-[#132219]/70 border-emerald-900/40 shadow-sm'
-            : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-        }`}>
-          <div className="flex items-center justify-between">
+        {/* Batch Export & Reset */}
+        <div className="glass-panel rounded-3xl p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <FileSpreadsheet size={16} className="text-emerald-400" />
-              <h3 className={`text-xs font-black uppercase tracking-wider ${
-                isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-              }`}>
-                Google Sheets Export
+              <FileSpreadsheet size={16} className="text-[var(--accent-primary)]" />
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
+                Google Sheets Master Export
               </h3>
             </div>
             {sheetUrl && (
@@ -509,99 +426,90 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 href={sheetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[10px] font-bold text-emerald-400 hover:underline flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/30"
+                className="text-xs font-bold text-[var(--accent-primary)] hover:underline inline-flex items-center gap-1"
               >
                 <span>View Sheet</span>
-                <ExternalLink size={10} />
+                <ExternalLink size={12} />
               </a>
             )}
           </div>
 
-          <p className="text-[10px] text-slate-400 leading-tight">
-            Saves all store audit logs &amp; annotated photos into a single Master Google Sheet row-by-row with embedded picture formulas.
-          </p>
-
           {exportStatus && (
-            <div className={`text-[10px] p-2 rounded-xl font-medium ${
-              exportStatus.startsWith('✓')
-                ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                : exportStatus.includes('Error') || exportStatus.includes('failed')
-                ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300'
-                : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-200'
-            }`}>
+            <div className="glass-subtle rounded-2xl p-2.5 text-xs font-medium text-[var(--text-primary)]">
               {exportStatus}
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={handleExportAllToGoogleSheets}
-            disabled={isExportingAll}
-            className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all active:scale-[0.99] disabled:opacity-50"
-          >
-            {isExportingAll ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                <span>Exporting All Audits &amp; Photos...</span>
-              </>
-            ) : (
-              <>
-                <FileSpreadsheet size={14} />
-                <span>Export All Audits &amp; Photos to Google Sheet</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={handleExportAllToGoogleSheets}
+              disabled={isExportingAll}
+              className={`min-h-[48px] py-2.5 px-4 font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all active:scale-[0.99] disabled:opacity-50 ${
+                isDark
+                  ? 'bg-[#10B981] text-[#05231C]'
+                  : 'bg-[#084C41] text-white'
+              }`}
+            >
+              {isExportingAll ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  <span>Exporting All Audits…</span>
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet size={15} />
+                  <span>Export All Audits &amp; Photos</span>
+                </>
+              )}
+            </button>
 
-      {/* Reset Data Button for Tester */}
-      <div className={`pt-2 shrink-0 border-t ${
-        isDark ? 'border-emerald-900/40' : 'border-emerald-950/10'
-      }`}>
-        <button
-          onClick={onResetData}
-          className={`w-full py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            isDark
-              ? 'border-emerald-900/50 hover:border-rose-500/40 text-slate-400 hover:text-rose-400 bg-[#132219]/60'
-              : 'border-slate-200 hover:border-rose-400 text-slate-600 hover:text-rose-600 bg-white shadow-xs'
-          }`}
-        >
-          <RotateCcw size={13} />
-          Reset Demo Route &amp; Audits
-        </button>
+            <button
+              type="button"
+              onClick={onResetData}
+              className="min-h-[48px] py-2.5 px-4 rounded-2xl glass-subtle hover:border-rose-500/40 text-xs font-bold text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw size={14} />
+              <span>Reset Demo Route &amp; Audits</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Apps Script Template Code Modal */}
       {showScriptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/70 backdrop-blur-xs">
-          <div className={`w-full max-w-sm rounded-3xl p-4 border space-y-3 max-h-[90vh] flex flex-col ${
-            isDark ? 'bg-[#0B120E] border-emerald-800 text-[#F0FDF4]' : 'bg-white border-slate-300 text-slate-900'
-          }`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+          <div className="w-full max-w-md glass-panel-strong rounded-3xl p-5 space-y-3 max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--accent-primary)] flex items-center gap-1.5">
                 <Code size={14} /> Google Apps Script Setup
               </h3>
               <button
+                type="button"
                 onClick={() => setShowScriptModal(false)}
-                className="text-xs font-bold text-slate-400 hover:text-white"
+                className="w-8 h-8 rounded-xl glass-subtle flex items-center justify-center text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <p className="text-[10px] text-slate-300 leading-normal shrink-0">
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed shrink-0">
               Paste this snippet into your Google Sheet under <strong>Extensions &gt; Apps Script</strong>, then deploy as Web App (Execute as: <em>Me</em>, Access: <em>Anyone</em>).
             </p>
 
-            <div className="flex-1 overflow-y-auto bg-black/60 rounded-xl p-2.5 border border-emerald-900/60 font-mono text-[9px] text-emerald-300 select-all">
-              <pre className="whitespace-pre-wrap leading-tight">{getAppsScriptTemplateCode()}</pre>
+            <div className="flex-1 overflow-y-auto bg-black/80 rounded-2xl p-3 border border-emerald-500/20 font-mono text-[10px] text-emerald-300 select-all">
+              <pre className="whitespace-pre-wrap leading-tight">
+                {getAppsScriptTemplateCode()}
+              </pre>
             </div>
 
             <div className="flex gap-2 shrink-0 pt-1">
               <button
                 type="button"
                 onClick={handleCopyScript}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"
+                className={`flex-1 min-h-[44px] py-2 font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 cursor-pointer ${
+                  isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                }`}
               >
                 {copiedScript ? <Check size={14} /> : <Copy size={14} />}
                 <span>{copiedScript ? 'Copied to Clipboard!' : 'Copy Code'}</span>
@@ -609,7 +517,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setShowScriptModal(false)}
-                className="px-4 py-2 border border-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+                className="min-h-[44px] px-4 py-2 glass-subtle text-[var(--text-primary)] font-bold text-xs rounded-2xl cursor-pointer"
               >
                 Close
               </button>
@@ -620,4 +528,3 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </div>
   );
 };
-

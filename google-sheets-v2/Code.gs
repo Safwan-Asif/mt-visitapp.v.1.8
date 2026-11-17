@@ -52,7 +52,22 @@ var SCHEMAS = {
     "row_key", "timestamp", "rep_id", "rep_name", "account_name", "outlet_code",
     "outlet_name", "category", "total_facings", "share_of_shelf", "brand_breakdown",
     "discrepancy_log", "latitude", "longitude", "location_source", "price_tag_ok",
-    "posm_sticker", "posm_wobbler", "needs_review", "annotated_drive_photo_url", "synced_at"
+    "posm_sticker", "posm_wobbler", "needs_review", "annotated_drive_photo_url",
+    "overall_score", "compliance_status", "brand_wise_pct", "company_wise_pct",
+    "sos_actual_pct", "sos_target_pct", "planogram_id", "planogram_version",
+    "unmapped_brands", "edited_by_rep", "synced_at"
+  ],
+  planogram_compliance: [
+    "row_key", "visit_id", "date", "time", "rep", "sap_code", "outlet", "category",
+    "planogram_id", "planogram_version", "bay_index", "row_index", "brand",
+    "planned_faces", "actual_faces", "miss_faces", "compliance_type",
+    "edited_by_rep", "is_extra_bay", "synced_at"
+  ],
+  planogram_scorecard_acks: [
+    "row_key", "visit_id", "date", "time", "rep", "sap_code", "outlet", "category",
+    "planogram_id", "planogram_version", "overall_score", "compliance_status",
+    "brand_compliant", "company_compliant", "edited_by_rep", "acknowledged_at",
+    "executive_note", "synced_at"
   ],
   sync_log: [
     "timestamp", "visit_id", "action", "status", "message"
@@ -293,7 +308,9 @@ function handleSyncVisit(data) {
     "new_product_intel",
     "store_intel",
     "sales_intel",
-    "category_audits"
+    "category_audits",
+    "planogram_compliance",
+    "planogram_scorecard_acks"
   ];
 
   targetTableNames.forEach(function(tableName) {

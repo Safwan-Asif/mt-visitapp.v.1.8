@@ -1,5 +1,6 @@
 import { CategoryType, BoundingBox } from '../types';
 import { DEFAULT_AI_COUNTS, SAMPLE_BOUNDING_BOXES, resolveCategoryKey } from '../constants';
+import { normalizeBrandAlias } from '../config/planogramConfig';
 
 export const N8N_DEFAULT_WEBHOOK_URL = 'https://qfirestaurantchannel.n8n-wsk.com/webhook/mt-visit-audit';
 export const N8N_PRODUCTION_WEBHOOK_URL = 'https://qfirestaurantchannel.n8n-wsk.com/webhook/mt-visit-audit';
@@ -71,6 +72,9 @@ export interface N8nTransmissionResult {
   boxes: BoundingBox[];
   totalFacings?: number;
   needsReview?: boolean;
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rowsFound?: number;
+  unmappedBrands?: string[];
   replyText?: string;
   chatId?: number | string;
   annotatedImageUrl?: string;
@@ -138,6 +142,9 @@ export interface NormalizedN8nAuditResult {
   };
   annotated_image?: string;
   boxes?: any[];
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rows_found?: number;
+  unmapped_brands?: string[];
   needs_review?: boolean;
   replyText?: string;
   meta?: any;
@@ -147,40 +154,11 @@ export interface NormalizedN8nAuditResult {
 export const STANDARD_SHELF_BRANDS = ['YARA', 'ZAIN', 'AL RAI', 'ADEERA', 'DAWI', 'OTHER'] as const;
 
 /**
- * Strict canonicalizer ensuring every detected label maps directly to one of the fixed classes:
- * - Flour (7 classes): F1, F2, F3, PREM, SR, KFM, OTHER
- * - Edible Oil (6 classes): YARA, ZAIN, ADEERA, AL RAI, DAWI, OTHER
- * - Pasta (4 classes): QFM, QFM PREM, ZAIN, OTHER
+ * Strict canonicalizer routing all brand labels through the single unified alias table
+ * in planogramConfig. Preserves unmapped brand names instead of silently counting them as OTHER.
  */
 export function canonicalizeBrand(brand: string, category?: string): string {
-  if (!brand) return 'OTHER';
-  const clean = brand.trim().toUpperCase();
-  const catKey = resolveCategoryKey(category);
-
-  if (catKey === 'Flour') {
-    if (clean === 'F1' || clean.startsWith('F1') || clean.includes('F1')) return 'F1';
-    if (clean === 'F2' || clean.startsWith('F2') || clean.includes('F2')) return 'F2';
-    if (clean === 'F3' || clean.startsWith('F3') || clean.includes('F3')) return 'F3';
-    if (clean.includes('PREM') || clean.includes('PREMIUM')) return 'PREM';
-    if (clean.includes('SR') || clean.includes('SELF') || clean.includes('RAISING')) return 'SR';
-    if (clean.includes('KFM')) return 'KFM';
-    return 'OTHER';
-  }
-
-  if (catKey === 'Pasta') {
-    if (clean.includes('PREM') || clean.includes('PREMIUM')) return 'QFM PREM';
-    if (clean.includes('QFM')) return 'QFM';
-    if (clean.includes('ZAIN')) return 'ZAIN';
-    return 'OTHER';
-  }
-
-  // Edible Oil (Default)
-  if (clean.includes('YARA')) return 'YARA';
-  if (clean.includes('ZAIN')) return 'ZAIN';
-  if (clean.includes('ADEERA')) return 'ADEERA';
-  if (clean.includes('AL RAI') || clean.includes('ALRAI') || clean.includes('RAI')) return 'AL RAI';
-  if (clean.includes('DAWI')) return 'DAWI';
-  return 'OTHER';
+  return normalizeBrandAlias(brand, category).uiBrand;
 }
 
 /**
@@ -408,12 +386,32 @@ export function normalizeN8nResponse(rawInput: any, category?: CategoryType): No
     normalizedCategoryCounts[b] = 0;
   }
 
-  // Map any values from rawCounts or parsed lines to canonical brands
+  const unmappedSet = new Set<string>();
+
+  // Map any values from rawCounts or parsed lines via unified alias normalizer.
+  // Unknown brands are kept under their normalized label & recorded in unmappedSet (never silently merged into OTHER).
   for (const [k, v] of Object.entries({ ...rawCounts, ...resolvedCounts })) {
-    const canonicalKey = canonicalizeBrand(k, category);
+    const aliasRes = normalizeBrandAlias(k, category);
     const countNum = Number(v);
     if (!isNaN(countNum)) {
-      normalizedCategoryCounts[canonicalKey] = (normalizedCategoryCounts[canonicalKey] || 0) + countNum;
+      if (aliasRes.isUnmapped && countNum > 0) {
+        unmappedSet.add(aliasRes.raw || aliasRes.uiBrand);
+      }
+      normalizedCategoryCounts[aliasRes.uiBrand] =
+        (normalizedCategoryCounts[aliasRes.uiBrand] || 0) + countNum;
+    }
+  }
+
+  // Check bounding boxes for any unmapped classes too
+  if (Array.isArray(target?.boxes)) {
+    for (const bx of target.boxes) {
+      const rawBoxBrand = bx?.brand || bx?.class || bx?.label;
+      if (rawBoxBrand) {
+        const aliasRes = normalizeBrandAlias(String(rawBoxBrand), category);
+        if (aliasRes.isUnmapped) {
+          unmappedSet.add(aliasRes.raw || aliasRes.uiBrand);
+        }
+      }
     }
   }
 
@@ -501,13 +499,27 @@ export function normalizeN8nResponse(rawInput: any, category?: CategoryType): No
     annotatedImage = `data:${mime};base64,${annotatedImage}`;
   }
 
+  const unmappedBrands = Array.from(unmappedSet).filter((u) => u && u !== 'UNMAPPED');
+  const rawPlanRows = Array.isArray(target.planRows) ? target.planRows : undefined;
+  const rowsFound =
+    typeof target.rows_found === 'number'
+      ? target.rows_found
+      : typeof target.rowsFound === 'number'
+      ? target.rowsFound
+      : rawPlanRows
+      ? rawPlanRows.length
+      : undefined;
+
   const result: NormalizedN8nAuditResult = {
     success: target.success !== undefined ? Boolean(target.success) : true,
     total_facings: totalFacings,
     counts: (Object.keys(normalizedCategoryCounts).length > 0 ? normalizedCategoryCounts : resolvedCounts) as any,
     annotated_image: annotatedImage,
     boxes: Array.isArray(target.boxes) ? target.boxes : undefined,
-    needs_review: Boolean(target.needs_review ?? target.needsReview ?? false),
+    planRows: rawPlanRows,
+    rows_found: rowsFound,
+    unmapped_brands: unmappedBrands.length > 0 ? unmappedBrands : undefined,
+    needs_review: Boolean(target.needs_review ?? target.needsReview ?? false) || unmappedBrands.length > 0,
     replyText: target.replyText,
     meta: target.meta
   };
@@ -1010,6 +1022,9 @@ export async function sendAuditToN8n(
       boxes,
       totalFacings: normalized.total_facings,
       needsReview: Boolean(normalized.needs_review),
+      planRows: normalized.planRows,
+      rowsFound: normalized.rows_found,
+      unmappedBrands: normalized.unmapped_brands,
       replyText: normalized.replyText,
       annotatedImageUrl: normalized.annotated_image,
       rawResponse: responseText,

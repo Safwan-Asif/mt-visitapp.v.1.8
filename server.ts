@@ -507,6 +507,233 @@ app.get('/api/pjp/info', (_req, res) => {
   });
 });
 
+// Live Planograms Proxy & Short-TTL Server Cache (avoids browser CORS on GAS redirects)
+const PLANOGRAMS_WEB_APP_URL =
+  process.env.PLANOGRAMS_WEB_APP_URL ||
+  'https://script.google.com/macros/s/AKfycbxK37aAtr99B6ulD2FxRklFYfO587iHceiJtE00OcDhxdfbdJqx3-b0UifjRcMf8RHQAQ/exec';
+const PLANOGRAMS_CACHE_FILE = path.join(DATA_DIR, 'planograms_cache.json');
+let cachedPlanogramsPayload: { planograms: any[]; fetchedAt: number } | null = null;
+
+if (fs.existsSync(PLANOGRAMS_CACHE_FILE)) {
+  try {
+    cachedPlanogramsPayload = JSON.parse(fs.readFileSync(PLANOGRAMS_CACHE_FILE, 'utf-8'));
+  } catch {
+    cachedPlanogramsPayload = null;
+  }
+}
+
+app.get('/api/planograms', async (req, res) => {
+  const forceRefresh = req.query.force === '1' || req.query.force === 'true';
+  const cacheAgeMs = cachedPlanogramsPayload ? Date.now() - cachedPlanogramsPayload.fetchedAt : Infinity;
+
+  if (!forceRefresh && cachedPlanogramsPayload && cacheAgeMs < 5 * 60 * 1000) {
+    return res.json({
+      ok: true,
+      source: 'server_cache',
+      fetchedAt: cachedPlanogramsPayload.fetchedAt,
+      planograms: cachedPlanogramsPayload.planograms
+    });
+  }
+
+  try {
+    const gasRes = await fetch(PLANOGRAMS_WEB_APP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'planograms' }),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (gasRes.ok) {
+      const json = await gasRes.json();
+      const rawList = Array.isArray(json?.planograms) ? json.planograms : Array.isArray(json) ? json : [];
+      cachedPlanogramsPayload = {
+        planograms: rawList,
+        fetchedAt: Date.now()
+      };
+      try {
+        fs.writeFileSync(PLANOGRAMS_CACHE_FILE, JSON.stringify(cachedPlanogramsPayload));
+      } catch {
+        // Non-fatal disk cache write failure
+      }
+      return res.json({
+        ok: true,
+        source: 'live_gas',
+        fetchedAt: cachedPlanogramsPayload.fetchedAt,
+        planograms: rawList
+      });
+    }
+  } catch (err: any) {
+    console.warn('[Planograms Proxy] Live fetch warning:', err?.message);
+  }
+
+  // Graceful fallback to last known cached planograms if offline or GAS unreachable
+  return res.json({
+    ok: Boolean(cachedPlanogramsPayload),
+    source: cachedPlanogramsPayload ? 'stale_cache' : 'empty_fallback',
+    fetchedAt: cachedPlanogramsPayload?.fetchedAt || Date.now(),
+    planograms: cachedPlanogramsPayload?.planograms || []
+  });
+});
+
+// Live MT PJP Google Sheet Proxy & Short-TTL Cache (reads SAP Code directly from gid=0)
+const PJP_LIVE_CSV_URL =
+  process.env.PJP_LIVE_CSV_URL ||
+  'https://docs.google.com/spreadsheets/d/19kxrCdBsXZ07-66o971p1dC5hAbXnucpHr-jQZZYC94/export?format=csv&gid=0';
+const PJP_CACHE_FILE = path.join(DATA_DIR, 'pjp_cache.json');
+let cachedPjpPayload: { visits: any[]; masterOutlets: any[]; fetchedAt: number } | null = null;
+
+if (fs.existsSync(PJP_CACHE_FILE)) {
+  try {
+    cachedPjpPayload = JSON.parse(fs.readFileSync(PJP_CACHE_FILE, 'utf-8'));
+  } catch {
+    cachedPjpPayload = null;
+  }
+}
+
+function parseCsvLineSafe(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      out.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function cleanSapString(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .replace(/\.0+$/, '');
+}
+
+app.get('/api/pjp/live', async (req, res) => {
+  const forceRefresh = req.query.force === '1' || req.query.force === 'true';
+  const cacheAgeMs = cachedPjpPayload ? Date.now() - cachedPjpPayload.fetchedAt : Infinity;
+
+  if (!forceRefresh && cachedPjpPayload && cacheAgeMs < 5 * 60 * 1000) {
+    return res.json({
+      ok: true,
+      source: 'server_cache',
+      fetchedAt: cachedPjpPayload.fetchedAt,
+      visits: cachedPjpPayload.visits,
+      masterOutlets: cachedPjpPayload.masterOutlets
+    });
+  }
+
+  try {
+    const csvRes = await fetch(PJP_LIVE_CSV_URL, {
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (csvRes.ok) {
+      const csvText = await csvRes.text();
+      const lines = csvText.trim().split(/\r?\n/);
+      if (lines.length > 1) {
+        const headers = parseCsvLineSafe(lines[0]).map((h) => h.toLowerCase().trim());
+        const findCol = (candidates: string[], fallbackIdx: number) => {
+          const idx = headers.findIndex((h) => candidates.some((c) => h.includes(c)));
+          return idx >= 0 ? idx : fallbackIdx;
+        };
+
+        const dateIdx = findCol(['date'], 0);
+        const dayIdx = findCol(['day'], 1);
+        const execIdx = findCol(['executive'], 2);
+        const acctIdx = findCol(['account'], 3);
+        const outletIdx = findCol(['outlet name', 'outlet'], 4);
+        const sapIdx = findCol(['sap code', 'sap', 'outlet code', 'code'], 5);
+        const areaIdx = findCol(['area', 'zone'], 6);
+
+        const visits: any[] = [];
+        const masterMap = new Map<string, any>();
+
+        for (let i = 1; i < lines.length; i++) {
+          const rawLine = lines[i];
+          if (!rawLine || !rawLine.trim()) continue;
+          const cols = parseCsvLineSafe(rawLine);
+          const executive = (cols[execIdx] || '').trim();
+          const account = (cols[acctIdx] || '').trim();
+          const outlet = (cols[outletIdx] || '').trim();
+          const sapCode = cleanSapString(cols[sapIdx] || '');
+          const area = (cols[areaIdx] || '').trim();
+          const date = (cols[dateIdx] || '').trim();
+          const day = (cols[dayIdx] || '').trim();
+
+          if (!outlet && !sapCode) continue;
+
+          visits.push({
+            date,
+            day,
+            executive,
+            account,
+            outlet,
+            code: sapCode,
+            sapCode,
+            area
+          });
+
+          const masterKey = `${executive.toLowerCase()}|${sapCode || outlet.toLowerCase()}`;
+          if (!masterMap.has(masterKey)) {
+            masterMap.set(masterKey, {
+              id: sapCode ? `sap-${sapCode}-${masterMap.size + 1}` : `pjp-m-${masterMap.size + 1}`,
+              name: account && !outlet.toLowerCase().startsWith(account.toLowerCase()) ? `${account} — ${outlet}` : outlet,
+              rawName: outlet,
+              branch: area || outlet,
+              address: `${area ? area + ', ' : ''}${account ? account + ', ' : ''}Qatar`,
+              executive,
+              code: sapCode || undefined,
+              account: account || undefined
+            });
+          }
+        }
+
+        const masterOutlets = Array.from(masterMap.values());
+        cachedPjpPayload = {
+          visits,
+          masterOutlets,
+          fetchedAt: Date.now()
+        };
+        try {
+          fs.writeFileSync(PJP_CACHE_FILE, JSON.stringify(cachedPjpPayload));
+        } catch {
+          // Non-fatal disk cache write failure
+        }
+
+        return res.json({
+          ok: true,
+          source: 'live_sheet',
+          fetchedAt: cachedPjpPayload.fetchedAt,
+          visits,
+          masterOutlets
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[PJP Live Proxy] Live CSV fetch warning:', err?.message);
+  }
+
+  return res.json({
+    ok: Boolean(cachedPjpPayload),
+    source: cachedPjpPayload ? 'stale_cache' : 'empty_fallback',
+    fetchedAt: cachedPjpPayload?.fetchedAt || Date.now(),
+    visits: cachedPjpPayload?.visits || [],
+    masterOutlets: cachedPjpPayload?.masterOutlets || []
+  });
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

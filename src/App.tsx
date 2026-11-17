@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BarChart3, LogOut, Sparkles, Navigation, Sun, Moon } from 'lucide-react';
-import { UserProfile, ScreenType, Outlet, CategoryType, CategoryAuditRecord } from './types';
-import { INITIAL_OUTLETS, getInitialOutletsForExecutive } from './constants';
+import { LogOut, Sun, Moon } from 'lucide-react';
+import { UserProfile, ScreenType, Outlet, CategoryType, CategoryAuditRecord, PlanogramRecord } from './types';
+import { INITIAL_OUTLETS, getInitialOutletsForExecutive, MasterOutletOption } from './constants';
 import { useTheme } from './ThemeContext';
 import { LoginScreen } from './components/LoginScreen';
 import { PJPScreen } from './components/PJPScreen';
@@ -14,7 +14,16 @@ import { OutletOverview } from './components/OutletOverview';
 import { CameraWorkflowScreen } from './components/CameraWorkflowScreen';
 import { DashboardScreen } from './components/DashboardScreen';
 import { AddOutletModal } from './components/AddOutletModal';
+import { DesktopSidebar, MobileBottomNav, AppTab } from './components/NavigationShell';
+import { PlaceholderTabScreen } from './components/PlaceholderTabScreen';
 import { sendAuditToAppsScriptProxy, autoSaveAuditToGoogleSheet } from './services/googleSheetsService';
+import { fetchActivePlanograms, getCachedActivePlanograms } from './services/planogramService';
+import {
+  fetchLivePjpData,
+  getCachedLivePjpData,
+  buildExecutiveOutletsFromLivePjp,
+  enrichOutletsWithLivePjpSapCodes
+} from './services/pjpService';
 
 /**
  * Strip heavy base64 image strings before saving to localStorage to prevent QuotaExceededError.
@@ -42,7 +51,6 @@ function safeSetLocalStorage(key: string, value: string) {
   } catch (err: any) {
     console.warn(`[Storage] Quota protection caught for "${key}":`, err?.message);
     try {
-      // Purge any heavy legacy audit cache entries
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const k = localStorage.key(i);
         if (k && (k.startsWith('mta_audits') && k !== key)) {
@@ -85,17 +93,12 @@ export default function App() {
     localStorage.removeItem('mta_user');
   } catch {}
 
-  // Session User
   const [user, setUser] = useState<UserProfile | null>(null);
-
-  // Outlets List with route sequence and progress mapped to executive
   const [outlets, setOutlets] = useState<Outlet[]>(INITIAL_OUTLETS);
-
-  // Saved Audits per category (key: `${outletId}_${category}`)
   const [audits, setAudits] = useState<Record<string, CategoryAuditRecord>>({});
-
-  // Screen routing state always starts at LOGIN
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('LOGIN');
+  const [activeTab, setActiveTab] = useState<AppTab>('pjp');
+  const [isFinishingOutlet, setIsFinishingOutlet] = useState<boolean>(false);
 
   const [selectedOutlet, setSelectedOutlet] = useState<Outlet | null>(() => {
     try {
@@ -115,8 +118,34 @@ export default function App() {
   });
 
   const [isAddOutletModalOpen, setIsAddOutletModalOpen] = useState<boolean>(false);
+  const [planograms, setPlanograms] = useState<PlanogramRecord[]>(() => getCachedActivePlanograms());
+  const [liveMasterOutlets, setLiveMasterOutlets] = useState<MasterOutletOption[]>(
+    () => getCachedLivePjpData().masterOutlets
+  );
+  const [isSyncingMatch, setIsSyncingMatch] = useState<boolean>(false);
 
-  // Sync to LocalStorage (both global and scoped by executive, with quota safety)
+  const syncPjpAndPlanograms = async (execName?: string, hasSavedRoute: boolean = true) => {
+    setIsSyncingMatch(true);
+    try {
+      const [livePlans, livePjp] = await Promise.all([
+        fetchActivePlanograms(true),
+        fetchLivePjpData(true)
+      ]);
+      if (livePlans.length > 0) setPlanograms(livePlans);
+      if (livePjp.masterOutlets.length > 0) setLiveMasterOutlets(livePjp.masterOutlets);
+
+      if (!hasSavedRoute && execName) {
+        setOutlets(buildExecutiveOutletsFromLivePjp(execName, livePjp));
+      } else {
+        setOutlets((prev) => enrichOutletsWithLivePjpSapCodes(prev, livePjp));
+      }
+    } catch {
+      // Non-fatal offline cache fallback
+    } finally {
+      setIsSyncingMatch(false);
+    }
+  };
+
   useEffect(() => {
     if (user?.username) {
       safeSetLocalStorage(`mta_outlets_${user.username}`, JSON.stringify(outlets));
@@ -157,13 +186,14 @@ export default function App() {
     setUser(userProfile);
     safeSetLocalStorage('mta_user', JSON.stringify(userProfile));
 
-    // Load or generate outlets mapped to this executive
     const userOutletsKey = `mta_outlets_${userProfile.username}`;
     const userAuditsKey = `mta_audits_${userProfile.username}`;
+    let hasSavedOutlets = false;
     try {
       const savedUserOutlets = localStorage.getItem(userOutletsKey);
       if (savedUserOutlets) {
-        setOutlets(JSON.parse(savedUserOutlets));
+        hasSavedOutlets = true;
+        setOutlets(enrichOutletsWithLivePjpSapCodes(JSON.parse(savedUserOutlets), getCachedLivePjpData()));
       } else {
         const initialExecOutlets = getInitialOutletsForExecutive(userProfile.name);
         setOutlets(initialExecOutlets);
@@ -177,7 +207,11 @@ export default function App() {
 
     setSelectedOutlet(null);
     setSelectedCategory(null);
+    setIsFinishingOutlet(false);
+    setActiveTab('pjp');
     setCurrentScreen('PJP');
+
+    syncPjpAndPlanograms(userProfile.name, hasSavedOutlets);
   };
 
   const handleLogout = () => {
@@ -185,10 +219,30 @@ export default function App() {
     try {
       localStorage.removeItem('mta_user');
     } catch {}
+    setSelectedOutlet(null);
+    setSelectedCategory(null);
+    setIsFinishingOutlet(false);
     setCurrentScreen('LOGIN');
   };
 
-  const handleSaveAudit = (record: CategoryAuditRecord) => {
+  const handleSelectTab = (tab: AppTab) => {
+    setActiveTab(tab);
+    setIsFinishingOutlet(false);
+    setSelectedCategory(null);
+
+    if (tab === 'today') {
+      setSelectedOutlet(null);
+      setCurrentScreen('DASHBOARD');
+    } else if (tab === 'pjp') {
+      setSelectedOutlet(null);
+      setCurrentScreen('PJP');
+    } else {
+      setSelectedOutlet(null);
+      setCurrentScreen('PJP');
+    }
+  };
+
+  const handleSaveAudit = (record: CategoryAuditRecord, deferExit: boolean = false) => {
     if (!selectedOutlet || !selectedCategory) return;
 
     const auditKey = `${selectedOutlet.id}_${selectedCategory}`;
@@ -197,7 +251,6 @@ export default function App() {
       [auditKey]: record
     }));
 
-    // Update outlet category progress to Completed
     setOutlets((prev) =>
       prev.map((o) => {
         if (o.id === selectedOutlet.id) {
@@ -226,7 +279,6 @@ export default function App() {
     const originalAiCounts = record.originalAiCounts || counts;
     const unmappedRemark = selectedOutlet.unmappedRemark || '';
 
-    // Dispatch service layer transmission to Google Apps Script proxy endpoint
     sendAuditToAppsScriptProxy({
       timestamp: record.timestamp || new Date().toISOString(),
       repId: user?.repId || '#9',
@@ -251,13 +303,12 @@ export default function App() {
       console.warn('[App] Google Apps Script Proxy error:', err);
     });
 
-    // Also dispatch to background server auto-saver
     autoSaveAuditToGoogleSheet({
       timestamp: record.timestamp || new Date().toLocaleString(),
       outletId: selectedOutlet.id,
       outletName: selectedOutlet.name,
       accountName: selectedOutlet.name.split(' - ')[0] || selectedOutlet.name,
-      outletCode: selectedOutlet.id,
+      outletCode: selectedOutlet.code || selectedOutlet.id,
       category: selectedCategory,
       repId: user?.repId || '#9',
       repName: user?.name || 'Safwan Asif',
@@ -279,8 +330,9 @@ export default function App() {
       replyText: record.replyText || 'Visit Audit Record'
     }).catch((e) => console.warn('[App] Auto-save background note:', e));
 
-    // Return to outlet overview
-    setCurrentScreen('OUTLET_OVERVIEW');
+    if (!deferExit) {
+      setCurrentScreen('OUTLET_OVERVIEW');
+    }
   };
 
   const handleAddNewOutlet = (newOutlet: Outlet) => {
@@ -301,186 +353,201 @@ export default function App() {
     localStorage.removeItem('mta_selected_category');
     setSelectedOutlet(null);
     setSelectedCategory(null);
+    setIsFinishingOutlet(false);
+    setActiveTab('pjp');
     setCurrentScreen('PJP');
   };
 
+  const isAuthenticated = Boolean(user) && currentScreen !== 'LOGIN';
+  const isActiveAudit = currentScreen === 'CAMERA_WORKFLOW' || isFinishingOutlet;
+  const requestsCount = 0; // Hidden on bar until requests module ships
+
   return (
     <div
-      className={`h-[100dvh] w-full overflow-hidden flex flex-col justify-between relative antialiased select-none transition-colors duration-300 ${
-        isDark ? 'bg-[#0B120E] text-[#F0FDF4]' : 'bg-[#F8FAF9] text-[#061A12]'
+      className={`h-[100dvh] w-full overflow-hidden flex flex-col md:flex-row relative antialiased select-none transition-colors duration-300 ${
+        isDark ? 'bg-[#0B110F] text-[#ECFDF5]' : 'bg-[#F5F4EF] text-[#0F1B17]'
       }`}
     >
-      {/* Glassmorphic Ambient Glow Radiants (Emerald & Agricultural Lime) */}
-      <div className={`absolute -top-16 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${isDark ? 'bg-emerald-900/20' : 'bg-emerald-500/10'}`} />
-      <div className={`absolute -bottom-20 -right-20 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${isDark ? 'bg-lime-900/15' : 'bg-lime-500/10'}`} />
-      <div className={`absolute top-1/2 left-1/3 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${isDark ? 'bg-emerald-950/30' : 'bg-emerald-400/5'}`} />
+      {/* Subtle Ambient Frosted Mesh Radiance */}
+      <div
+        className={`fixed -top-24 -left-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
+          isDark ? 'bg-emerald-900/20' : 'bg-[#084C41]/8'
+        }`}
+      />
+      <div
+        className={`fixed -bottom-28 -right-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
+          isDark ? 'bg-teal-900/15' : 'bg-emerald-600/8'
+        }`}
+      />
 
-      {/* TOP HEADER BAR (Bespoke QFI Corporate Header - Hidden on mobile during camera capture for full-screen view) */}
-      {user && currentScreen !== 'LOGIN' && (
-        <header
-          className={`px-3.5 py-2.5 backdrop-blur-xl border-b items-center justify-between z-20 shrink-0 transition-colors ${
-            currentScreen === 'CAMERA_WORKFLOW' ? 'hidden md:flex' : 'flex'
-          } ${
-            isDark
-              ? 'bg-[#132219]/80 border-emerald-900/40 shadow-lg shadow-black/20'
-              : 'bg-white/90 border-slate-200/80 shadow-xs shadow-emerald-950/5'
-          }`}
-        >
-          <div className="flex items-center space-x-2.5 min-w-0">
-            {/* QFI Leaf Emblem Logo */}
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#047857] via-[#065F46] to-[#10B981] flex items-center justify-center shadow-md shadow-emerald-950/30 text-xs font-black text-white shrink-0 border border-emerald-400/20">
-              QFI
-            </div>
-            <div className="min-w-0 flex flex-col">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <h1 className={`text-sm sm:text-base font-black tracking-tight truncate ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
-                  QFI MARVIZ AI
-                </h1>
-                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md border ${
-                  isDark
-                    ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-300'
-                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                }`}>
-                  PJP Active
-                </span>
-              </div>
-              <span className={`text-[10px] font-semibold leading-none mt-0.5 ${
-                isDark ? 'text-emerald-400/80' : 'text-emerald-700/80'
-              }`}>
-                Dev. by SF1
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <button
-              onClick={toggleTheme}
-              className={`p-2 rounded-xl border transition-all ${
-                isDark
-                  ? 'bg-[#182C21] border-emerald-900/60 text-slate-300 hover:text-white'
-                  : 'bg-slate-100/90 border-slate-200 text-slate-700 hover:text-slate-950 shadow-xs'
-              }`}
-              title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              aria-label="Toggle Theme"
-            >
-              {isDark ? <Sun size={15} className="text-amber-400" /> : <Moon size={15} className="text-emerald-800" />}
-            </button>
-            <button
-              onClick={() => setCurrentScreen('DASHBOARD')}
-              className={`p-2 rounded-xl border transition-all ${
-                currentScreen === 'DASHBOARD'
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/30'
-                  : isDark
-                  ? 'bg-[#182C21] border-emerald-900/60 text-slate-300 hover:text-white'
-                  : 'bg-slate-100/90 border-slate-200 text-slate-700 hover:text-slate-950 shadow-xs'
-              }`}
-              title="Performance Dashboard"
-              aria-label="Performance Dashboard"
-            >
-              <BarChart3 size={15} />
-            </button>
-            <button
-              onClick={handleLogout}
-              className={`p-2 rounded-xl border transition-colors ${
-                isDark
-                  ? 'bg-[#182C21] border-emerald-900/60 text-slate-400 hover:text-rose-400'
-                  : 'bg-slate-100/90 border-slate-200 text-slate-500 hover:text-rose-600'
-              }`}
-              title="Sign Out"
-              aria-label="Sign Out"
-            >
-              <LogOut size={15} />
-            </button>
-          </div>
-        </header>
+      {/* Desktop / Tablet Frosted Glass Left Sidebar Rail */}
+      {isAuthenticated && user && !isActiveAudit && (
+        <DesktopSidebar
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+          requestsCount={requestsCount}
+          executive={user}
+          onLogout={handleLogout}
+        />
       )}
 
-      {/* MAIN SCREEN ROUTER CONTAINER (Strict Zero-Scroll Container) */}
-      <main className="flex-1 overflow-hidden relative flex flex-col z-10">
-        {currentScreen === 'LOGIN' && <LoginScreen onLogin={handleLogin} />}
+      {/* Main Content Shell */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
+        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet and Hidden during Active Category Audits) */}
+        {isAuthenticated && !isActiveAudit && (
+          <header className="md:hidden h-12 px-4 glass-nav border-b flex items-center justify-between shrink-0 z-20">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-extrabold shrink-0 ${
+                  isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                }`}
+              >
+                QFI
+              </div>
+              <h1 className="text-sm font-extrabold tracking-tight truncate text-[var(--text-primary)]">
+                QFI MARVIZ AI
+              </h1>
+            </div>
 
-        {currentScreen === 'PJP' && (
-          <PJPScreen
-            outlets={outlets}
-            executive={user}
-            onSelectOutlet={(outlet) => {
-              setSelectedOutlet(outlet);
-              setCurrentScreen('OUTLET_OVERVIEW');
-            }}
-            onOpenAddModal={() => setIsAddOutletModalOpen(true)}
-          />
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                title={isDark ? 'Switch to Frosted Light' : 'Switch to Dark Glass'}
+                aria-label="Toggle Theme"
+              >
+                {isDark ? <Sun size={16} className="text-amber-400" /> : <Moon size={16} />}
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          </header>
         )}
 
-        {currentScreen === 'OUTLET_OVERVIEW' && selectedOutlet && (
-          <OutletOverview
-            outlet={selectedOutlet}
-            audits={audits}
-            onBack={() => {
-              setSelectedOutlet(null);
-              setCurrentScreen('PJP');
-            }}
-            onSelectCategory={(category) => {
-              setSelectedCategory(category);
-              setCurrentScreen('CAMERA_WORKFLOW');
-            }}
-            onFinishOutlet={(confidence) => {
-              setOutlets((prev) =>
-                prev.map((o) =>
-                  o.id === selectedOutlet.id
-                    ? { ...o, status: 'Completed', dataConfidence: confidence }
-                    : o
-                )
-              );
-              // Dispatch master visit row finalization to Sheets V2
-              const visitId = selectedOutlet.visitId || `visit_${selectedOutlet.id}_${new Date().toISOString().slice(0, 10)}`;
-              fetch('/api/sheets/apps-script-proxy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  payload: {
-                    action: 'sync_visit',
-                    visit_id: visitId,
-                    visit: {
+        {/* Active Route Viewport */}
+        <main className="flex-1 overflow-hidden relative flex flex-col">
+          {currentScreen === 'LOGIN' && <LoginScreen onLogin={handleLogin} />}
+
+          {isAuthenticated && currentScreen === 'CAMERA_WORKFLOW' && selectedOutlet && selectedCategory && (
+            <CameraWorkflowScreen
+              outlet={selectedOutlet}
+              category={selectedCategory}
+              existingAudit={audits[`${selectedOutlet.id}_${selectedCategory}`]}
+              onSaveAudit={handleSaveAudit}
+              onBack={() => setCurrentScreen('OUTLET_OVERVIEW')}
+              userProfile={user || undefined}
+            />
+          )}
+
+          {isAuthenticated && currentScreen === 'OUTLET_OVERVIEW' && selectedOutlet && (
+            <OutletOverview
+              outlet={selectedOutlet}
+              audits={audits}
+              planograms={planograms}
+              onFinishScreenChange={setIsFinishingOutlet}
+              onBack={() => {
+                setIsFinishingOutlet(false);
+                setSelectedOutlet(null);
+                setActiveTab('pjp');
+                setCurrentScreen('PJP');
+              }}
+              onSelectCategory={(category) => {
+                setSelectedCategory(category);
+                setCurrentScreen('CAMERA_WORKFLOW');
+              }}
+              onFinishOutlet={(confidence) => {
+                setIsFinishingOutlet(false);
+                setOutlets((prev) =>
+                  prev.map((o) =>
+                    o.id === selectedOutlet.id
+                      ? { ...o, status: 'Completed', dataConfidence: confidence }
+                      : o
+                  )
+                );
+                const visitId = selectedOutlet.visitId || `visit_${selectedOutlet.id}_${new Date().toISOString().slice(0, 10)}`;
+                fetch('/api/sheets/apps-script-proxy', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    payload: {
+                      action: 'sync_visit',
                       visit_id: visitId,
-                      date: new Date().toISOString().slice(0, 10),
-                      start_time: '09:00',
-                      end_time: new Date().toTimeString().slice(0, 5),
-                      rep: user?.name || 'Safwan Asif',
-                      outlet: selectedOutlet.name,
-                      gps_lat: null,
-                      gps_lng: null,
-                      data_confidence: confidence,
-                      categories_completed: 'Flour, Edible Oil, Pasta',
-                      app_version: '2.0.0'
-                    },
-                    tables: {}
-                  }
-                })
-              }).catch(() => {});
-            }}
-          />
-        )}
+                      visit: {
+                        visit_id: visitId,
+                        date: new Date().toISOString().slice(0, 10),
+                        start_time: '09:00',
+                        end_time: new Date().toTimeString().slice(0, 5),
+                        rep: user?.name || 'Safwan Asif',
+                        outlet: selectedOutlet.name,
+                        gps_lat: null,
+                        gps_lng: null,
+                        data_confidence: confidence,
+                        categories_completed: 'Flour, Edible Oil, Pasta',
+                        app_version: '2.0.0'
+                      },
+                      tables: {}
+                    }
+                  })
+                }).catch(() => {});
+              }}
+            />
+          )}
 
-        {currentScreen === 'CAMERA_WORKFLOW' && selectedOutlet && selectedCategory && (
-          <CameraWorkflowScreen
-            outlet={selectedOutlet}
-            category={selectedCategory}
-            existingAudit={audits[`${selectedOutlet.id}_${selectedCategory}`]}
-            onSaveAudit={handleSaveAudit}
-            onBack={() => setCurrentScreen('OUTLET_OVERVIEW')}
-            userProfile={user || undefined}
-          />
-        )}
+          {isAuthenticated && currentScreen !== 'CAMERA_WORKFLOW' && currentScreen !== 'OUTLET_OVERVIEW' && (
+            <>
+              {(activeTab === 'home' || activeTab === 'map' || activeTab === 'requests') && (
+                <PlaceholderTabScreen tab={activeTab} />
+              )}
 
-        {currentScreen === 'DASHBOARD' && (
-          <DashboardScreen
-            outlets={outlets}
-            audits={audits}
-            onBack={() => setCurrentScreen(selectedOutlet ? 'OUTLET_OVERVIEW' : 'PJP')}
-            onResetData={handleResetData}
-          />
-        )}
-      </main>
+              {activeTab === 'pjp' && (
+                <PJPScreen
+                  outlets={outlets}
+                  executive={user}
+                  planograms={planograms}
+                  isSyncingMatch={isSyncingMatch}
+                  onRefreshMatch={() => syncPjpAndPlanograms(user?.name, true)}
+                  onSelectOutlet={(outlet) => {
+                    setSelectedOutlet(outlet);
+                    setCurrentScreen('OUTLET_OVERVIEW');
+                    fetchActivePlanograms(true)
+                      .then((list) => {
+                        if (list.length > 0) setPlanograms(list);
+                      })
+                      .catch(() => {});
+                  }}
+                  onOpenAddModal={() => setIsAddOutletModalOpen(true)}
+                />
+              )}
+
+              {activeTab === 'today' && (
+                <DashboardScreen
+                  outlets={outlets}
+                  audits={audits}
+                  onBack={() => handleSelectTab('pjp')}
+                  onResetData={handleResetData}
+                />
+              )}
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Navigation Bar (5 Tabs, hidden during active category audits & login) */}
+      {isAuthenticated && !isActiveAudit && (
+        <MobileBottomNav
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+          requestsCount={requestsCount}
+        />
+      )}
 
       {/* Add Ad-Hoc Store Modal */}
       <AddOutletModal
@@ -490,6 +557,8 @@ export default function App() {
         currentCount={outlets.length}
         existingOutlets={outlets}
         executiveName={user?.name || 'Safwan Asif'}
+        liveMasterOutlets={liveMasterOutlets}
+        planograms={planograms}
       />
     </div>
   );

@@ -2,16 +2,109 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --bg-canvas: #F5F4EF;
+  --bg-glass: rgba(255, 255, 255, 0.72);
+  --bg-glass-strong: rgba(255, 255, 255, 0.88);
+  --bg-glass-subtle: rgba(255, 255, 255, 0.52);
+  --bg-nav: rgba(255, 255, 255, 0.88);
+  --border-glass: rgba(8, 76, 65, 0.11);
+  --border-glass-strong: rgba(8, 76, 65, 0.18);
+  --text-primary: #0F1B17;
+  --text-secondary: #52635D;
+  --text-muted: #7C8B85;
+  --accent-primary: #084C41;
+  --accent-primary-hover: #063D34;
+  --accent-soft: rgba(8, 76, 65, 0.08);
+  --badge-alert: #B83B28;
+  --glass-shadow: 0 12px 32px -12px rgba(8, 40, 32, 0.10), 0 1px 0 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+.dark {
+  --bg-canvas: #0B110F;
+  --bg-glass: rgba(17, 29, 25, 0.74);
+  --bg-glass-strong: rgba(17, 29, 25, 0.90);
+  --bg-glass-subtle: rgba(17, 29, 25, 0.48);
+  --bg-nav: rgba(15, 25, 22, 0.88);
+  --border-glass: rgba(16, 185, 129, 0.16);
+  --border-glass-strong: rgba(52, 211, 153, 0.28);
+  --text-primary: #ECFDF5;
+  --text-secondary: #9CAEA8;
+  --text-muted: #647771;
+  --accent-primary: #10B981;
+  --accent-primary-hover: #34D399;
+  --accent-soft: rgba(16, 185, 129, 0.14);
+  --badge-alert: #DC4B36;
+  --glass-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.55), 0 1px 0 0 rgba(255, 255, 255, 0.05) inset;
+}
+
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;
   }
   body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: 'Plus Jakarta Sans', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
   }
+}
+
+/* Frosted Glass Surface Utilities */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-panel-strong {
+  background: var(--bg-glass-strong);
+  backdrop-filter: blur(26px) saturate(165%);
+  -webkit-backdrop-filter: blur(26px) saturate(165%);
+  border: 1px solid var(--border-glass-strong);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-subtle {
+  background: var(--bg-glass-subtle);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--border-glass);
+}
+
+.glass-nav {
+  background: var(--bg-nav);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-color: var(--border-glass);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Fade-in entrance */
+@keyframes fadeInSoft {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeInSoft 0.22s ease-out forwards;
 }
 
 /* Scanner Light-Band Processing Sweep Animation */
@@ -68,96 +161,29 @@
     top: 50%;
     opacity: 0.8;
   }
+  .animate-fade-in {
+    animation: none;
+  }
 }
 
 /* Custom organic scrollbar for bounded list areas */
 ::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.25);
+  background: rgba(8, 76, 65, 0.22);
   border-radius: 9999px;
 }
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.25);
+}
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(34, 197, 94, 0.45);
+  background: rgba(8, 76, 65, 0.4);
 }
-
-/* Keyframes for subtle QFI ambient pulse */
-@keyframes leaf-glow {
-  0%, 100% {
-    opacity: 0.12;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.22;
-    transform: scale(1.05);
-  }
-}
-
-.animate-leaf-glow {
-  animation: leaf-glow 8s ease-in-out infinite;
-}
-
-/* 2026 Modern iOS Dynamic Island morphing entrance and glow */
-@keyframes dynamicIslandExpand {
-  0% {
-    opacity: 0;
-    transform: scale(0.86) translateY(-8px);
-    filter: blur(4px);
-  }
-  60% {
-    transform: scale(1.02) translateY(1px);
-    filter: blur(0px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-.animate-dynamic-island {
-  animation: dynamicIslandExpand 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity, filter;
-}
-
-@keyframes pulseCheckGlow {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.4), 0 0 20px rgba(16, 185, 129, 0.2);
-  }
-  50% {
-    transform: scale(1.08);
-    box-shadow: 0 0 18px rgba(52, 211, 153, 0.8), 0 0 30px rgba(16, 185, 129, 0.5);
-  }
-}
-
-.animate-pulse-check-glow {
-  animation: pulseCheckGlow 2.4s ease-in-out infinite;
-}
-
-@keyframes dynamicIslandCenter {
-  0% {
-    opacity: 0;
-    transform: scale(0.85);
-    filter: blur(6px);
-  }
-  60% {
-    transform: scale(1.03);
-    filter: blur(0px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-    filter: blur(0px);
-  }
-}
-
-.animate-dynamic-island-center {
-  animation: dynamicIslandCenter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  transform-origin: center center;
-  will-change: transform, opacity, filter;
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 211, 153, 0.45);
 }

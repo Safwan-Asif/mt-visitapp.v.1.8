@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Navigation, RefreshCw, ExternalLink, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { MapPin, Navigation, RefreshCw, ExternalLink, ShieldCheck } from 'lucide-react';
 import { getAuditCoordinates, watchAuditCoordinates, GeoLocationResult } from '../services/geolocationService';
 import { useTheme } from '../ThemeContext';
 
@@ -14,14 +14,13 @@ interface LiveLocationBadgeProps {
 export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
   outletName,
   targetLatitude = 25.2854,
-  targetLongitude = 51.5310,
+  targetLongitude = 51.531,
   onLocationCaptured,
   compact = false
 }) => {
   const { isDark } = useTheme();
   const [location, setLocation] = useState<GeoLocationResult | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'unknown'>('unknown');
 
   const fetchLocation = async () => {
     setIsRefreshing(true);
@@ -42,17 +41,6 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
   useEffect(() => {
     fetchLocation();
 
-    // Check permission status if available
-    if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' as any })
-        .then((result) => {
-          setPermissionState(result.state);
-          result.onchange = () => setPermissionState(result.state);
-        })
-        .catch(() => setPermissionState('unknown'));
-    }
-
-    // Subscribe to continuous live updates
     const unsubscribe = watchAuditCoordinates(
       (coords) => {
         setLocation(coords);
@@ -74,19 +62,27 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
 
   if (compact) {
     return (
-      <div className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-xl border backdrop-blur-md ${
-        isGps
-          ? isDark ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-900'
-          : isDark ? 'bg-amber-500/15 border-amber-500/30 text-amber-300' : 'bg-amber-50 border-amber-300 text-amber-900'
-      }`}>
-        <Navigation size={11} className={isRefreshing ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
-        <span className="font-mono font-bold">{currentLat.toFixed(4)}°N, {currentLng.toFixed(4)}°E</span>
-        <span className="opacity-75">({isGps ? `±${accuracy}m` : 'Store Mapped'})</span>
+      <div
+        className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-xl glass-subtle ${
+          isGps
+            ? 'text-[var(--accent-primary)]'
+            : isDark
+            ? 'text-amber-300'
+            : 'text-amber-700'
+        }`}
+      >
+        <Navigation size={11} className={isRefreshing ? 'animate-spin' : ''} />
+        <span className="font-mono font-bold tabular-nums">
+          {currentLat.toFixed(4)}°N, {currentLng.toFixed(4)}°E
+        </span>
+        <span className="opacity-75 tabular-nums">
+          ({isGps ? `±${accuracy}m` : 'Mapped'})
+        </span>
         <a
           href={mapsUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:underline flex items-center gap-0.5 ml-1 text-emerald-400 font-bold"
+          className="hover:underline flex items-center ml-0.5 font-bold"
           title="Open in Google Maps"
         >
           <ExternalLink size={9} />
@@ -96,38 +92,25 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
   }
 
   return (
-    <div className={`p-3 rounded-2xl border transition-all space-y-2 ${
-      isDark
-        ? 'bg-[#132219]/90 border-emerald-800/60 shadow-lg'
-        : 'bg-white border-emerald-950/10 shadow-xs'
-    }`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <div className={`w-7 h-7 rounded-xl flex items-center justify-center border ${
-            isGps
-              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-              : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-          }`}>
-            <MapPin size={15} className={isRefreshing ? 'animate-bounce' : ''} />
+    <div className="glass-panel rounded-2xl p-3.5 space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div
+            className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+              isGps
+                ? isDark
+                  ? 'bg-emerald-500/15 text-[#34D399]'
+                  : 'bg-[#084C41]/10 text-[#084C41]'
+                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+            }`}
+          >
+            <MapPin size={15} />
           </div>
-          <div>
-            <h4 className={`text-xs font-black uppercase tracking-wider flex items-center gap-1 ${
-              isDark ? 'text-white' : 'text-slate-900'
-            }`}>
-              <span>Exact GPS Coordinates</span>
-              {isGps ? (
-                <span className="text-[8px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded font-bold">
-                  LIVE DEVICE GPS
-                </span>
-              ) : (
-                <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.2 rounded font-bold">
-                  STORE MAPPED
-                </span>
-              )}
+          <div className="min-w-0">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)] truncate">
+              Exact GPS Coordinates &middot; {isGps ? 'Live GPS' : 'Store Mapped'}
             </h4>
-            <p className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              {outletName}
-            </p>
+            <p className="text-[11px] text-[var(--text-secondary)] truncate">{outletName}</p>
           </div>
         </div>
 
@@ -135,46 +118,40 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
           type="button"
           onClick={fetchLocation}
           disabled={isRefreshing}
-          className={`p-1.5 rounded-xl border text-[10px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-all ${
-            isDark
-              ? 'bg-[#0B120E] border-emerald-800 text-emerald-300 hover:text-white'
-              : 'bg-slate-50 border-slate-300 text-slate-700 hover:bg-slate-100'
-          }`}
+          className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-[11px] font-bold text-[var(--accent-primary)] flex items-center gap-1 cursor-pointer active:scale-95 transition-all shrink-0"
           title="Acquire fresh high-precision GPS position fix"
         >
-          <RefreshCw size={11} className={isRefreshing ? 'animate-spin text-emerald-400' : ''} />
-          <span>{isRefreshing ? 'Fixing...' : 'Refresh GPS'}</span>
+          <RefreshCw size={11} className={isRefreshing ? 'animate-spin' : ''} />
+          <span>{isRefreshing ? 'Fixing…' : 'Refresh'}</span>
         </button>
       </div>
 
-      {/* Main Coordinate Grid */}
-      <div className="grid grid-cols-2 gap-2 text-[10px]">
-        <div className={`p-2 rounded-xl border font-mono ${
-          isDark ? 'bg-[#0B120E] border-emerald-900/50' : 'bg-emerald-50/50 border-emerald-200'
-        }`}>
-          <span className="text-[9px] uppercase font-sans font-bold text-slate-400 block">Latitude</span>
-          <span className="text-xs font-black text-emerald-400 tracking-wider">
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="p-2.5 rounded-xl glass-subtle font-mono">
+          <span className="text-[10px] uppercase font-sans font-bold text-[var(--text-muted)] block">
+            Latitude
+          </span>
+          <span className="text-xs font-extrabold text-[var(--accent-primary)] tabular-nums">
             {currentLat.toFixed(6)}° N
           </span>
         </div>
 
-        <div className={`p-2 rounded-xl border font-mono ${
-          isDark ? 'bg-[#0B120E] border-emerald-900/50' : 'bg-emerald-50/50 border-emerald-200'
-        }`}>
-          <span className="text-[9px] uppercase font-sans font-bold text-slate-400 block">Longitude</span>
-          <span className="text-xs font-black text-emerald-400 tracking-wider">
+        <div className="p-2.5 rounded-xl glass-subtle font-mono">
+          <span className="text-[10px] uppercase font-sans font-bold text-[var(--text-muted)] block">
+            Longitude
+          </span>
+          <span className="text-xs font-extrabold text-[var(--accent-primary)] tabular-nums">
             {currentLng.toFixed(6)}° E
           </span>
         </div>
       </div>
 
-      {/* GPS Precision & Geofence Verification Status */}
-      <div className="flex items-center justify-between text-[10px] pt-0.5">
-        <div className="flex items-center gap-1 text-emerald-400 font-medium">
-          <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
-          <span>
+      <div className="flex items-center justify-between text-[11px] pt-0.5">
+        <div className="flex items-center gap-1 text-[var(--accent-primary)] font-medium">
+          <ShieldCheck size={12} className="shrink-0" />
+          <span className="tabular-nums">
             {isGps
-              ? `Precision: ±${accuracy}m ${distMeters !== undefined ? `(${distMeters}m from store)` : ''}`
+              ? `Precision: ±${accuracy}m${distMeters !== undefined ? ` (${distMeters}m away)` : ''}`
               : 'Store Gondola fallback active'}
           </span>
         </div>
@@ -183,7 +160,7 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
           href={mapsUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 hover:underline cursor-pointer bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/30"
+          className="text-[var(--accent-primary)] font-bold flex items-center gap-1 hover:underline"
         >
           <span>Google Maps</span>
           <ExternalLink size={10} />

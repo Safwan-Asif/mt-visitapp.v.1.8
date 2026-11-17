@@ -9,7 +9,7 @@ import {
 import { 
   CategoryType, Outlet, CategoryAuditRecord, BoundingBox, 
   UserProfile, AisleKey, AisleSessionData, AisleStatus,
-  DuplicateMatch, BayDuplicateReport
+  DuplicateMatch, BayDuplicateReport, PlanogramComplianceResult, PlanogramRecord
 } from '../types';
 import { 
   CATEGORY_IMAGES, DEFAULT_AI_COUNTS, SAMPLE_BOUNDING_BOXES, 
@@ -25,8 +25,16 @@ import {
   toDirectDriveImageUrl,
   toAlternativeDriveImageUrl,
   transformQuestionnaireToTables,
-  syncFieldIntelToGoogleSheets
+  syncFieldIntelToGoogleSheets,
+  syncPlanogramScorecardAck
 } from '../services/googleSheetsService';
+import { normalizeBrandAlias } from '../config/planogramConfig';
+import {
+  fetchActivePlanograms,
+  findActivePlanogramForOutlet,
+  evaluatePlanogramCompliance
+} from '../services/planogramService';
+import { PlanogramScorecard } from './PlanogramScorecard';
 import { QuestionnaireRenderer } from './QuestionnaireRenderer';
 import { getAuditCoordinates, GeoLocationResult } from '../services/geolocationService';
 import {
@@ -121,6 +129,9 @@ export interface NormalizedN8nAuditOutput {
   total_facings: number;
   counts: Record<string, number>;
   boxes: any[];
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rowsFound?: number;
+  unmappedBrands?: string[];
   meta?: any;
   dimensions?: { width: number; height: number };
   /** True only when n8n reported the image size (not guessed from box extents). */
@@ -195,15 +206,19 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
   const standardBrands = CATEGORY_BRANDS[catKey] || ['YARA', 'ZAIN', 'ADEERA', 'AL RAI', 'DAWI', 'OTHER'];
 
   const counts: Record<string, number> = {};
+  const unmappedBrandsSet = new Set<string>();
   for (const b of standardBrands) {
     counts[b] = 0;
   }
 
   for (const [k, v] of Object.entries(rawCounts)) {
-    const canonicalKey = canonicalizeBrand(k, catKey);
+    const aliasRes = normalizeBrandAlias(k, catKey);
     const num = typeof v === 'number' ? v : Number(v);
     if (!isNaN(num)) {
-      counts[canonicalKey] = (counts[canonicalKey] || 0) + num;
+      if (aliasRes.isUnmapped && num > 0) {
+        unmappedBrandsSet.add(aliasRes.raw || aliasRes.canonical);
+      }
+      counts[aliasRes.uiBrand] = (counts[aliasRes.uiBrand] || 0) + num;
     }
   }
 
@@ -240,8 +255,44 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
   }
 
   const replyText = typeof target?.replyText === 'string' ? target.replyText : undefined;
-  const needsReview = Boolean(target?.needs_review ?? target?.needsReview ?? false);
   const boxes = Array.isArray(target?.boxes) ? target.boxes : [];
+
+  // Scan bounding boxes for unmapped brands as well
+  boxes.forEach((box: any) => {
+    const rawLabel = box?.brand || box?.label || box?.class || box?.name;
+    if (rawLabel) {
+      const aliasRes = normalizeBrandAlias(String(rawLabel), catKey);
+      if (aliasRes.isUnmapped) {
+        unmappedBrandsSet.add(aliasRes.raw || aliasRes.canonical);
+      }
+    }
+  });
+
+  // Extract explicit planRows if provided by n8n
+  const rawPlanRows = Array.isArray(target?.planRows)
+    ? target.planRows
+    : Array.isArray(target?.plan_rows)
+    ? target.plan_rows
+    : Array.isArray(target?.rows)
+    ? target.rows
+    : undefined;
+
+  const planRows = Array.isArray(rawPlanRows)
+    ? rawPlanRows.map((r: any, idx: number) => ({
+        row: Number(r?.row) || idx + 1,
+        faces: r?.faces && typeof r.faces === 'object' ? r.faces : {}
+      }))
+    : undefined;
+
+  const rowsFound =
+    target?.rows_found !== undefined && !isNaN(Number(target.rows_found))
+      ? Number(target.rows_found)
+      : target?.rowsFound !== undefined && !isNaN(Number(target.rowsFound))
+      ? Number(target.rowsFound)
+      : undefined;
+
+  const unmappedBrands = Array.from(unmappedBrandsSet);
+  const needsReview = Boolean(target?.needs_review ?? target?.needsReview ?? false) || unmappedBrands.length > 0;
 
   // Extract dimensions from imagemediametadata, image, or meta returned by n8n
   let width = target?.imagemediametadata?.width || target?.imageMediaMetadata?.width || target?.image?.width || target?.meta?.width || target?.dimensions?.width;
@@ -274,6 +325,9 @@ export function normalizeN8nAuditResponse(raw: any, category?: CategoryType): No
     needs_review: needsReview,
     replyText,
     boxes,
+    planRows,
+    rowsFound,
+    unmappedBrands,
     meta: target?.meta,
     dimensions: width && height ? { width: Number(width), height: Number(height) } : undefined,
     dimensionsExplicit,
@@ -300,6 +354,9 @@ export interface AisleSession {
   totalFacings: number | null;
   boxes: BoundingBox[];
   rawBoxes: any[];
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rowsFound?: number;
+  unmappedBrands?: string[];
   removedDuplicates?: DuplicateMatch[];
   /** Seam with the previous (left) bay — measured on capture, confirmed by the rep before upload. */
   seam?: SeamInfo | null;
@@ -606,6 +663,9 @@ function buildInitialAisleSessions(
         totalFacings: existing.totalFacings ?? null,
         boxes: existing.boundingBoxes || [],
         rawBoxes: existing.rawBoxes || [],
+        planRows: existing.planRows,
+        rowsFound: existing.rowsFound,
+        unmappedBrands: existing.unmappedBrands,
         n8nStatus: null,
         analysisStartTime: null,
         analysisDurationSeconds: 0
@@ -643,7 +703,7 @@ interface CameraWorkflowScreenProps {
   outlet: Outlet;
   category: CategoryType;
   existingAudit?: CategoryAuditRecord;
-  onSaveAudit: (record: CategoryAuditRecord) => void;
+  onSaveAudit: (record: CategoryAuditRecord, deferExit?: boolean) => void;
   onBack: () => void;
   userProfile?: UserProfile;
 }
@@ -658,10 +718,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 }) => {
   const { isDark } = useTheme();
 
-  // 1. Three-step state machine: CAPTURE -> POSM -> RESULTS
-  const [step, setStep] = useState<'CAPTURE' | 'POSM' | 'RESULTS'>(
+  // 1. Four-step state machine: CAPTURE -> POSM -> RESULTS -> SCORECARD
+  const [step, setStep] = useState<'CAPTURE' | 'POSM' | 'RESULTS' | 'SCORECARD'>(
     existingAudit ? 'RESULTS' : 'CAPTURE'
   );
+  const [scorecardResult, setScorecardResult] = useState<PlanogramComplianceResult | null>(
+    existingAudit?.planogramCompliance || null
+  );
+  const [isSubmittingAck, setIsSubmittingAck] = useState<boolean>(false);
+
+  // Ensure active planogram cache is warmed for this outlet/category
+  useEffect(() => {
+    fetchActivePlanograms(false).catch(() => {});
+  }, [outlet.id]);
 
   // Hidden native file inputs for hardware camera & photo gallery fallback
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -1528,13 +1597,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               annotatedPhotoUrl: normalized.annotated_image || null,
               boxes: normalized.boxes || [],
               rawBoxes: normalized.boxes || [],
+              planRows: normalized.planRows,
+              rowsFound: normalized.rowsFound,
+              unmappedBrands: normalized.unmappedBrands,
               naturalDimensions: newDimensions,
               n8nStatus: {
                 ...result,
                 counts: normalized.counts,
                 totalFacings: normalized.total_facings,
                 needsReview: normalized.needs_review,
-                annotatedImageUrl: normalized.annotated_image
+                annotatedImageUrl: normalized.annotated_image,
+                planRows: normalized.planRows,
+                rowsFound: normalized.rowsFound,
+                unmappedBrands: normalized.unmappedBrands
               },
               analysisDurationSeconds: duration
             }
@@ -2279,6 +2354,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         totalFacings: s.totalFacings ?? 0,
         boundingBoxes: s.boxes,
         rawBoxes: s.rawBoxes,
+        planRows: s.planRows,
+        rowsFound: s.rowsFound,
+        unmappedBrands: s.unmappedBrands,
         naturalDimensions: s.naturalDimensions,
         removedDuplicates: (duplicateReports[key]?.duplicates || []).filter((d) => removedDuplicateBoxIds.has(d.boxId)),
         seam: s.seam || undefined,
@@ -2313,6 +2391,48 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       .map(([brand]) => brand);
     const hasOosFound = detectedOosBrands.length > 0;
 
+    // Fetch cached/latest active planograms and evaluate compliance against the confirmed category totals
+    let latestPlanograms: PlanogramRecord[] = [];
+    try {
+      latestPlanograms = await fetchActivePlanograms(false);
+    } catch {
+      latestPlanograms = [];
+    }
+    const activePlanogram = findActivePlanogramForOutlet(outlet, category, latestPlanograms);
+
+    const bayDiagnosticInputs = completedAisles.map((k, idx) => {
+      const s = aisleSessions[k];
+      return {
+        key: s?.key || k,
+        label: s?.label || `Bay ${idx + 1}`,
+        boundingBoxes: s?.boxes || [],
+        boxes: s?.boxes || [],
+        planRows: s?.planRows,
+        unmappedBrands: s?.unmappedBrands
+      };
+    });
+
+    const collectedUnmapped = Array.from(
+      new Set(completedAisles.flatMap((k) => aisleSessions[k]?.unmappedBrands || []))
+    );
+
+    const complianceResult = evaluatePlanogramCompliance({
+      outlet,
+      category,
+      planogram: activePlanogram,
+      confirmedCounts: combinedCounts,
+      initialAiCounts: combinedOrigCounts,
+      actualTotalFacings: combinedTotalFacings,
+      actualPrimarySharePct: primarySharePct,
+      baySessions: bayDiagnosticInputs,
+      excludedBoxIds: removedDuplicateBoxIds,
+      unmappedBrands: collectedUnmapped
+    });
+
+    const needsReviewFlag =
+      completedAisles.some((k) => Boolean(aisleSessions[k]?.n8nStatus?.needsReview)) ||
+      complianceResult.unmappedBrands.length > 0;
+
     const record: CategoryAuditRecord = {
       outletId: outlet.id,
       visitId,
@@ -2339,7 +2459,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       auditDurationSeconds: elapsedSeconds,
       aisles: serializedAisles,
-      activeAisleCount: completedAisles.length
+      activeAisleCount: completedAisles.length,
+      planogramCompliance: complianceResult,
+      editedByRep: complianceResult.editedByRep,
+      unmappedBrands: complianceResult.unmappedBrands
     };
 
     // 1. Transform questionnaire responses into the 5 target tables
@@ -2364,9 +2487,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     const auditRecordForSync = {
       timestamp: new Date().toISOString(),
       outletId: outlet.id,
+      sapCode: outlet.code || '',
       outletName: outlet.name,
-      accountName: outlet.name.split(' - ')[0] || outlet.name,
-      outletCode: outlet.id,
+      accountName: outlet.account || outlet.name.split(' - ')[0] || outlet.name,
+      outletCode: outlet.code || outlet.id,
       category,
       repId: userProfile?.repId || '#9',
       repName: userProfile?.name || 'Safwan Asif',
@@ -2381,12 +2505,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       priceTagOk,
       posmShelfSticker,
       posmWobblers,
-      needsReview: completedAisles.some((k) => Boolean(aisleSessions[k]?.n8nStatus?.needsReview)),
+      needsReview: needsReviewFlag,
       photoUrl: primaryPhoto,
-      annotatedImage: primaryCompleted?.annotatedPhotoUrl || primaryPhoto
+      annotatedImage: primaryCompleted?.annotatedPhotoUrl || primaryPhoto,
+      planogramCompliance: complianceResult,
+      editedByRep: complianceResult.editedByRep,
+      unmappedBrands: complianceResult.unmappedBrands
     };
 
-    // 2. Dispatch multi-table sync to Google Sheets & clear autosave key on success
+    // 2. Dispatch multi-table sync + category_audits summary + planogram_compliance rows to Google Sheets
     syncFieldIntelToGoogleSheets(
       multiTables,
       visitId,
@@ -2409,7 +2536,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       timestamp: new Date().toLocaleString(),
       outletId: outlet.id,
       outletName: outlet.name,
-      accountName: outlet.name.split(' - ')[0] || outlet.name,
+      accountName: outlet.account || outlet.name.split(' - ')[0] || outlet.name,
+      outletCode: outlet.code || outlet.id,
       category,
       repId: userProfile?.repId || '#9',
       repName: userProfile?.name || 'Safwan Asif',
@@ -2426,7 +2554,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       priceTagOk,
       posmShelfSticker,
       posmWobblers,
-      needsReview: completedAisles.some((k) => Boolean(aisleSessions[k]?.n8nStatus?.needsReview)),
+      needsReview: needsReviewFlag,
       photoDataUrl: primaryPhoto,
       replyText: `${outlet.name} - ${category} (${completedAisles.length} bays completed)`
     }).then((res) => {
@@ -2438,7 +2566,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       setSyncError(err?.message || 'Auto-sync network error');
     });
 
-    onSaveAudit(record);
+    // Save audit into app state without leaving screen so executive reviews the Planogram Scorecard
+    onSaveAudit(record, true);
+    setScorecardResult(complianceResult);
+    setStep('SCORECARD');
   };
 
   // Background Sync Retry handler
@@ -2691,22 +2822,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       />
 
       {/* Top Bar: Back, Location, Category & Step Indicator */}
-      <div className={`flex items-center justify-between pb-2 shrink-0 border-b gap-1.5 ${
-        isDark ? 'border-emerald-900/40' : 'border-emerald-950/10'
-      }`}>
+      <div className="flex items-center justify-between pb-2 shrink-0 border-b border-[var(--border-glass)] gap-2">
         <button
+          type="button"
           onClick={onBack}
-          className={`flex items-center gap-1.5 text-xs font-semibold transition-colors shrink-0 ${
-            isDark ? 'text-emerald-300/80 hover:text-white' : 'text-emerald-900/80 hover:text-emerald-950'
-          }`}
+          className="min-h-[38px] flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0 cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span className={`truncate ${step === 'RESULTS' ? 'max-w-[105px] sm:max-w-[150px]' : 'max-w-[180px] sm:max-w-xs md:max-w-md'}`}>
+          <span className={`truncate ${step === 'RESULTS' ? 'max-w-[105px] sm:max-w-[160px]' : 'max-w-[180px] sm:max-w-xs md:max-w-md'}`}>
             {outlet.name}
           </span>
         </button>
 
-        {/* Location coordinates visible only in final RESULTS stage */}
         {step === 'RESULTS' && (
           <LiveLocationBadge
             compact
@@ -2718,32 +2845,30 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         )}
 
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-            isDark 
-              ? 'bg-[#132219] text-emerald-300 border-emerald-800/60' 
-              : 'bg-emerald-50 text-emerald-900 border-emerald-200'
-          }`}>
-            {step === 'CAPTURE' 
-              ? `1. ${currentSession?.label || 'Bay 1'}` 
+          <span className="text-[11px] font-bold text-[var(--accent-primary)] tabular-nums">
+            {step === 'CAPTURE'
+              ? `1. ${currentSession?.label || 'Bay 1'}`
               : step === 'POSM'
               ? '2. POSM'
-              : `3. Results (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`}
+              : step === 'RESULTS'
+              ? `3. Results (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
+              : '4. Scorecard'}
           </span>
         </div>
       </div>
 
       {/* Sync Error Retry Notification Banner */}
       {syncError && (
-        <div className="mb-2 p-2 rounded-xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-between text-[11px] text-rose-300 shrink-0">
+        <div className="mb-2 px-3 py-2 rounded-2xl bg-rose-500/12 border border-rose-500/35 flex items-center justify-between text-xs text-rose-600 dark:text-rose-300 shrink-0">
           <div className="flex items-center gap-1.5 truncate pr-2">
-            <AlertCircle size={13} className="text-rose-400 shrink-0" />
+            <AlertCircle size={14} className="text-rose-500 shrink-0" />
             <span className="truncate">Sync failed: {syncError}</span>
           </div>
           <button
             type="button"
             onClick={handleRetrySync}
             disabled={isRetryingSync}
-            className="px-2 py-0.5 rounded-lg bg-rose-500 text-white font-bold text-[10px] shrink-0 active:scale-95 cursor-pointer"
+            className="px-2.5 py-1 rounded-xl bg-rose-600 text-white font-bold text-[11px] shrink-0 active:scale-95 cursor-pointer"
           >
             {isRetryingSync ? 'Retrying…' : 'Retry'}
           </button>
@@ -2752,29 +2877,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
       {/* ================= STEP 1: CAPTURE ================= */}
       {step === 'CAPTURE' && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1">
-          {/* Camera Guidance Viewfinder & Auto-Capture (Snapchat-style Live Video Feed) */}
-          <div 
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1.5">
+          {/* Camera Guidance Viewfinder */}
+          <div
             ref={viewfinderRef}
             onClick={() => {
               if (!cameraStreamActive && !pendingCapture) startCameraStream();
             }}
-            className="order-1 md:order-2 flex-1 relative rounded-3xl border border-emerald-900/60 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group cursor-pointer"
+            className="order-1 md:order-2 flex-1 relative rounded-3xl border border-[var(--border-glass-strong)] overflow-hidden bg-black flex flex-col items-center justify-center shadow-lg group cursor-pointer"
           >
             {/* Confirmed / Uploaded Photo Canvas View with AI Rod Scanning Animation */}
             {Boolean(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl) && !pendingCapture && (
               <div className="absolute inset-0 z-30 bg-black flex items-center justify-center overflow-hidden">
-                <style>{`
-                  @keyframes scanLaserRod {
-                    0% { top: 0%; opacity: 0.9; }
-                    50% { top: 93%; opacity: 1; }
-                    100% { top: 0%; opacity: 0.9; }
-                  }
-                  .animate-scan-laser-rod {
-                    animation: scanLaserRod 2.2s ease-in-out infinite;
-                  }
-                `}</style>
-                {/* 4px Blurred Photo */}
                 <img
                   src={(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl)!}
                   alt={`${currentSession?.label || 'Bay'} Photo`}
@@ -2784,10 +2898,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 {/* AI Laser Rod Bot Scanning Beam Line */}
                 <div className="absolute inset-0 pointer-events-none overflow-hidden">
                   <div className="w-full h-2.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_35px_#10B981] animate-scan-laser-rod absolute top-0 left-0 z-20" />
-                  <div className="absolute inset-0 bg-emerald-500/10 animate-pulse" />
+                  <div className="absolute inset-0 bg-emerald-500/10" />
                 </div>
 
-                {/* Corner Target Reticles (AI Targeting Brackets) */}
+                {/* Corner Target Reticles */}
                 <div className="absolute inset-4 pointer-events-none z-20">
                   <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-md shadow-[0_0_12px_#10B981]" />
                   <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-md shadow-[0_0_12px_#10B981]" />
@@ -2795,19 +2909,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-md shadow-[0_0_12px_#10B981]" />
                 </div>
 
-                {/* AI Scanning Status Badge */}
-                <div className="absolute top-4 left-4 bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/60 flex items-center gap-2 shadow-xl z-30">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0 shadow-md shadow-emerald-400" />
-                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300">
-                    AI Rod Scanning &bull; {currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1'}
+                {/* Active AI Scanning Tag */}
+                <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/50 flex items-center gap-2 shadow-xl z-30">
+                  <Loader2 size={13} className="text-emerald-400 animate-spin shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                    AI Scanning &bull; {currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1'}
                   </span>
                 </div>
 
-                {/* Zoom / Expand Tag (hidden on mobile to maximize canvas clarity) */}
                 <button
                   type="button"
                   onClick={() => setIsFullScreenOpen(true)}
-                  className="hidden md:flex absolute bottom-4 right-4 bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-xl text-[10px] font-bold text-slate-200 border border-white/10 shadow-md items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
+                  className="hidden md:flex absolute bottom-4 right-4 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[11px] font-bold text-slate-200 border border-white/15 shadow-md items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
                 >
                   <Maximize2 size={12} className="text-emerald-400" />
                   <span>Tap to Zoom</span>
@@ -2815,8 +2928,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
             )}
 
-            {/* Live WebRTC Video Stream (Fills viewfinder) */}
-            {/* object-contain: the viewfinder shows exactly the frame that will be saved (no hidden edges) */}
+            {/* Live WebRTC Video Stream */}
             <video
               ref={videoRef}
               playsInline
@@ -2835,7 +2947,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               }`}
             />
 
-            {/* Simulated / Fallback Shelf Photo when live video stream is connecting or unavailable */}
+            {/* Fallback Shelf Photo */}
             {!cameraStreamActive && (
               <img
                 src={fallbackShelfPhoto}
@@ -2845,10 +2957,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             )}
 
             {/* Soft edge darkening scrim */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/55 pointer-events-none" />
 
-            {/* Previous-bay guide: the right edge of the last bay, faded over the left of the frame.
-                Lining it up keeps the overlap consistent and makes the overlap measurement reliable. */}
+            {/* Previous-bay guide */}
             {ghostGuideUrl && (() => {
               const baseW = cameraStreamActive && videoDims.w && viewfinderSize.w ? viewfinderSize.w : 320;
               const baseH = cameraStreamActive && videoDims.h && viewfinderSize.h ? viewfinderSize.h : 480;
@@ -2868,8 +2979,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     className="absolute top-0 right-0 h-full max-w-none opacity-65 filter brightness-110 contrast-110"
                     style={{ width: `${Math.max(300, frame.width || baseW)}px`, objectFit: 'fill' }}
                   />
-                  <div className="absolute top-12 left-1 right-1 bg-black/90 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/90 shadow-md flex items-center justify-center text-center">
-                    <span className="text-[9px] font-black uppercase tracking-tight text-amber-300">
+                  <div className="absolute top-12 left-1 right-1 bg-black/85 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/80 shadow-md flex items-center justify-center text-center">
+                    <span className="text-[9px] font-bold uppercase tracking-tight text-amber-300">
                       Align with {aisleSessions[ghostGuideBayKey!]?.label || 'Bay 1'}
                     </span>
                   </div>
@@ -2879,34 +2990,33 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
             {/* Camera Guidance: Level Line & Banner */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-4 z-10">
-              {/* Top Viewfinder Banner */}
               <div className="w-full flex items-center justify-between pointer-events-auto gap-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-black/80 px-2.5 py-1 rounded-xl border border-emerald-500/40 backdrop-blur-md shadow-md truncate">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 bg-black/75 px-3 py-1 rounded-xl border border-white/15 backdrop-blur-md shadow-md truncate">
                   {currentSession?.label || 'Bay 1'} &bull; {category}
                 </span>
 
-                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-xl border flex items-center gap-1 backdrop-blur-md shadow-md shrink-0 ${
-                  isLevel 
-                    ? 'text-emerald-400 bg-black/80 border-emerald-500/50' 
-                    : 'text-rose-400 bg-black/80 border-rose-500/50'
-                }`}>
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-xl border flex items-center gap-1 backdrop-blur-md shadow-md shrink-0 ${
+                    isLevel
+                      ? 'text-emerald-300 bg-black/75 border-emerald-500/40'
+                      : 'text-rose-300 bg-black/75 border-rose-500/40'
+                  }`}
+                >
                   {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
                 </span>
               </div>
 
-              {/* Horizontal Level Line drawn across live camera view */}
               <div className="relative w-full flex items-center justify-center my-auto z-10">
-                <div 
+                <div
                   className={`w-full h-[2px] transition-colors duration-200 ${
-                    sensorsAvailable 
-                      ? isLevel 
-                        ? 'bg-[#22C55E] shadow-md shadow-emerald-400' 
-                        : 'bg-[#EF4444] shadow-md shadow-rose-500' 
+                    sensorsAvailable
+                      ? isLevel
+                        ? 'bg-[#22C55E] shadow-md shadow-emerald-400'
+                        : 'bg-[#EF4444] shadow-md shadow-rose-500'
                       : 'bg-emerald-400/80'
                   }`}
                 />
-                {/* Center tick indicator */}
-                <div 
+                <div
                   className={`absolute w-3.5 h-3.5 rounded-full border-2 transition-colors ${
                     sensorsAvailable
                       ? isLevel
@@ -2917,25 +3027,26 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 />
               </div>
 
-              {/* Bottom Guidance Cue (Desktop Only - Hidden on Mobile to avoid screen clutter) */}
               <div className="w-full hidden md:flex items-center justify-center pointer-events-auto">
-                <span className="text-[10px] font-medium text-slate-200 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 backdrop-blur-md shadow-md text-center max-w-sm truncate">
+                <span className="text-[11px] font-medium text-slate-200 bg-black/75 px-3.5 py-1.5 rounded-full border border-white/15 backdrop-blur-md shadow-md text-center max-w-sm truncate">
                   {ghostGuideUrl
-                    ? 'Line up the faded strip with the shelf • Tap shutter to snap'
-                    : 'Hold level • Tap shutter to snap'}
+                    ? 'Line up the faded strip with the shelf · Tap shutter to snap'
+                    : 'Hold level · Tap shutter to snap'}
                 </span>
               </div>
             </div>
 
-            {/* Camera Permission / Initialization Alert Box */}
+            {/* Camera Permission Alert Box */}
             {cameraErrorNotice && !cameraStreamActive && !showPostCapturePrompt && !pendingCapture && (
-              <div className="absolute inset-0 z-30 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center space-y-3 pointer-events-auto animate-fade-in">
-                <div className="p-3 rounded-2xl bg-amber-500/20 border border-amber-400/60 text-amber-300 shadow-lg">
-                  <AlertTriangle size={28} />
+              <div className="absolute inset-0 z-30 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center space-y-3 pointer-events-auto animate-fade-in">
+                <div className="p-3 rounded-2xl bg-amber-500/20 border border-amber-400/50 text-amber-300 shadow-lg">
+                  <AlertTriangle size={26} />
                 </div>
                 <div className="max-w-xs space-y-1">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-white">Camera Permission & Status</h4>
-                  <p className="text-[10px] text-amber-200/90 leading-relaxed font-medium">
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-white">
+                    Camera Permission &amp; Status
+                  </h4>
+                  <p className="text-[11px] text-amber-200/90 leading-relaxed font-medium">
                     {cameraErrorNotice}
                   </p>
                 </div>
@@ -2947,7 +3058,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       e.stopPropagation();
                       startCameraStream();
                     }}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 hover:brightness-110 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    className="w-full min-h-[44px] py-2.5 px-3 bg-[#10B981] hover:brightness-105 text-[#05231C] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                   >
                     <Camera size={15} />
                     <span>Re-request Camera Permission</span>
@@ -2959,7 +3070,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       e.stopPropagation();
                       cameraInputRef.current?.click();
                     }}
-                    className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-[11px] font-semibold rounded-xl flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    className="w-full min-h-[44px] py-2 px-3 bg-white/10 hover:bg-white/15 border border-white/20 text-slate-200 text-xs font-semibold rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                   >
                     <Upload size={13} />
                     <span>Snap via System Camera App</span>
@@ -2968,18 +3079,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
             )}
 
-            {/* Tap to Activate Live Stream Badge (When camera permission pending) */}
+            {/* Tap to Activate Live Stream Button */}
             {!cameraStreamActive && !cameraErrorNotice && !showPostCapturePrompt && !pendingCapture && (
-              <div className="absolute bottom-14 z-20 pointer-events-auto flex flex-col items-center space-y-1.5 animate-pulse">
+              <div className="absolute bottom-14 z-20 pointer-events-auto flex flex-col items-center space-y-2">
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     startCameraStream();
                   }}
-                  className="px-3.5 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xl border border-emerald-400/60 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  className="min-h-[44px] px-4 py-2 rounded-2xl bg-[#084C41] hover:bg-[#063D34] text-white font-bold text-xs shadow-xl border border-white/20 flex items-center gap-2 active:scale-95 cursor-pointer"
                 >
-                  <Camera size={14} />
+                  <Camera size={15} />
                   <span>Tap to Start Live Camera</span>
                 </button>
                 <button
@@ -2988,15 +3099,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     e.stopPropagation();
                     cameraInputRef.current?.click();
                   }}
-                  className="text-[9px] text-emerald-300 hover:text-white underline font-semibold bg-black/75 px-2 py-0.5 rounded"
+                  className="text-[11px] text-emerald-300 hover:text-white underline font-semibold bg-black/70 px-2.5 py-1 rounded-lg cursor-pointer"
                 >
                   Or snap with system camera
                 </button>
               </div>
             )}
 
-            {/* Review-before-upload: nothing is sent to n8n until the rep taps Upload.
-                For Bay 2+, the measured overlap with the previous bay is shaded; the rep can drag its edge. */}
+            {/* Review-before-upload */}
             {pendingCapture && (() => {
               const pc = pendingCapture;
               const label = aisleSessions[pc.bayKey]?.label || 'Bay';
@@ -3009,16 +3119,12 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               const seam = pendingSeam;
               const ovPct = seam ? seam.overlapFracRight * 100 : 0;
               const cutPct = seam ? seam.cutFracRight * 100 : 0;
-              const needsCheck = Boolean(prevKey) && !isMeasuringSeam && (!seam || seam.method !== 'manual') &&
-                (!seam || seam.confidence === 'low' || seam.confidence === 'none');
-              const confidenceText: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' };
 
               return (
                 <div
                   className="absolute inset-0 z-40 bg-black"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Photo frame (exactly the photo, no letterbox) */}
                   <div
                     ref={previewFrameRef}
                     className="absolute overflow-hidden touch-none select-none"
@@ -3033,7 +3139,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
                     {prevKey && seam && !isMeasuringSeam && (
                       <>
-                        {/* Overlap area (already photographed in the previous bay) */}
                         <div
                           className="absolute top-0 bottom-0 left-0 overflow-hidden bg-amber-500/25 pointer-events-none"
                           style={{ width: `${ovPct}%` }}
@@ -3052,16 +3157,14 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                             />
                           )}
                         </div>
-                        {/* Count line: left of it belongs to the previous bay */}
                         <div
                           className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400 pointer-events-none"
                           style={{ left: `${cutPct}%` }}
                         >
-                          <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-black text-emerald-200 bg-black/80 px-1 py-0.5 rounded border border-emerald-500/50">
+                          <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-bold text-emerald-200 bg-black/80 px-1.5 py-0.5 rounded border border-emerald-500/50">
                             Count line
                           </span>
                         </div>
-                        {/* Draggable overlap edge */}
                         <div
                           role="slider"
                           aria-label={`Where ${prevLabel} ends`}
@@ -3080,7 +3183,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                           <div className="absolute w-7 h-12 rounded-lg bg-amber-400 text-black text-[11px] font-black flex items-center justify-center shadow-lg">
                             ⟷
                           </div>
-                          <span className="absolute bottom-24 whitespace-nowrap text-[9px] font-black text-amber-200 bg-black/85 px-1.5 py-0.5 rounded border border-amber-500/50">
+                          <span className="absolute bottom-24 whitespace-nowrap text-[9px] font-bold text-amber-200 bg-black/85 px-1.5 py-0.5 rounded border border-amber-500/50">
                             {prevLabel} ends here
                           </span>
                         </div>
@@ -3088,9 +3191,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     )}
                   </div>
 
-                  {/* Header */}
                   <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/90 via-black/70 to-transparent flex items-center justify-between pointer-events-auto z-10">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-white">{label} &bull; Review before upload</span>
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
+                      {label} &bull; Review before upload
+                    </span>
                     <div className="flex items-center gap-2">
                       {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
                         <button
@@ -3099,7 +3203,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                           className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md transition-colors cursor-pointer ${
                             showAlignmentCheck ? 'bg-amber-400 text-black border border-amber-300' : 'bg-black/80 text-amber-300 border border-amber-500/50'
                           }`}
-                          title={`Overlay ${prevLabel} on the overlap to check alignment`}
                         >
                           {showAlignmentCheck ? 'Hide check' : 'Check overlap'}
                         </button>
@@ -3116,33 +3219,25 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             })()}
           </div>
 
-          {/* Capture Controls Dock: Desktop Left Sidebar + Mobile Bottom Shutter Bar */}
-          <div className={`order-2 md:order-1 md:w-[380px] md:shrink-0 flex flex-col justify-between shrink-0 py-2 px-3 md:p-5 mt-1 md:mt-0 backdrop-blur-md rounded-t-3xl md:rounded-3xl border-t md:border shadow-2xl z-20 select-none overflow-hidden transition-colors ${
-            isDark ? 'bg-[#132219]/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-950/15 text-slate-900'
-          }`}>
-            {/* Desktop-only Bay Queue & Operational Guidance */}
-            <div className="hidden md:flex flex-col gap-3">
-              <div className="flex items-center justify-between pb-2 border-b border-emerald-900/40">
+          {/* Capture Controls Dock: Frosted Glass Desktop Left Sidebar + Mobile Bottom Bar */}
+          <div className="order-2 md:order-1 md:w-[370px] md:shrink-0 flex flex-col justify-between shrink-0 py-2.5 px-3 md:p-5 mt-1.5 md:mt-0 glass-panel-strong rounded-t-3xl md:rounded-3xl z-20 select-none overflow-hidden">
+            <div className="hidden md:flex flex-col gap-3.5">
+              <div className="flex items-center justify-between pb-2.5 border-b border-[var(--border-glass)]">
                 <div>
-                  <h3 className={`text-sm font-black uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
                     Shelf Capture
                   </h3>
-                  <p className={`text-[11px] ${isDark ? 'text-emerald-300/80' : 'text-slate-600'}`}>
-                    Target: {category} &bull; {currentSession?.label || 'Bay 1'}
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    Target: {category} &middot; {currentSession?.label || 'Bay 1'}
                   </p>
                 </div>
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-bold ${
-                  isDark ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-100 border-emerald-300 text-emerald-900'
-                }`}>
+                <span className="text-xs font-mono font-bold tabular-nums text-[var(--accent-primary)]">
                   {capturedAisles.length} Captured
                 </span>
               </div>
 
-              {/* Bay Sequence Progress Card */}
-              <div className={`p-3 rounded-2xl border space-y-2 ${
-                isDark ? 'bg-black/50 border-emerald-900/50' : 'bg-emerald-50/70 border-emerald-200/80 shadow-xs'
-              }`}>
-                <div className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-800'}`}>
+              <div className="p-3.5 rounded-2xl glass-subtle space-y-2.5">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-primary)]">
                   Bay Sequence Queue
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -3155,35 +3250,30 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                         type="button"
                         key={k}
                         onClick={() => setCurrentAisle(k)}
-                        className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        className={`min-h-[36px] px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                           isCurrent
-                            ? 'bg-emerald-600 border-emerald-600 text-white ring-1 ring-emerald-500/40 shadow-xs'
-                            : isCaptured
                             ? isDark
-                              ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300 hover:border-emerald-500'
-                              : 'bg-emerald-100 border-emerald-300 text-emerald-900 font-bold hover:border-emerald-500'
-                            : isDark
-                            ? 'bg-black/40 border-slate-800 text-slate-500'
-                            : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                              ? 'bg-[#10B981] text-[#05231C] shadow-xs'
+                              : 'bg-[#084C41] text-white shadow-xs'
+                            : isCaptured
+                            ? 'glass-panel text-[var(--accent-primary)]'
+                            : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                         }`}
                       >
                         <span>{s?.label || `Bay ${idx + 1}`}</span>
-                        {isCaptured && <CheckCircle2 size={12} className={isCurrent ? 'text-white' : 'text-emerald-500'} />}
+                        {isCaptured && <CheckCircle2 size={12} />}
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Guidance & Alignment Helper */}
-              <div className={`p-3 rounded-2xl border space-y-1.5 ${
-                isDark ? 'bg-emerald-950/30 border-emerald-800/30' : 'bg-emerald-50/80 border-emerald-200'
-              }`}>
-                <div className={`flex items-center gap-1.5 text-xs font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-900'}`}>
-                  <Layers size={13} className="text-emerald-500" />
+              <div className="p-3.5 rounded-2xl glass-subtle space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--accent-primary)]">
+                  <Layers size={14} />
                   <span>Alignment Guidance</span>
                 </div>
-                <p className={`text-[11px] leading-relaxed ${isDark ? 'text-emerald-200/80' : 'text-slate-700'}`}>
+                <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
                   {ghostGuideUrl
                     ? 'Align the faded edge on the left with the shelf you previously photographed to ensure seamless multi-bay stitching.'
                     : 'Hold camera upright and level with the middle shelf. Tap Shutter when the center line turns green.'}
@@ -3191,7 +3281,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
             </div>
 
-            {/* Common Primary Actions: Single Unified Cardholder Deck */}
+            {/* Common Primary Actions */}
             <div className="space-y-2 pt-1 md:pt-4">
               {(() => {
                 const isPending = Boolean(pendingCapture);
@@ -3202,78 +3292,69 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   ? (aisleSessions[pendingCapture.bayKey]?.label || 'Bay 1')
                   : (currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1');
 
-                {/* State 1: Photo Clicked / Selected (Pending Upload Review) -> 70% Upload Bay [X] | 30% Retake */}
                 if (isPending) {
                   return (
                     <div className="flex items-center gap-2 w-full">
-                      {/* Primary 1: Upload Bay [X] - 70% Width */}
                       <button
                         type="button"
                         onClick={handleConfirmUpload}
                         disabled={isMeasuringSeam}
-                        className="w-[70%] h-12 md:h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg shadow-emerald-950/30 ring-2 ring-emerald-500/30 rounded-2xl hover:brightness-110"
+                        className={`w-[68%] h-12 md:h-14 disabled:opacity-50 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg rounded-2xl ${
+                          isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                        }`}
                       >
                         <Upload size={16} />
                         <span>Upload {currentLabel}</span>
                       </button>
 
-                      {/* Primary 2: Retake - 30% Width */}
                       <button
                         type="button"
                         onClick={handleDiscardPending}
-                        className={`w-[30%] h-12 md:h-14 border active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md rounded-2xl transition-all ${
-                          isDark
-                            ? 'border-rose-500/60 bg-rose-950/60 hover:bg-rose-900/80 text-rose-200'
-                            : 'border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-900 font-bold'
-                        }`}
+                        className="w-[32%] h-12 md:h-14 glass-subtle border-rose-500/35 text-rose-600 dark:text-rose-300 active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer rounded-2xl transition-all"
                       >
-                        <RefreshCw size={14} className={isDark ? 'text-rose-400' : 'text-rose-700'} />
+                        <RefreshCw size={14} />
                         <span>Retake</span>
                       </button>
                     </div>
                   );
                 }
 
-                {/* State 2: Once Uploaded / Confirmed -> 50% Continue to POSM | 50% Add One More Bay */}
                 if (hasPhotoForCurrentBay) {
                   return (
                     <div className="flex items-center gap-2 w-full">
                       <button
                         type="button"
                         onClick={handleDoneShooting}
-                        className="w-1/2 h-12 md:h-14 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-400 active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                        className={`w-1/2 h-12 md:h-14 active:scale-[0.97] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                        }`}
                       >
-                        <CheckCircle2 size={16} className="text-white stroke-[2.5]" />
-                        <span>Continue to POSM</span>
+                        <CheckCircle2 size={16} />
+                        <span className="whitespace-nowrap">Continue POSM</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={handleAddNewBay}
-                        className={`w-1/2 h-12 md:h-14 border active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
-                          isDark
-                            ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-500/50 text-emerald-200'
-                            : 'bg-emerald-100/90 hover:bg-emerald-200 border-emerald-400 text-emerald-950 font-bold shadow-xs'
-                        }`}
+                        className="w-1/2 h-12 md:h-14 glass-subtle active:scale-[0.97] font-bold text-xs text-[var(--accent-primary)] rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                       >
-                        <Plus size={15} className={isDark ? 'text-emerald-400' : 'text-emerald-800'} />
-                        <span>Add One More Bay</span>
+                        <Plus size={15} />
+                        <span className="whitespace-nowrap">Add One More Bay</span>
                       </button>
                     </div>
                   );
                 }
 
-                {/* State 3: Initial -> 70% Shoot Bay [X] | 30% Gallery */}
                 return (
                   <div className="flex items-center gap-2 w-full">
                     <button
                       type="button"
                       onClick={handleManualShutter}
-                      className="w-[70%] h-12 md:h-14 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.97] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/30 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer ring-2 ring-emerald-500/30"
+                      className={`w-[68%] h-12 md:h-14 active:scale-[0.97] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                      }`}
                     >
-                      <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                        <Camera size={15} className="text-white stroke-[2.5]" />
-                      </div>
+                      <Camera size={16} />
                       <span>Shoot {currentLabel}</span>
                     </button>
 
@@ -3281,13 +3362,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       type="button"
                       onClick={() => galleryInputRef.current?.click()}
                       disabled={Boolean(pendingCapture)}
-                      className={`w-[30%] h-12 md:h-14 border disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
-                        isDark
-                          ? 'bg-[#132219]/90 hover:bg-[#1b3024] text-emerald-200 border-emerald-700/60'
-                          : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-950/20'
-                      }`}
+                      className="w-[32%] h-12 md:h-14 glass-subtle text-[var(--text-primary)] disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                     >
-                      <Upload size={14} className="text-emerald-500" />
+                      <Upload size={14} className="text-[var(--accent-primary)]" />
                       <span>Gallery</span>
                     </button>
                   </div>
@@ -3321,41 +3398,30 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       )}
 
       {/* ================= STEP 3: RESULTS ================= */}
-      {/* Responsive layout: Split 2-Column on Desktop/Tablet, 58/42 Zero-Scroll on Mobile */}
       {step === 'RESULTS' && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 h-full overflow-hidden">
-          {/* Controls & Brand Facings Dock (Desktop Left Column, Mobile Bottom 42% Area) */}
-          <div className={`order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full md:rounded-3xl md:border overflow-hidden shadow-xl min-h-0 pt-1 md:pt-4 ${
-            isDark ? 'bg-transparent md:bg-[#132219]/80 md:border-emerald-900/60 text-white' : 'bg-transparent md:bg-white md:border-emerald-950/15 text-slate-900'
-          }`}>
-            {/* Dynamic Results Tab Strip: ALL | BAY 1 | BAY 2 ... + Add Bay */}
-            <div className="flex items-center justify-between pb-1.5 gap-1 shrink-0">
-              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-                {/* Show ALL tab if more than 1 bay captured */}
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 h-full overflow-hidden pt-1.5">
+          {/* Controls & Brand Facings Dock */}
+          <div className="order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full md:glass-panel md:rounded-3xl md:p-4 overflow-hidden min-h-0 pt-1.5">
+            {/* Dynamic Results Tab Strip */}
+            <div className="flex items-center justify-between pb-2 gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                 {capturedAisles.length > 1 && (
                   <button
                     type="button"
                     onClick={() => setResultsAisleView('ALL')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                    className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 tabular-nums ${
                       resultsAisleView === 'ALL'
-                        ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
-                        : isDark
-                        ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white'
-                        : 'bg-white text-emerald-900 border border-emerald-300 hover:bg-emerald-50'
+                        ? isDark
+                          ? 'bg-[#10B981] text-[#05231C]'
+                          : 'bg-[#084C41] text-white'
+                        : 'glass-subtle text-[var(--text-primary)]'
                     }`}
                   >
                     <span>ALL</span>
-                    <span className={`text-[9px] font-bold px-1 py-0.2 rounded ${
-                      resultsAisleView === 'ALL'
-                        ? 'bg-white/20 text-white'
-                        : isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900'
-                    }`}>
-                      {combinedTotalFacings}f
-                    </span>
+                    <span className="opacity-80">{combinedTotalFacings}f</span>
                   </button>
                 )}
 
-                {/* Bay tabs: All captured bays are status === 'done' */}
                 {capturedAisles.map((k) => {
                   const s = aisleSessions[k];
                   if (!s) return null;
@@ -3365,43 +3431,34 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     <button
                       key={k}
                       type="button"
-                      onClick={() => {
-                        setResultsAisleView(k);
-                      }}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                      onClick={() => setResultsAisleView(k)}
+                      className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 tabular-nums ${
                         isSelected
-                          ? 'bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/50'
-                          : isDark
-                          ? 'bg-[#132219] text-emerald-300 border border-emerald-800/60 hover:text-white'
-                          : 'bg-white text-emerald-900 border border-emerald-300 hover:bg-emerald-50'
+                          ? isDark
+                            ? 'bg-[#10B981] text-[#05231C]'
+                            : 'bg-[#084C41] text-white'
+                          : 'glass-subtle text-[var(--text-primary)]'
                       }`}
                     >
                       <span>{s.label}</span>
-                      <span className={`text-[9px] font-black px-1 py-0.2 rounded ${
-                        isSelected
-                          ? 'bg-white/20 text-white'
-                          : isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900'
-                      }`}>
-                        {s.totalFacings ?? 0}f
-                      </span>
+                      <span className="opacity-80">{s.totalFacings ?? 0}f</span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Flexible + Add Bay Button: Always available to scan another bay */}
               <button
                 type="button"
                 onClick={handleAddNewBay}
-                className="px-2.5 py-1.5 rounded-xl text-[10px] font-black text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                className="min-h-[34px] px-2.5 py-1 rounded-xl text-[11px] font-bold text-[var(--accent-primary)] glass-subtle hover:bg-white/80 dark:hover:bg-white/10 transition-all cursor-pointer flex items-center gap-1 shrink-0"
                 title="Shoot another bay"
               >
-                <Plus size={11} />
+                <Plus size={12} />
                 <span>Add Bay</span>
               </button>
             </div>
 
-            {/* Bay overlap summary banner: each bottle in an overlap is counted by one bay only */}
+            {/* Bay overlap summary banner */}
             {seamSummaries.length > 0 && (() => {
               const isFlagged = (j: typeof seamSummaries[number]) =>
                 !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
@@ -3413,16 +3470,16 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 return { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' }[j.seam.confidence];
               };
               return (
-                <div className="pb-1.5 shrink-0 animate-fade-in space-y-1.5">
+                <div className="pb-2 shrink-0 animate-fade-in space-y-1.5">
                   <button
                     type="button"
                     onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
-                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-2xl border text-xs font-bold transition-all cursor-pointer ${
                       kept
-                        ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+                        ? 'glass-subtle text-[var(--text-secondary)]'
                         : flaggedCount > 0
-                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
-                        : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                        ? 'bg-amber-500/12 border-amber-500/40 text-amber-700 dark:text-amber-200'
+                        : 'glass-subtle border-[var(--border-glass-strong)] text-[var(--accent-primary)]'
                     }`}
                   >
                     <span className="flex items-center gap-2 truncate">
@@ -3440,16 +3497,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     </span>
                   </button>
 
-                  {/* Desktop Inline Expanded Overlap Panel */}
                   {isDuplicatePanelExpanded && (
-                    <div className={`hidden md:block p-2.5 rounded-2xl space-y-2 text-left border ${
-                      isDark ? 'bg-black/90 border-emerald-900/60 text-white' : 'bg-white border-emerald-200 text-slate-900 shadow-sm'
-                    }`}>
+                    <div className="hidden md:block p-3 rounded-2xl space-y-2 text-left glass-subtle">
                       {seamSummaries.map((j) => (
                         <div
                           key={`${j.leftKey}-${j.rightKey}`}
-                          className={`flex items-center justify-between text-[11px] px-2 py-1.5 rounded-lg border ${
-                            isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-200' : isDark ? 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-xl border ${
+                            isFlagged(j)
+                              ? 'bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-200'
+                              : 'glass-panel text-[var(--text-primary)]'
                           }`}
                         >
                           <span className="font-bold">
@@ -3457,18 +3513,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                             <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
                           </span>
                           <span className="flex items-center gap-1.5 shrink-0">
-                            {!kept && <span className="font-mono">{j.excluded} once</span>}
-                            <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded-full border border-current/40">{confidenceLabel(j)}</span>
+                            {!kept && <span className="font-mono tabular-nums">{j.excluded} once</span>}
+                            <span className="text-[10px] uppercase font-bold">{confidenceLabel(j)}</span>
                           </span>
                         </div>
                       ))}
-                      <p className="text-[10px] text-emerald-300/80">
-                        Open a bay tab to see count lines. <span className="text-red-400 font-bold">Red ✕</span> = counted in neighbouring bay. <span className="text-emerald-300 font-bold">Green</span> = counted here.
+                      <p className="text-[11px] text-[var(--text-secondary)]">
+                        Open a bay tab to see count lines. Red ✕ = counted in neighbouring bay. Green = counted here.
                       </p>
                       <button
                         type="button"
                         onClick={kept ? handleRemoveDuplicates : handleKeepAllDuplicates}
-                        className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] uppercase tracking-wider cursor-pointer active:scale-[0.98]"
+                        className="w-full py-2 rounded-xl glass-panel text-[var(--text-primary)] font-bold text-xs cursor-pointer active:scale-[0.98]"
                       >
                         {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
                       </button>
@@ -3478,48 +3534,37 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               );
             })()}
 
-            {/* Brand Facings Area: Scrollable rows and steppers */}
+            {/* Brand Facings Area */}
             <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden">
-              <div className="flex items-center justify-between px-1 pb-1 shrink-0">
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                    isDark ? 'text-emerald-300/70' : 'text-emerald-950/70'
-                  }`}>
+              <div className="flex items-center justify-between px-1 pb-1.5 shrink-0">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     Brand Facings
                   </span>
-                  <span className={`text-[9px] font-black px-1.5 py-0.2 rounded border ${
-                    isDark ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/40' : 'text-emerald-800 bg-emerald-100 border-emerald-300'
-                  }`}>
-                    {resultsAisleView === 'ALL' ? 'ALL' : viewSession?.label}
-                  </span>
-                  <span className="text-[10px] font-bold text-emerald-400">
-                    Total: {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}
+                  <span className="font-bold text-[var(--accent-primary)] tabular-nums">
+                    {resultsAisleView === 'ALL' ? 'ALL' : viewSession?.label} &middot;{' '}
+                    {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}
                   </span>
                 </div>
 
-                {/* Add Competitor SKU button */}
                 <button
                   type="button"
                   onClick={() => setIsAddBrandOpen(true)}
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer ${
-                    isDark
-                      ? 'text-emerald-300 hover:text-white bg-[#132219] hover:bg-[#1b3024] border-emerald-800/60'
-                      : 'text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
-                  }`}
+                  className="min-h-[32px] text-xs font-bold px-2.5 py-1 rounded-xl glass-subtle text-[var(--accent-primary)] flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <Plus size={11} />
-                  <span>+ Brand</span>
+                  <Plus size={12} />
+                  <span>Brand</span>
                 </button>
               </div>
 
               {/* Scrollable Brand List */}
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 px-0.5 pb-1 scroll-smooth">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 px-0.5 pb-2 scroll-smooth">
                 {allBrandKeys.map((brand) => {
-                  const count = resultsAisleView === 'ALL' 
-                    ? (combinedCounts[brand] ?? 0) 
+                  const count = resultsAisleView === 'ALL'
+                    ? (combinedCounts[brand] ?? 0)
                     : (viewSession?.counts[brand] ?? 0);
                   const upperBrand = brand.toUpperCase().trim();
-                  const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#16A34A';
+                  const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#084C41';
                   const isPrimary = category === 'Edible Oil'
                     ? ['YARA', 'ZAIN', 'DAWI', 'AL RAI', 'ADEERA'].includes(upperBrand)
                     : category === 'Flour'
@@ -3530,83 +3575,58 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     ? combinedOrigCounts[brand]
                     : (viewSession?.seamAdjustedCounts?.[brand] ?? viewSession?.originalAiCounts[brand]);
 
-                  // Delta tag appears ONLY once a value has changed from its initial count
                   const hasChangedFromInitial = origCount !== undefined && count !== origCount;
                   const diff = hasChangedFromInitial ? count - origCount : 0;
 
                   return (
                     <div
                       key={brand}
-                      className={`border rounded-2xl px-2.5 py-1 md:py-1.5 flex items-center justify-between transition-all ${
+                      className={`rounded-2xl px-3 py-2 flex items-center justify-between transition-all ${
                         hasChangedFromInitial
-                          ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/30'
+                          ? 'glass-panel border-amber-500/50 ring-1 ring-amber-500/25'
                           : isPrimary
-                          ? isDark
-                            ? 'border-emerald-500/50 bg-[#132219]/90 shadow-sm'
-                            : 'border-emerald-500/60 bg-emerald-50/50 shadow-xs'
-                          : isDark
-                          ? 'border-emerald-900/40 bg-[#132219]/60'
-                          : 'border-emerald-950/10 bg-white shadow-xs'
+                          ? 'glass-panel border-[var(--border-glass-strong)]'
+                          : 'glass-subtle'
                       }`}
                     >
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <div
-                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
                           style={{ backgroundColor: brandColor }}
                         />
-                        <div>
-                          <span className={`text-xs font-black flex items-center gap-1 ${
-                            isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-                          }`}>
-                            {brand}
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold flex items-center gap-1.5 text-[var(--text-primary)]">
+                            <span className="truncate">{brand}</span>
                             {isPrimary && (
-                              <span className={`text-[8px] font-black uppercase px-1 py-0.2 rounded border ${
-                                isDark
-                                  ? 'text-emerald-300 bg-emerald-500/20 border-emerald-500/40'
-                                  : 'text-emerald-800 bg-emerald-100 border-emerald-300'
-                              }`}>
+                              <span className="text-[10px] font-extrabold text-[var(--accent-primary)]">
                                 {category === 'Edible Oil' ? 'QFI' : 'QFM'}
                               </span>
                             )}
                           </span>
-                          {/* Delta tag ONLY once modified from initial count */}
                           {hasChangedFromInitial && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[8px] font-extrabold text-amber-500 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
-                                Initial {origCount} &rarr; Adjusted {count} ({diff > 0 ? `+${diff}` : diff})
-                              </span>
-                            </div>
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 tabular-nums block">
+                              Initial {origCount} &rarr; Adjusted {count} ({diff > 0 ? `+${diff}` : diff})
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Steppers visible at all times */}
-                      <div className="flex items-center space-x-1.5 md:space-x-2">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           onClick={() => handleUpdateCount(brand, -1)}
-                          className={`w-6 h-6 md:w-7 md:h-7 rounded-lg md:rounded-xl font-bold text-sm md:text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
-                            isDark
-                              ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
-                              : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
-                          }`}
+                          className="w-8 h-8 rounded-xl glass-panel font-bold text-sm text-[var(--text-primary)] flex items-center justify-center active:scale-95 transition-all cursor-pointer"
                           aria-label={`Decrease ${brand}`}
                         >
                           -
                         </button>
-                        <span className={`w-5 md:w-6 text-center text-xs md:text-sm font-black tabular-nums ${
-                          isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-                        }`}>
+                        <span className="w-7 text-center text-sm font-extrabold tabular-nums text-[var(--accent-primary)]">
                           {count}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleUpdateCount(brand, 1)}
-                          className={`w-6 h-6 md:w-7 md:h-7 rounded-lg md:rounded-xl font-bold text-sm md:text-base flex items-center justify-center border active:scale-95 transition-all cursor-pointer ${
-                            isDark
-                              ? 'bg-[#0B120E] text-emerald-200 border-emerald-900/60 hover:border-emerald-600'
-                              : 'bg-emerald-50/70 text-emerald-900 border-emerald-200 hover:border-emerald-400'
-                          }`}
+                          className="w-8 h-8 rounded-xl glass-panel font-bold text-sm text-[var(--text-primary)] flex items-center justify-center active:scale-95 transition-all cursor-pointer"
                           aria-label={`Increase ${brand}`}
                         >
                           +
@@ -3618,53 +3638,55 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
 
               {/* Save Action Bar Dock */}
-              <div className={`pt-2 pb-1 space-y-1.5 shrink-0 border-t ${
-                isDark ? 'border-emerald-900/40' : 'border-slate-200'
-              }`}>
+              <div className="pt-2 pb-1 space-y-1.5 shrink-0 border-t border-[var(--border-glass)]">
                 <button
                   type="button"
                   onClick={handleFinalSave}
                   disabled={!isSaveEnabled}
-                  className="w-full py-3.5 bg-gradient-to-r from-[#047857] via-[#059669] to-[#10B981] active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
+                  className={`w-full min-h-[48px] py-3 active:scale-[0.99] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-2 hover:brightness-105 transition-all cursor-pointer disabled:opacity-50 ${
+                    isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                  }`}
                 >
                   <CheckCircle2 size={16} />
                   <span>
-                    Confirm &amp; Save Category Audit ({completedAisles.length} Bay{completedAisles.length > 1 ? 's' : ''})
+                    Confirm &amp; Save ({completedAisles.length} Bay{completedAisles.length > 1 ? 's' : ''})
                   </span>
                 </button>
 
-                <div className="flex items-center justify-center gap-4 text-[10px]">
+                <div className="flex items-center justify-center gap-5 text-xs">
                   <button
                     type="button"
                     onClick={() => setStep('POSM')}
-                    className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer py-1"
+                    className="text-[var(--accent-primary)] font-semibold hover:underline flex items-center gap-1 cursor-pointer py-1"
                   >
-                    <ShieldCheck size={11} /> Review POSM
+                    <ShieldCheck size={12} /> Review POSM
                   </button>
                   <button
                     type="button"
                     onClick={() => setStep('CAPTURE')}
-                    className="text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer py-1"
+                    className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-semibold flex items-center gap-1 cursor-pointer py-1"
                   >
-                    <Camera size={11} /> Return to Camera
+                    <Camera size={12} /> Return to Camera
                   </button>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Shelf Image Preview Canvas (Desktop Right Column, Mobile Top 58% Canvas) */}
-          <div 
+          {/* Shelf Image Preview Canvas */}
+          <div
             ref={shelfContainerRef}
             onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-            className="order-1 md:order-2 md:flex-1 h-[58%] md:h-full shrink-0 min-h-[220px] bg-black rounded-3xl border border-emerald-900/60 overflow-hidden shadow-2xl relative flex items-center justify-center cursor-pointer group"
+            className="order-1 md:order-2 md:flex-1 h-[54%] md:h-full shrink-0 min-h-[210px] bg-black rounded-3xl border border-[var(--border-glass-strong)] overflow-hidden shadow-xl relative flex items-center justify-center cursor-pointer group"
             title="Tap photo to swap between Annotated and Raw view"
           >
             {isStitchingPanorama ? (
               <div className="flex flex-col items-center justify-center p-4 text-center text-emerald-300">
                 <Loader2 size={24} className="animate-spin text-emerald-400 mb-2" />
                 <p className="text-xs font-bold text-white">Assembling Multi-Bay Panorama…</p>
-                <p className="text-[10px] text-emerald-400/80 mt-0.5">Stitching {capturedBaySessions.length} bays left-to-right</p>
+                <p className="text-[11px] text-emerald-400/80 mt-0.5">
+                  Stitching {capturedBaySessions.length} bays left-to-right
+                </p>
               </div>
             ) : !resolvedImgSrc ? (
               <div className="flex flex-col items-center justify-center p-4 text-center text-amber-300">
@@ -3682,8 +3704,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               />
             )}
 
-            {/* Duplicate Bottles Shelf View Highlight: Pixel-Perfect Overlay */}
-            <div 
+            <div
               className="absolute pointer-events-none overflow-hidden z-10"
               style={
                 displayedImgRect
@@ -3693,24 +3714,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       width: `${displayedImgRect.width}px`,
                       height: `${displayedImgRect.height}px`
                     }
-                  : {
-                      inset: 0
-                    }
+                  : { inset: 0 }
               }
             >
               {renderSeamOverlays(false)}
             </div>
 
-            {/* Tap-to-swap Mode indicator badge */}
-            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-emerald-500/40 text-[9px] font-bold text-emerald-300 flex items-center gap-1 pointer-events-none z-20">
-              <span>
-                {resultsAisleView === 'ALL' && capturedBaySessions.length > 1
-                  ? (showRawPhotoComparison ? 'Raw Panorama (Tap for AI)' : 'Annotated Panorama (Tap for Raw)')
-                  : (showRawPhotoComparison ? 'Raw Photo (Tap for AI)' : 'AI Annotated (Tap for Raw)')}
-              </span>
+            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 text-[10px] font-bold text-emerald-300 pointer-events-none z-20">
+              {resultsAisleView === 'ALL' && capturedBaySessions.length > 1
+                ? (showRawPhotoComparison ? 'Raw Panorama (Tap for AI)' : 'Annotated Panorama (Tap for Raw)')
+                : (showRawPhotoComparison ? 'Raw Photo (Tap for AI)' : 'AI Annotated (Tap for Raw)')}
             </div>
 
-            {/* Enlarge / Full Screen Button */}
             {Boolean(resolvedImgSrc) && (
               <button
                 type="button"
@@ -3719,29 +3734,28 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   setIsFullScreenOpen(true);
                   setZoomScale(1);
                 }}
-                className="absolute top-2.5 right-2.5 z-20 px-2.5 py-1 rounded-xl bg-black/85 hover:bg-black border border-emerald-500/50 hover:border-emerald-400 text-emerald-300 hover:text-white text-[10px] font-bold shadow-lg backdrop-blur-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer group/btn"
+                className="absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-xl bg-black/80 hover:bg-black border border-white/20 text-emerald-300 hover:text-white text-[11px] font-bold shadow-lg backdrop-blur-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                 title="View image in full screen with zoom"
                 aria-label="Enlarge image to full screen"
               >
-                <Maximize2 size={12} className="stroke-[2.5] text-emerald-400 group-hover/btn:scale-110 transition-transform" />
+                <Maximize2 size={12} className="text-emerald-400" />
                 <span>Enlarge</span>
               </button>
             )}
 
-            {/* Bottom Scrim Info */}
-            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] text-emerald-100 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-emerald-900/70 shadow-sm pointer-events-auto z-20">
-              <span className="font-semibold truncate max-w-[180px]">
+            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-[11px] text-white bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/15 shadow-sm pointer-events-auto z-20">
+              <span className="font-semibold truncate max-w-[190px]">
                 {resultsAisleView === 'ALL'
                   ? `${category} Panorama (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
-                  : `${category} • ${viewSession?.label || 'Bay'}`}
+                  : `${category} · ${viewSession?.label || 'Bay'}`}
               </span>
-              <span className="text-[#4ADE80] font-black shrink-0">
+              <span className="text-emerald-300 font-extrabold tabular-nums shrink-0">
                 {primaryLabel}: {primarySharePct}%
               </span>
             </div>
           </div>
 
-          {/* Mobile-Only Slide-Up Sheet for Overlap Details */}
+          {/* Mobile Slide-Up Sheet for Overlap Details */}
           {isDuplicatePanelExpanded && seamSummaries.length > 0 && (() => {
             const isFlagged = (j: typeof seamSummaries[number]) =>
               !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
@@ -3754,19 +3768,19 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             return (
               <>
                 <div
-                  className="fixed inset-0 bg-black/75 z-40 md:hidden"
+                  className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
                   onClick={() => setIsDuplicatePanelExpanded(false)}
                 />
-                <div className="fixed inset-x-0 bottom-0 z-50 md:hidden bg-[#0c1811] border-t border-emerald-500/50 rounded-t-3xl p-4 shadow-2xl space-y-3 max-h-[75vh] overflow-y-auto animate-fade-in">
-                  <div className="w-10 h-1 bg-emerald-800/40 rounded-full mx-auto" />
+                <div className="fixed inset-x-0 bottom-0 z-50 md:hidden glass-panel-strong rounded-t-3xl p-4 space-y-3 max-h-[75vh] overflow-y-auto animate-fade-in">
+                  <div className="w-10 h-1 bg-[var(--border-glass-strong)] rounded-full mx-auto" />
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
                       Bay Overlap Deduplication
                     </h4>
                     <button
                       type="button"
                       onClick={() => setIsDuplicatePanelExpanded(false)}
-                      className="text-xs text-slate-400 hover:text-white px-2 py-0.5"
+                      className="text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2 py-1"
                     >
                       Close
                     </button>
@@ -3774,8 +3788,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   {seamSummaries.map((j) => (
                     <div
                       key={`${j.leftKey}-${j.rightKey}`}
-                      className={`flex items-center justify-between text-[11px] px-2.5 py-2 rounded-xl border ${
-                        isFlagged(j) ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' : 'bg-[#132219]/80 border-emerald-900/50 text-emerald-100'
+                      className={`flex items-center justify-between text-xs px-3 py-2 rounded-xl border ${
+                        isFlagged(j)
+                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-200'
+                          : 'glass-subtle text-[var(--text-primary)]'
                       }`}
                     >
                       <span className="font-bold">
@@ -3783,13 +3799,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                         <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
                       </span>
                       <span className="flex items-center gap-1.5 shrink-0">
-                        {!kept && <span className="font-mono">{j.excluded} once</span>}
-                        <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded-full border border-current/40">{confidenceLabel(j)}</span>
+                        {!kept && <span className="font-mono tabular-nums">{j.excluded} once</span>}
+                        <span className="text-[10px] uppercase font-bold">{confidenceLabel(j)}</span>
                       </span>
                     </div>
                   ))}
-                  <p className="text-[10px] text-emerald-300/80 leading-relaxed">
-                    Open a bay tab to see its count lines. <span className="text-red-400 font-bold">Red ✕</span> = counted in the neighbouring bay (tap to count here too). <span className="text-emerald-300 font-bold">Green</span> = counted here (tap to undo).
+                  <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                    Open a bay tab to see count lines. Red ✕ = counted in neighbouring bay. Green = counted here.
                   </p>
                   <button
                     type="button"
@@ -3798,7 +3814,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       else handleKeepAllDuplicates();
                       setIsDuplicatePanelExpanded(false);
                     }}
-                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-[0.98]"
+                    className="w-full min-h-[44px] py-2.5 rounded-2xl glass-panel text-[var(--text-primary)] font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-[0.98]"
                   >
                     {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
                   </button>
@@ -3809,22 +3825,44 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         </div>
       )}
 
+      {/* ================= STEP 4: PLANOGRAM SCORECARD ================= */}
+      {step === 'SCORECARD' && scorecardResult && (
+        <PlanogramScorecard
+          outlet={outlet}
+          category={category}
+          result={scorecardResult}
+          isSubmittingAck={isSubmittingAck}
+          onDone={async (executiveNote) => {
+            setIsSubmittingAck(true);
+            try {
+              await syncPlanogramScorecardAck({
+                visitId,
+                outletId: outlet.id,
+                outletName: outlet.name,
+                sapCode: outlet.code,
+                category,
+                rep: userProfile?.name || userProfile?.repId || '#9',
+                compliance: scorecardResult,
+                executiveNote
+              });
+            } finally {
+              setIsSubmittingAck(false);
+              onBack();
+            }
+          }}
+        />
+      )}
+
       {/* Quick Add Brand Modal */}
       {isAddBrandOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div className={`w-full max-w-xs border rounded-3xl p-4 shadow-2xl space-y-3 ${
-            isDark ? 'bg-[#132219] border-emerald-900/60' : 'bg-white border-emerald-950/15'
-          }`}>
-            <h3 className={`text-xs font-black uppercase tracking-wider ${
-              isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-            }`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-xs glass-panel-strong rounded-3xl p-5 space-y-3.5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
               Add Competitor SKU / Brand
             </h3>
             <form onSubmit={handleAddBrandSubmit} className="space-y-3">
               <div>
-                <label className={`text-[10px] font-bold block mb-1 ${
-                  isDark ? 'text-emerald-300/80' : 'text-slate-600'
-                }`}>
+                <label className="text-[11px] font-bold block mb-1 text-[var(--text-secondary)]">
                   Brand Name
                 </label>
                 <input
@@ -3833,43 +3871,29 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                   placeholder="e.g. MAZOLA, AFIA"
                   value={newBrandName}
                   onChange={(e) => setNewBrandName(e.target.value)}
-                  className={`w-full rounded-xl px-3 py-2 text-xs uppercase focus:outline-none focus:ring-2 focus:ring-emerald-500/40 border transition-all ${
-                    isDark
-                      ? 'bg-[#0B120E] border-emerald-900/60 text-[#F0FDF4] placeholder-slate-600'
-                      : 'bg-emerald-50/40 border-emerald-200 text-slate-900 placeholder-slate-400'
-                  }`}
+                  className="w-full min-h-[42px] rounded-xl px-3 py-2 text-xs uppercase glass-subtle text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/40"
                 />
               </div>
 
               <div>
-                <label className={`text-[10px] font-bold block mb-1 ${
-                  isDark ? 'text-emerald-300/80' : 'text-slate-600'
-                }`}>
+                <label className="text-[11px] font-bold block mb-1 text-[var(--text-secondary)]">
                   Detected Facings
                 </label>
-                <div className={`flex items-center justify-between border rounded-xl px-3 py-1.5 ${
-                  isDark ? 'bg-[#0B120E] border-emerald-900/60' : 'bg-emerald-50/40 border-emerald-200'
-                }`}>
+                <div className="flex items-center justify-between glass-subtle rounded-xl px-3 py-1.5">
                   <button
                     type="button"
                     onClick={() => setNewBrandCount(Math.max(1, newBrandCount - 1))}
-                    className={`w-7 h-7 rounded-lg font-bold flex items-center justify-center active:scale-95 cursor-pointer ${
-                      isDark ? 'bg-[#132219] text-white' : 'bg-white text-slate-900 shadow-xs'
-                    }`}
+                    className="w-8 h-8 rounded-lg glass-panel font-bold flex items-center justify-center active:scale-95 cursor-pointer text-[var(--text-primary)]"
                   >
                     -
                   </button>
-                  <span className={`font-black text-sm tabular-nums ${
-                    isDark ? 'text-[#4ADE80]' : 'text-emerald-800'
-                  }`}>
+                  <span className="font-extrabold text-sm tabular-nums text-[var(--accent-primary)]">
                     {newBrandCount}
                   </span>
                   <button
                     type="button"
                     onClick={() => setNewBrandCount(newBrandCount + 1)}
-                    className={`w-7 h-7 rounded-lg font-bold flex items-center justify-center active:scale-95 cursor-pointer ${
-                      isDark ? 'bg-[#132219] text-white' : 'bg-white text-slate-900 shadow-xs'
-                    }`}
+                    className="w-8 h-8 rounded-lg glass-panel font-bold flex items-center justify-center active:scale-95 cursor-pointer text-[var(--text-primary)]"
                   >
                     +
                   </button>
@@ -3880,15 +3904,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsAddBrandOpen(false)}
-                  className={`flex-1 py-2 text-xs font-semibold rounded-xl cursor-pointer ${
-                    isDark ? 'text-slate-400 hover:text-white bg-[#0B120E]' : 'text-slate-600 hover:text-slate-900 bg-slate-100'
-                  }`}
+                  className="flex-1 min-h-[42px] py-2 text-xs font-semibold rounded-xl glass-subtle text-[var(--text-secondary)] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 text-xs font-black text-white bg-gradient-to-r from-[#047857] to-[#10B981] rounded-xl hover:brightness-110 shadow-md shadow-emerald-950/30 cursor-pointer"
+                  className={`flex-1 min-h-[42px] py-2 text-xs font-bold rounded-xl shadow-md cursor-pointer ${
+                    isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+                  }`}
                 >
                   Add Brand
                 </button>
@@ -3900,100 +3924,84 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
       {/* Full Screen Image Lightbox Modal with Pan & Zoom */}
       {isFullScreenOpen && currentLightboxImage && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between overflow-hidden select-none animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="Full screen image preview with zoom"
         >
-          {/* Top Control Bar */}
-          <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-black/90 border-b border-emerald-900/60 shrink-0 z-30 gap-2">
+          <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 bg-black/90 border-b border-white/10 shrink-0 z-30 gap-2">
             <div className="flex items-center gap-2 truncate pr-1">
-              <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[120px] sm:max-w-xs">
+              <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[140px] sm:max-w-xs">
                 {step === 'CAPTURE'
-                  ? `${category} • ${aisleSessions[lastCapturedAisle]?.label || currentSession?.label || 'Bay 1'} (Photo Preview)`
+                  ? `${category} · ${aisleSessions[lastCapturedAisle]?.label || currentSession?.label || 'Bay 1'}`
                   : resultsAisleView === 'ALL'
-                  ? `${category} Panorama (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
-                  : `${category} • ${viewSession?.label || 'Bay'}`}
-              </span>
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-lg border border-emerald-500/40 shrink-0 hidden xs:inline">
-                {step === 'CAPTURE' ? 'Original Photo' : (showRawPhotoComparison ? 'Raw' : 'AI')}
+                  ? `${category} Panorama (${completedAisles.length} Bays)`
+                  : `${category} · ${viewSession?.label || 'Bay'}`}
               </span>
             </div>
 
-            {/* Action & Zoom Controls */}
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Toggle Raw / Annotated (Only on Results Tab) */}
+            <div className="flex items-center gap-1.5 shrink-0">
               {step === 'RESULTS' && (
                 <button
                   type="button"
                   onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-                  className="px-2 sm:px-2.5 py-1 text-[11px] font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white active:scale-95 transition-all cursor-pointer"
-                  title="Toggle between AI annotated and raw view"
+                  className="px-2.5 py-1 text-xs font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 cursor-pointer"
                 >
                   {showRawPhotoComparison ? 'AI' : 'Raw'}
                 </button>
               )}
 
-              {/* Zoom Out */}
               <button
                 type="button"
                 onClick={() => setZoomScale((prev) => Math.max(1, Number((prev - 0.5).toFixed(1))))}
                 disabled={zoomScale <= 1}
-                className="p-1.5 rounded-xl bg-[#132219] hover:bg-[#1a3023] border border-emerald-800/60 text-emerald-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all cursor-pointer"
-                title="Zoom Out (-50%)"
+                className="p-1.5 rounded-xl bg-white/10 border border-white/15 text-emerald-300 disabled:opacity-40 cursor-pointer"
                 aria-label="Zoom Out"
               >
                 <ZoomOut size={15} />
               </button>
 
-              {/* Zoom Level Indicator / Reset */}
               <button
                 type="button"
                 onClick={() => setZoomScale(1)}
-                className="px-1.5 sm:px-2 py-1 text-xs font-mono font-black text-emerald-300 bg-[#132219] hover:bg-[#1a3023] border border-emerald-800/60 rounded-xl hover:text-white active:scale-95 transition-all cursor-pointer min-w-[44px] text-center"
-                title="Reset zoom to 100%"
+                className="px-2 py-1 text-xs font-mono font-bold tabular-nums text-emerald-300 bg-white/10 border border-white/15 rounded-xl cursor-pointer min-w-[48px] text-center"
               >
                 {Math.round(zoomScale * 100)}%
               </button>
 
-              {/* Zoom In */}
               <button
                 type="button"
                 onClick={() => setZoomScale((prev) => Math.min(4, Number((prev + 0.5).toFixed(1))))}
                 disabled={zoomScale >= 4}
-                className="p-1.5 rounded-xl bg-[#132219] hover:bg-[#1a3023] border border-emerald-800/60 text-emerald-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all cursor-pointer"
-                title="Zoom In (+50%)"
+                className="p-1.5 rounded-xl bg-white/10 border border-white/15 text-emerald-300 disabled:opacity-40 cursor-pointer"
                 aria-label="Zoom In"
               >
                 <ZoomIn size={15} />
               </button>
 
-              {/* Prominent Normal View / Exit Button for Mobile & PC */}
               <button
                 type="button"
                 onClick={() => {
                   setIsFullScreenOpen(false);
                   setZoomScale(1);
                 }}
-                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 border border-rose-400/80 text-white font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer ml-1"
-                title="Exit full screen and return to normal view (Esc)"
+                className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer ml-1"
                 aria-label="Return to normal view"
               >
-                <Minimize2 size={14} className="stroke-[2.5]" />
-                <span className="font-bold">Normal View</span>
+                <Minimize2 size={14} />
+                <span>Close</span>
               </button>
             </div>
           </div>
 
-          {/* Center Zoomable Viewport */}
-          <div 
+          <div
             className="flex-1 overflow-auto flex items-center justify-center p-3 relative cursor-grab active:cursor-grabbing"
             onDoubleClick={() => {
               setZoomScale((prev) => (prev > 1 ? 1 : 2));
             }}
           >
-            <div 
+            <div
               className="relative transition-transform duration-200 ease-out origin-center flex items-center justify-center max-w-full max-h-full"
               style={{ transform: `scale(${zoomScale})` }}
             >
@@ -4003,7 +4011,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 className="max-h-[82vh] max-w-[96vw] object-contain shadow-2xl rounded-xl"
                 draggable={false}
               />
-              {/* Duplicate Bottles Overlay in Lightbox (Only in RESULTS step) */}
               {step === 'RESULTS' && (
                 <div className="absolute inset-0 pointer-events-none overflow-hidden">
                   {renderSeamOverlays(true)}
@@ -4012,42 +4019,21 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
           </div>
 
-          {/* Bottom Information & Mobile Action Footer */}
-          <div className="px-3 sm:px-4 py-2 bg-black/90 border-t border-emerald-900/60 flex items-center justify-between text-xs text-emerald-200 shrink-0 z-30 gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2 truncate">
-              <span className="text-[11px] text-emerald-300/80 font-medium truncate">
-                Double-tap or pinch to zoom &bull; Drag to pan
-              </span>
-              <span className="hidden md:inline text-[10px] text-emerald-400/60">
-                (Press Esc or tap Normal View)
-              </span>
-            </div>
+          <div className="px-3 sm:px-4 py-2 bg-black/90 border-t border-white/10 flex items-center justify-between text-xs text-emerald-200 shrink-0 z-30 gap-2">
+            <span className="text-[11px] text-slate-300 truncate">
+              Double-tap or pinch to zoom &bull; Drag to pan
+            </span>
 
             <div className="flex items-center gap-2.5 shrink-0">
               {step === 'CAPTURE' ? (
-                <span className="font-mono text-emerald-300 text-xs bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-800/40">
+                <span className="font-mono text-emerald-300 text-xs">
                   {aisleSessions[lastCapturedAisle]?.capturedFileName || 'captured_photo.jpg'}
                 </span>
               ) : (
-                <span className="font-bold text-[#4ADE80] text-xs">
+                <span className="font-bold text-emerald-300 text-xs tabular-nums">
                   {primaryLabel}: {primarySharePct}% &bull; {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}f
                 </span>
               )}
-
-              {/* Bottom Quick Normal View Button for Easy Thumb Reach */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsFullScreenOpen(false);
-                  setZoomScale(1);
-                }}
-                className="px-2.5 py-1 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1 shadow active:scale-95 transition-all cursor-pointer border border-rose-400/40"
-                title="Return to normal view"
-                aria-label="Return to normal view"
-              >
-                <Minimize2 size={13} className="stroke-[2.5]" />
-                <span>Normal View</span>
-              </button>
             </div>
           </div>
         </div>

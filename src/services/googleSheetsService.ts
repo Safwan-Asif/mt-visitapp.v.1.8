@@ -4,6 +4,7 @@ import {
   appendRowToGoogleSheetDirect
 } from './googleAuthService';
 import { sendAuditToSheetWriteN8n } from './n8nService';
+import { PlanogramComplianceResult } from '../types';
 
 // Target Google Sheet & Drive Folder provided by user for Audits
 export const TARGET_SPREADSHEET_ID = '1ZNy_T7Di2sIgtJ_v90ECtwM2c1qD-_poZFjOMQsmaQ8';
@@ -556,6 +557,60 @@ export interface CategoryAuditRow {
   posm_wobbler: string;
   needs_review: string;
   annotated_drive_photo_url: string;
+  overall_score?: number | null;
+  compliance_status?: string;
+  brand_wise_pct?: number | null;
+  company_wise_pct?: number | null;
+  sos_actual_pct?: number | null;
+  sos_target_pct?: number | null;
+  planogram_id?: string;
+  planogram_version?: number | null;
+  unmapped_brands?: string;
+  edited_by_rep?: string;
+  synced_at?: string;
+}
+
+export interface PlanogramComplianceRow {
+  row_key: string;
+  visit_id: string;
+  date: string;
+  time: string;
+  rep: string;
+  sap_code: string;
+  outlet: string;
+  category: string;
+  planogram_id: string;
+  planogram_version: number;
+  bay_index: number;
+  row_index: number;
+  brand: string;
+  planned_faces: number;
+  actual_faces: number;
+  miss_faces: number;
+  compliance_type: string;
+  edited_by_rep: string;
+  is_extra_bay: string;
+  synced_at?: string;
+}
+
+export interface PlanogramScorecardAckRow {
+  row_key: string;
+  visit_id: string;
+  date: string;
+  time: string;
+  rep: string;
+  sap_code: string;
+  outlet: string;
+  category: string;
+  planogram_id: string;
+  planogram_version: number | null;
+  overall_score: number | null;
+  compliance_status: string;
+  brand_compliant: string;
+  company_compliant: string;
+  edited_by_rep: string;
+  acknowledged_at: string;
+  executive_note: string;
   synced_at?: string;
 }
 
@@ -566,6 +621,8 @@ export interface MultiTableSyncPayload {
   store_intel: StoreIntelRow[];
   sales_intel: SalesIntelRow[];
   category_audits?: CategoryAuditRow[];
+  planogram_compliance?: PlanogramComplianceRow[];
+  planogram_scorecard_acks?: PlanogramScorecardAckRow[];
 }
 
 export interface QuestionnaireTransformContext {
@@ -820,13 +877,14 @@ export async function syncFieldIntelToGoogleSheets(
 ): Promise<boolean> {
   try {
     if (auditRecord) {
+      const compliance: PlanogramComplianceResult | undefined = auditRecord.planogramCompliance;
       const catAuditRow: CategoryAuditRow = {
         row_key: `${visitId}|${category}|category_audits|0`,
         timestamp: auditRecord.timestamp || new Date().toISOString(),
         rep_id: auditRecord.repId || '#9',
         rep_name: auditRecord.repName || 'Safwan Asif',
         account_name: auditRecord.accountName || '',
-        outlet_code: auditRecord.outletCode || '',
+        outlet_code: auditRecord.sapCode || auditRecord.outletCode || '',
         outlet_name: auditRecord.outletName || outletId,
         category: category,
         total_facings: auditRecord.totalFacings || 0,
@@ -840,9 +898,59 @@ export async function syncFieldIntelToGoogleSheets(
         posm_sticker: auditRecord.posmShelfSticker ? 'Yes' : 'No',
         posm_wobbler: auditRecord.posmWobblers ? 'Yes' : 'No',
         needs_review: auditRecord.needsReview ? 'Yes' : 'No',
-        annotated_drive_photo_url: auditRecord.annotatedImage || auditRecord.photoUrl || ''
+        annotated_drive_photo_url: auditRecord.annotatedImage || auditRecord.photoUrl || '',
+        overall_score: compliance?.hasPlanogram ? compliance.overallScore : null,
+        compliance_status: compliance?.hasPlanogram ? compliance.overallStatus : 'NO_PLANOGRAM',
+        brand_wise_pct: compliance?.hasPlanogram ? compliance.brandWisePct : null,
+        company_wise_pct: compliance?.hasPlanogram ? compliance.companyWisePct : null,
+        sos_actual_pct: compliance ? compliance.sosActualPct : auditRecord.shareOfShelfPct || 0,
+        sos_target_pct: compliance?.sosTargetPct ?? null,
+        planogram_id: compliance?.planogramId || '',
+        planogram_version: compliance?.planogramVersion ?? null,
+        unmapped_brands: (compliance?.unmappedBrands || auditRecord.unmappedBrands || []).join(', '),
+        edited_by_rep: (compliance?.editedByRep ?? auditRecord.editedByRep) ? 'Yes' : 'No'
       };
       multiTablePayload.category_audits = [catAuditRow];
+
+      // Build planogram_compliance row-level AI diagnostics detail rows (linked via visit_id)
+      if (compliance?.hasPlanogram && compliance.bayDiagnostics.length > 0) {
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const timeStr = now.toTimeString().split(' ')[0];
+        const detailRows: PlanogramComplianceRow[] = [];
+
+        compliance.bayDiagnostics.forEach((bay) => {
+          bay.rows.forEach((r) => {
+            r.brandSplits.forEach((split) => {
+              detailRows.push({
+                row_key: `${visitId}|${category}|bay_${bay.bayIndex}|row_${r.row}|${split.brand}`,
+                visit_id: visitId,
+                date: dateStr,
+                time: timeStr,
+                rep: auditRecord.repName || auditRecord.repId || '#9',
+                sap_code: compliance.sapCode || auditRecord.sapCode || '',
+                outlet: auditRecord.outletName || outletId,
+                category,
+                planogram_id: compliance.planogramId || '',
+                planogram_version: compliance.planogramVersion || 1,
+                bay_index: bay.bayIndex,
+                row_index: r.row,
+                brand: split.brand,
+                planned_faces: split.planned,
+                actual_faces: split.actual,
+                miss_faces: split.planned - split.actual,
+                compliance_type: split.gap === 0 ? 'MATCH' : split.gap < 0 ? 'SHORT' : 'OVER',
+                edited_by_rep: compliance.editedByRep ? 'Yes' : 'No',
+                is_extra_bay: bay.isExtraBay ? 'Yes' : 'No'
+              });
+            });
+          });
+        });
+
+        if (detailRows.length > 0) {
+          multiTablePayload.planogram_compliance = detailRows;
+        }
+      }
     }
 
     const payload = {
@@ -882,6 +990,63 @@ export async function syncFieldIntelToGoogleSheets(
   // Clear autosave anyway since local state has been incorporated into audit record
   clearAutosaveQuestionnaire(visitId, outletId, category);
   return true;
+}
+
+/**
+ * Separately logs the executive's Scorecard "Done" acknowledgement to Google Sheets
+ * (linked via visit_id and category).
+ */
+export async function syncPlanogramScorecardAck(params: {
+  visitId: string;
+  outletId: string;
+  outletName: string;
+  sapCode?: string;
+  category: string;
+  rep: string;
+  compliance: PlanogramComplianceResult;
+  executiveNote?: string;
+}): Promise<boolean> {
+  try {
+    const now = new Date();
+    const ackRow: PlanogramScorecardAckRow = {
+      row_key: `${params.visitId}|${params.category}|scorecard_ack|0`,
+      visit_id: params.visitId,
+      date: now.toISOString().split('T')[0],
+      time: now.toTimeString().split(' ')[0],
+      rep: params.rep,
+      sap_code: params.sapCode || params.compliance.sapCode || '',
+      outlet: params.outletName || params.outletId,
+      category: params.category,
+      planogram_id: params.compliance.planogramId || '',
+      planogram_version: params.compliance.planogramVersion ?? null,
+      overall_score: params.compliance.hasPlanogram ? params.compliance.overallScore : null,
+      compliance_status: params.compliance.hasPlanogram ? params.compliance.overallStatus : 'NO_PLANOGRAM',
+      brand_compliant: params.compliance.hasPlanogram ? params.compliance.brandStatus : 'N/A',
+      company_compliant: params.compliance.hasPlanogram ? params.compliance.companyStatus : 'N/A',
+      edited_by_rep: params.compliance.editedByRep ? 'Yes' : 'No',
+      acknowledged_at: now.toISOString(),
+      executive_note: (params.executiveNote || '').trim()
+    };
+
+    const res = await fetch('/api/sheets/apps-script-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: {
+          action: 'sync_visit',
+          visit_id: params.visitId,
+          timestamp: now.toISOString(),
+          tables: {
+            planogram_scorecard_acks: [ackRow]
+          }
+        }
+      })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[GoogleSheetsService] Scorecard Ack sync warning:', err);
+    return false;
+  }
 }
 
 /**

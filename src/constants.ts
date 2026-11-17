@@ -9,6 +9,7 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-1',
     name: 'Lulu Hypermarket',
+    account: 'Lulu',
     branch: 'Al Wakra Main',
     sequence: '1 of 6',
     address: 'Zone 90, Al Wakra Commercial St',
@@ -24,6 +25,8 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-2',
     name: 'Carrefour',
+    code: '10300103',
+    account: 'C4',
     branch: 'Mall of Qatar',
     sequence: '2 of 6',
     address: 'Gate 4, Ground Floor, Al Rayyan',
@@ -39,6 +42,8 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-3',
     name: 'Al Meera',
+    code: '10300073',
+    account: 'Al Meera',
     branch: 'Mansoura',
     sequence: '3 of 6',
     address: 'Building 14, Al Mansoura St',
@@ -54,6 +59,7 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-4',
     name: 'Monoprix',
+    account: 'Monoprix',
     branch: 'Msheireb Downtown',
     sequence: '4 of 6',
     address: 'Sahat Al Nakheel, Msheireb',
@@ -69,6 +75,8 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-5',
     name: 'Family Food Centre',
+    code: '10300291',
+    account: 'FFC',
     branch: 'Al Rayyan',
     sequence: '5 of 6',
     address: 'Al Shafi Commercial St, Al Rayyan',
@@ -84,6 +92,8 @@ export const INITIAL_OUTLETS: Outlet[] = [
   {
     id: 'out-6',
     name: 'Mega Mart',
+    code: '10320481',
+    account: 'MEGAMART',
     branch: 'The Pearl-Qatar',
     sequence: '6 of 6',
     address: 'Porto Arabia, Tower 22',
@@ -283,6 +293,8 @@ export function getInitialOutletsForExecutive(execName: string): Outlet[] {
   return visits.map((v, idx) => ({
     id: `out-pjp-${idx + 1}-${Math.abs((v.executive + v.outlet).split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0))}`,
     name: v.account ? `${v.account} - ${v.outlet}` : v.outlet,
+    code: v.code || undefined,
+    account: v.account || undefined,
     branch: v.area || v.account || 'Doha',
     sequence: `${idx + 1} of ${total}`,
     address: `${v.area ? v.area + ', ' : ''}${v.account ? v.account + ', ' : ''}Qatar`,

@@ -11,6 +11,8 @@ export interface OutletProgress {
 export interface Outlet {
   id: string;
   name: string;
+  code?: string; // SAP customer code (matches Planograms.sap_code)
+  account?: string;
   branch: string;
   sequence: string;
   address?: string;
@@ -83,6 +85,9 @@ export interface CategoryAuditRecord {
   locationSource?: 'device_gps' | 'outlet_fallback';
   aisles?: Partial<Record<AisleKey, AisleSessionData>>;
   activeAisleCount?: number;
+  planogramCompliance?: PlanogramComplianceResult;
+  editedByRep?: boolean;
+  unmappedBrands?: string[];
   n8nStatus?: {
     success: boolean;
     source: 'n8n_remote' | 'simulated_fallback';
@@ -123,6 +128,9 @@ export interface AisleSessionData {
     method: string;
   };
   n8nStatus?: any;
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rowsFound?: number;
+  unmappedBrands?: string[];
   rightEdgeGhostUrl?: string | null;
   timestamp?: string;
 }
@@ -160,3 +168,119 @@ export interface UserProfile {
 }
 
 export type ScreenType = 'LOGIN' | 'PJP' | 'OUTLET_OVERVIEW' | 'CAMERA_WORKFLOW' | 'DASHBOARD';
+
+export interface PlanogramSlot {
+  pos: number;
+  brand: string;
+  width: number;
+}
+
+export interface PlanogramRow {
+  row: number;
+  slots?: PlanogramSlot[];
+  faces?: Record<string, number>;
+}
+
+export interface PlanogramBay {
+  bayIndex: number;
+  label: string;
+  rows?: PlanogramRow[];
+  planRows?: Array<{ row: number; faces: Record<string, number> }>;
+  rowsFound?: number;
+  imageOriginalUrl?: string;
+  imageAnnotatedUrl?: string;
+}
+
+export interface PlanogramRecord {
+  planogram_id: string;
+  sap_code: string;
+  cust_name: string;
+  category: string;
+  version: number;
+  status: string;
+  superseded_at?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_by?: string;
+  updated_at?: string;
+  bays_json: PlanogramBay[];
+  brand_totals_json: Record<string, number>;
+  total_faces: number;
+  rows_found: number;
+  image_original_url?: string;
+  image_annotated_url?: string;
+  notes?: string;
+  target_sos?: number | null;
+}
+
+export type ComplianceBadgeStatus = 'COMPLIANT' | 'PARTIAL' | 'NON-COMPLIANT';
+
+export interface PlanogramBrandSplit {
+  brand: string;
+  planned: number;
+  actual: number;
+  gap: number;
+  matched: number;
+}
+
+export interface PlanogramRowDiagnostic {
+  bayIndex: number;
+  bayLabel: string;
+  row: number;
+  isExtraBay: boolean;
+  plannedQfi: number;
+  actualQfi: number;
+  brandWisePct: number;
+  companyWisePct: number;
+  brandSplits: PlanogramBrandSplit[];
+}
+
+export interface PlanogramBayDiagnostic {
+  bayIndex: number;
+  bayLabel: string;
+  isExtraBay: boolean;
+  isMissingBay: boolean;
+  plannedRowsCount: number;
+  detectedRowsCount: number;
+  plannedQfi: number;
+  actualQfi: number;
+  rows: PlanogramRowDiagnostic[];
+}
+
+export interface PlanogramComplianceResult {
+  hasPlanogram: boolean;
+  planogramId?: string;
+  planogramVersion?: number;
+  custName?: string;
+  sapCode?: string;
+  overallScore: number;
+  rawOverallScore: number;
+  overallStatus: ComplianceBadgeStatus;
+  brandWisePct: number;
+  brandStatus: ComplianceBadgeStatus;
+  companyWisePct: number;
+  companyStatus: ComplianceBadgeStatus;
+  sosActualPct: number;
+  sosTargetPct: number | null;
+  sosAchievementPct: number | null;
+  weightsUsed: {
+    brand: number;
+    company: number;
+    sos: number;
+  };
+  missingBrandCapApplied: boolean;
+  missingOwnBrands: string[];
+  editedByRep: boolean;
+  unmappedBrands: string[];
+  plannedQfiFaces: number;
+  actualQfiFaces: number;
+  plannedTotalFaces: number;
+  actualTotalFaces: number;
+  plannedBaysCount: number;
+  actualBaysCount: number;
+  brandSplits: PlanogramBrandSplit[];
+  bayDiagnostics: PlanogramBayDiagnostic[];
+  scorecardAcknowledgedAt?: string;
+  executiveNote?: string;
+}
+

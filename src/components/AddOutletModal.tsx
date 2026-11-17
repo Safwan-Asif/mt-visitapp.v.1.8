@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { X, Store, MapPin, Plus, AlertCircle, FileText, ChevronDown } from 'lucide-react';
-import { Outlet } from '../types';
+import { Outlet, PlanogramRecord } from '../types';
 import { useTheme } from '../ThemeContext';
 import { UNMAPPED_MASTER_OUTLETS, MasterOutletOption } from '../constants';
+import { normalizeSapCode } from '../services/planogramService';
 
 interface AddOutletModalProps {
   isOpen: boolean;
@@ -11,6 +12,8 @@ interface AddOutletModalProps {
   currentCount: number;
   existingOutlets?: Outlet[];
   executiveName?: string;
+  liveMasterOutlets?: MasterOutletOption[];
+  planograms?: PlanogramRecord[];
 }
 
 export const AddOutletModal: React.FC<AddOutletModalProps> = ({
@@ -19,30 +22,74 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
   onAdd,
   currentCount,
   existingOutlets = [],
-  executiveName = 'Safwan Asif'
+  executiveName = 'Safwan Asif',
+  liveMasterOutlets,
+  planograms = []
 }) => {
   const { isDark } = useTheme();
 
-  // Filter master outlets mapped to the executive and not already in current journey plan
+  const activePlanSapMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    planograms
+      .filter((p) => p.status === 'active')
+      .forEach((p) => {
+        const sap = normalizeSapCode(p.sap_code);
+        if (!sap) return;
+        const arr = map.get(sap) || [];
+        if (!arr.includes(p.category)) arr.push(p.category);
+        map.set(sap, arr);
+      });
+    return map;
+  }, [planograms]);
+
   const cleanExec = (executiveName || '').trim().toLowerCase();
-  const availableOutlets: MasterOutletOption[] = UNMAPPED_MASTER_OUTLETS.filter((masterStore) => {
-    // Executive match
-    const storeExec = (masterStore.executive || '').trim().toLowerCase();
-    const isExecutiveMatch = !storeExec || storeExec === cleanExec || (cleanExec.includes('safwan') && storeExec.includes('safwan'));
-    // Check if not already added
-    const alreadyExists = existingOutlets.some(
-      (o) => o.name.toLowerCase() === masterStore.name.toLowerCase() && 
-             o.branch.toLowerCase() === masterStore.branch.toLowerCase()
-    );
-    return isExecutiveMatch && !alreadyExists;
-  });
+  const isSupervisor = cleanExec.includes('safwan');
+  const sourceOutlets =
+    liveMasterOutlets && liveMasterOutlets.length > 0 ? liveMasterOutlets : UNMAPPED_MASTER_OUTLETS;
+
+  const availableOutlets: MasterOutletOption[] = useMemo(() => {
+    const seenKeys = new Set<string>();
+    const list: MasterOutletOption[] = [];
+
+    for (const masterStore of sourceOutlets) {
+      const storeExec = (masterStore.executive || '').trim().toLowerCase();
+      const isExecutiveMatch = isSupervisor || !storeExec || storeExec === cleanExec;
+      if (!isExecutiveMatch) continue;
+
+      const sapNorm = normalizeSapCode(masterStore.code);
+      const alreadyExists = existingOutlets.some((o) => {
+        const existingSap = normalizeSapCode(o.code);
+        if (sapNorm && existingSap) return sapNorm === existingSap;
+        return (
+          o.name.toLowerCase() === masterStore.name.toLowerCase() &&
+          o.branch.toLowerCase() === masterStore.branch.toLowerCase()
+        );
+      });
+      if (alreadyExists) continue;
+
+      const dedupKey = sapNorm || masterStore.name.toLowerCase();
+      if (seenKeys.has(dedupKey)) continue;
+      seenKeys.add(dedupKey);
+      list.push(masterStore);
+    }
+
+    return list.sort((a, b) => {
+      const aHasPlan = activePlanSapMap.has(normalizeSapCode(a.code)) ? 1 : 0;
+      const bHasPlan = activePlanSapMap.has(normalizeSapCode(b.code)) ? 1 : 0;
+      if (aHasPlan !== bHasPlan) return bHasPlan - aHasPlan;
+      return a.name.localeCompare(b.name);
+    });
+  }, [sourceOutlets, isSupervisor, cleanExec, existingOutlets, activePlanSapMap]);
 
   const [selectedStoreId, setSelectedStoreId] = useState<string>(
     availableOutlets[0]?.id || ''
   );
 
   React.useEffect(() => {
-    if (availableOutlets.length > 0 && (!selectedStoreId || !availableOutlets.some((s) => s.id === selectedStoreId))) {
+    if (
+      availableOutlets.length > 0 &&
+      (!selectedStoreId || !availableOutlets.some((s) => s.id === selectedStoreId))
+    ) {
       setSelectedStoreId(availableOutlets[0].id);
     }
   }, [availableOutlets, selectedStoreId, isOpen]);
@@ -52,7 +99,8 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
 
   if (!isOpen) return null;
 
-  const selectedMasterStore = availableOutlets.find((s) => s.id === selectedStoreId) || availableOutlets[0];
+  const selectedMasterStore =
+    availableOutlets.find((s) => s.id === selectedStoreId) || availableOutlets[0];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,13 +109,17 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
       return;
     }
     if (!remark.trim() || remark.trim().length < 5) {
-      setValidationError('Please provide a specific remark/reason for this unmapped visit (min 5 characters)');
+      setValidationError(
+        'Please provide a specific remark/reason for this unmapped visit (min 5 characters)'
+      );
       return;
     }
 
     const newOutlet: Outlet = {
       id: `out-unmapped-${Date.now()}`,
       name: selectedMasterStore.name,
+      code: selectedMasterStore.code || undefined,
+      account: selectedMasterStore.account || undefined,
       branch: selectedMasterStore.branch,
       address: selectedMasterStore.address,
       sequence: `${currentCount + 1} of ${currentCount + 1}`,
@@ -80,7 +132,7 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
         'Pasta': 'Not Started'
       },
       latitude: 25.2854,
-      longitude: 51.5310
+      longitude: 51.531
     };
 
     onAdd(newOutlet);
@@ -90,154 +142,144 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-      <div className={`w-full max-w-sm border rounded-3xl p-5 shadow-2xl relative ${
-        isDark ? 'bg-[#132219] border-emerald-900/60' : 'bg-white border-emerald-950/15'
-      }`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md animate-fade-in">
+      <div className="w-full max-w-md glass-panel-strong rounded-3xl p-5 md:p-6 relative">
         <button
+          type="button"
           onClick={onClose}
-          className={`absolute top-4 right-4 p-1.5 rounded-xl cursor-pointer ${
-            isDark ? 'text-slate-400 hover:text-white bg-[#0B120E]' : 'text-slate-500 hover:text-slate-900 bg-slate-100'
-          }`}
+          className="absolute top-4 right-4 w-9 h-9 rounded-xl glass-subtle flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
           aria-label="Close modal"
         >
           <X size={16} />
         </button>
 
-        <div className="flex items-center gap-2.5 mb-4">
-          <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-500">
-            <Store size={20} />
+        <div className="flex items-center gap-3 mb-4 pr-8">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+            <Store size={19} />
           </div>
           <div>
-            <h3 className={`text-sm font-black ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
+            <h3 className="text-sm font-extrabold text-[var(--text-primary)]">
               Add Unmapped Store
             </h3>
-            <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            <p className="text-xs text-[var(--text-secondary)]">
               Master Mapped Outlets for {executiveName}
             </p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5">
-          {/* Master Outlet Dropdown */}
           <div>
-            <label className={`text-[10px] font-bold uppercase tracking-wider block mb-1 ${
-              isDark ? 'text-emerald-300/80' : 'text-slate-600'
-            }`}>
+            <label className="text-[11px] font-bold uppercase tracking-wider block mb-1.5 text-[var(--text-secondary)]">
               Select Store from Master List
             </label>
-            <div className={`relative border rounded-xl transition-all ${
-              isDark ? 'bg-[#0B120E] border-emerald-900/60' : 'bg-emerald-50/40 border-emerald-200'
-            }`}>
+            <div className="relative glass-subtle rounded-2xl">
               <select
                 value={selectedStoreId}
                 onChange={(e) => {
                   setSelectedStoreId(e.target.value);
                   setValidationError(null);
                 }}
-                className={`w-full appearance-none px-3 py-2.5 pr-8 text-xs font-semibold bg-transparent focus:outline-none cursor-pointer ${
-                  isDark ? 'text-[#F0FDF4]' : 'text-slate-900'
-                }`}
+                className="w-full appearance-none px-3.5 py-3 pr-8 text-xs font-semibold bg-transparent focus:outline-none cursor-pointer text-[var(--text-primary)]"
               >
                 {availableOutlets.length === 0 ? (
                   <option value="">No unmapped outlets available</option>
                 ) : (
-                  availableOutlets.map((item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                      className={isDark ? 'bg-[#132219] text-[#F0FDF4]' : 'bg-white text-slate-900'}
-                    >
-                      {item.name} — {item.branch}
-                    </option>
-                  ))
+                  availableOutlets.map((item) => {
+                    const matchedCats = activePlanSapMap.get(normalizeSapCode(item.code));
+                    return (
+                      <option
+                        key={item.id}
+                        value={item.id}
+                        className={
+                          isDark
+                            ? 'bg-[#111D19] text-[#ECFDF5]'
+                            : 'bg-white text-[#0F1B17]'
+                        }
+                      >
+                        {matchedCats ? '★ [Planogram] ' : ''}
+                        {item.name}
+                        {item.code ? ` (SAP ${item.code})` : ''}
+                      </option>
+                    );
+                  })
                 )}
               </select>
               <ChevronDown
                 size={14}
-                className={`absolute right-3 top-3 pointer-events-none ${
-                  isDark ? 'text-emerald-400' : 'text-emerald-700'
-                }`}
+                className="absolute right-3 top-3.5 pointer-events-none text-[var(--accent-primary)]"
               />
             </div>
           </div>
 
-          {/* Selected Store Preview Details */}
           {selectedMasterStore && (
-            <div className={`p-2.5 rounded-xl border text-[11px] flex items-start gap-2 ${
-              isDark ? 'bg-[#182C21]/60 border-emerald-900/40 text-slate-300' : 'bg-emerald-50/60 border-emerald-100 text-slate-700'
-            }`}>
-              <MapPin size={13} className="text-emerald-500 shrink-0 mt-0.5" />
+            <div className="glass-subtle rounded-2xl p-3 text-xs flex items-start gap-2.5">
+              <MapPin size={14} className="text-[var(--accent-primary)] shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <span className="font-bold text-xs block text-emerald-600 dark:text-emerald-400">
+                <span className="font-bold block text-[var(--text-primary)]">
                   {selectedMasterStore.name} ({selectedMasterStore.branch})
                 </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">
+                <span className="text-[11px] text-[var(--text-secondary)] block truncate tabular-nums">
+                  {selectedMasterStore.code ? `SAP ${selectedMasterStore.code} · ` : ''}
                   {selectedMasterStore.address}
                 </span>
+                {activePlanSapMap.has(normalizeSapCode(selectedMasterStore.code)) && (
+                  <span className="text-[11px] font-bold text-[var(--accent-primary)] block mt-0.5">
+                    Planogram Matched:{' '}
+                    {activePlanSapMap.get(normalizeSapCode(selectedMasterStore.code))?.join(', ')}
+                  </span>
+                )}
               </div>
             </div>
           )}
 
-          {/* Remark Box (Mandatory) */}
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
-                isDark ? 'text-amber-400' : 'text-amber-700'
-              }`}>
-                <FileText size={11} />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1 text-amber-700 dark:text-amber-400">
+                <FileText size={12} />
                 Reason for Unmapped Visit *
               </label>
-              <span className="text-[9px] text-rose-500 font-bold">Mandatory</span>
+              <span className="text-[10px] text-rose-500 font-bold">Mandatory</span>
             </div>
             <textarea
               required
               rows={3}
-              placeholder="Explain why you are visiting this store when it's not mapped on today's Journey Plan (e.g. Supervisor directive / urgent Flour & Oil stockout verification / ad-hoc POSM replenishment)..."
+              placeholder="Explain why you are visiting this store when it's not mapped on today's Journey Plan..."
               value={remark}
               onChange={(e) => {
                 setRemark(e.target.value);
                 setValidationError(null);
               }}
-              className={`w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/40 transition-all resize-none leading-relaxed ${
-                isDark
-                  ? 'bg-[#0B120E] border-amber-900/40 text-[#F0FDF4] placeholder-slate-600'
-                  : 'bg-amber-50/30 border-amber-200 text-slate-900 placeholder-slate-400'
-              }`}
+              className="w-full glass-subtle rounded-2xl px-3.5 py-2.5 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-amber-500/40 transition-all resize-none leading-relaxed"
             />
-            <p className={`text-[9px] mt-1 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-              This explanation will be logged and highlighted in spreadsheet &amp; supervisor reports.
+            <p className="text-[10px] mt-1 text-[var(--text-muted)]">
+              Logged and highlighted in spreadsheet &amp; supervisor reports.
             </p>
           </div>
 
           {validationError && (
-            <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[10px] font-semibold flex items-center gap-1.5">
-              <AlertCircle size={12} className="shrink-0" />
+            <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
+              <AlertCircle size={13} className="shrink-0" />
               <span>{validationError}</span>
             </div>
           )}
 
-          <div className="pt-1 flex gap-2">
+          <div className="pt-1 flex gap-2.5">
             <button
               type="button"
               onClick={onClose}
-              className={`flex-1 py-2.5 rounded-xl border text-xs font-semibold cursor-pointer ${
-                isDark
-                  ? 'border-emerald-900/50 text-slate-400 hover:text-white bg-[#0B120E]'
-                  : 'border-slate-200 text-slate-600 hover:text-slate-900 bg-slate-100'
-              }`}
+              className="flex-1 min-h-[44px] py-2.5 rounded-2xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!selectedMasterStore || remark.trim().length < 5}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-1.5 transition-all ${
+              className={`flex-1 min-h-[44px] py-2.5 rounded-2xl text-xs font-bold shadow-lg flex items-center justify-center gap-1.5 transition-all ${
                 selectedMasterStore && remark.trim().length >= 5
-                  ? 'bg-gradient-to-r from-amber-600 via-emerald-600 to-emerald-500 text-white shadow-emerald-950/40 hover:brightness-110 cursor-pointer active:scale-[0.99]'
-                  : isDark
-                  ? 'bg-[#182C21] text-slate-500 border border-emerald-950 cursor-not-allowed opacity-60'
-                  : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+                  ? isDark
+                    ? 'bg-[#10B981] text-[#05231C] cursor-pointer active:scale-[0.99]'
+                    : 'bg-[#084C41] text-white cursor-pointer active:scale-[0.99]'
+                  : 'glass-subtle text-[var(--text-muted)] cursor-not-allowed opacity-60'
               }`}
             >
               <Plus size={14} /> Add to Route

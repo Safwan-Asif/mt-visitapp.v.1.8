@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, Delete, CheckCircle, Sun, Moon, Leaf, ChevronDown } from 'lucide-react';
+import { Lock, User, Delete, CheckCircle, Sun, Moon, ChevronDown } from 'lucide-react';
 import { UserProfile } from '../types';
 import { useTheme } from '../ThemeContext';
 import { EXECUTIVE_PROFILES } from '../constants';
@@ -16,7 +16,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const activeExecutive = EXECUTIVE_PROFILES.find((p) => p.username === selectedExecutiveUsername) || EXECUTIVE_PROFILES[0];
+  const activeExecutive =
+    EXECUTIVE_PROFILES.find((p) => p.username === selectedExecutiveUsername) ||
+    EXECUTIVE_PROFILES[0];
 
   const handleKeyPress = (num: string) => {
     if (pin.length < 4) {
@@ -43,7 +45,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       setError('Invalid PIN. All executives use PIN 2026');
       return;
     }
-    const exec = EXECUTIVE_PROFILES.find((p) => p.username === userStr) || EXECUTIVE_PROFILES[0];
+    const exec =
+      EXECUTIVE_PROFILES.find((p) => p.username === userStr) || EXECUTIVE_PROFILES[0];
     const profile: UserProfile = {
       name: exec.name,
       username: exec.username,
@@ -60,215 +63,222 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-between p-4 max-w-sm mx-auto w-full h-full overflow-hidden select-none relative">
-      {/* Top Bar with Theme Toggle */}
-      <div className="w-full flex justify-between items-center pt-1 shrink-0">
-        <div className="flex items-center gap-1.5">
-          <Leaf size={14} className={isDark ? 'text-[#10B981]' : 'text-[#047857]'} />
-          <span className={`text-[10px] font-black tracking-widest uppercase ${isDark ? 'text-[#10B981]' : 'text-[#047857]'}`}>
-            QFI Enterprise
-          </span>
-        </div>
-        <button
-          onClick={toggleTheme}
-          className={`p-2 rounded-xl border transition-all flex items-center gap-1.5 text-xs font-semibold ${
-            isDark
-              ? 'bg-[#132219] border-emerald-900/60 text-emerald-300 hover:text-white'
-              : 'bg-white border-slate-200 text-slate-700 hover:text-slate-950 shadow-xs'
-          }`}
-          title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-          aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-        >
-          {isDark ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-[#047857]" />}
-          <span className="text-[10px] uppercase font-bold tracking-wider">
-            {isDark ? 'Light' : 'Dark'}
-          </span>
-        </button>
-      </div>
-
-      {/* Top Branding Section (Qatar Food Industries) */}
-      <div className="flex flex-col items-center">
-        <div className="relative mb-2.5">
-          <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#047857] via-[#065F46] to-[#10B981] flex flex-col items-center justify-center shadow-xl shadow-emerald-950/40 border border-emerald-400/30">
-            <span className="text-white text-base font-black tracking-wider leading-none">QFI</span>
-            <span className="text-[8px] font-bold text-emerald-200 uppercase tracking-widest mt-0.5">Qatar</span>
+    <div className="flex-1 w-full h-full overflow-y-auto flex flex-col justify-between md:justify-center p-4 md:p-8 select-none">
+      <div className="w-full max-w-sm md:max-w-3xl mx-auto flex flex-col gap-4 md:gap-5 my-auto">
+        {/* Top Bar with Brand Tag & Theme Toggle */}
+        <div className="flex justify-between items-center px-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isDark ? 'bg-[#10B981]' : 'bg-[#084C41]'
+              }`}
+            />
+            <span className="text-[11px] font-bold tracking-widest uppercase text-[var(--accent-primary)]">
+              Qatar Food Industries
+            </span>
           </div>
-          <div className="absolute -bottom-1 -right-1 bg-emerald-400 text-[8px] font-black text-slate-950 px-1.5 py-0.5 rounded-full border border-slate-950 shadow-sm">
-            MT v1.0
-          </div>
-        </div>
 
-        <h1 className={`text-base font-black tracking-tight ${isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'}`}>
-          Qatar Food Industries
-        </h1>
-        <p className={`text-[11px] text-center mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-          Modern Trade In-Store Audit &bull; AI Shelf Verification
-        </p>
-
-        {/* Executive Name Dropdown Field */}
-        <div
-          className={`w-full mt-3.5 backdrop-blur-xl border rounded-2xl p-2.5 flex items-center gap-2.5 transition-colors ${
-            isDark
-              ? 'bg-[#132219]/70 border-emerald-900/50'
-              : 'bg-white border-emerald-950/10 shadow-xs shadow-emerald-950/5'
-          }`}
-        >
-          <div
-            className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${
-              isDark ? 'bg-emerald-950/80 text-emerald-400' : 'bg-emerald-50 text-emerald-700'
-            }`}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="min-h-[40px] px-3 rounded-xl glass-subtle hover:bg-white/80 dark:hover:bg-white/10 transition-all flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)] cursor-pointer active:scale-95"
+            title={isDark ? 'Switch to Frosted Light' : 'Switch to Dark Glass'}
+            aria-label={isDark ? 'Switch to Frosted Light' : 'Switch to Dark Glass'}
           >
-            <User size={15} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <span
-                className={`text-[9px] uppercase font-bold tracking-wider block leading-tight ${
-                  isDark ? 'text-emerald-400' : 'text-emerald-700'
-                }`}
-              >
-                Executive Name
-              </span>
-              <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded-md ${
-                isDark ? 'bg-emerald-950 text-emerald-300' : 'bg-emerald-100 text-emerald-800'
-              }`}>
-                {activeExecutive.repId}
-              </span>
-            </div>
-            <div className="relative mt-0.5 flex items-center">
-              <select
-                value={selectedExecutiveUsername}
-                onChange={(e) => setSelectedExecutiveUsername(e.target.value)}
-                className={`w-full appearance-none bg-transparent text-xs font-bold pr-5 focus:outline-none cursor-pointer ${
-                  isDark ? 'text-[#F0FDF4]' : 'text-[#061A12]'
-                }`}
-              >
-                {EXECUTIVE_PROFILES.map((exec) => (
-                  <option
-                    key={exec.username}
-                    value={exec.username}
-                    className={isDark ? 'bg-[#132219] text-[#F0FDF4]' : 'bg-white text-[#061A12]'}
-                  >
-                    {exec.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                size={14}
-                className={`absolute right-0 pointer-events-none ${
-                  isDark ? 'text-emerald-400' : 'text-emerald-700'
-                }`}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Middle: PIN Dots & Feedback */}
-      <div className="my-auto py-2 flex flex-col items-center">
-        <div
-          className={`flex items-center gap-1.5 text-xs mb-2.5 font-semibold ${
-            isDark ? 'text-slate-300' : 'text-[#061A12]'
-          }`}
-        >
-          <Lock size={13} className={isDark ? 'text-[#10B981]' : 'text-[#047857]'} />
-          <span>Enter 4-Digit Security PIN</span>
+            {isDark ? (
+              <Sun size={14} className="text-amber-400" />
+            ) : (
+              <Moon size={14} className="text-[#084C41]" />
+            )}
+            <span className="text-[11px] font-semibold">
+              {isDark ? 'Light' : 'Dark'}
+            </span>
+          </button>
         </div>
 
-        {/* 4 PIN Dots */}
-        <div className="flex items-center gap-4 mb-1.5">
-          {[0, 1, 2, 3].map((index) => {
-            const isFilled = pin.length > index;
-            return (
+        {/* Main Frosted Glass Login Surface */}
+        <div className="glass-panel-strong rounded-3xl p-5 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-8 items-center">
+          {/* Left Column: Brand & Executive Selector */}
+          <div className="flex flex-col items-center md:items-start text-center md:text-left space-y-4">
+            <div className="flex items-center gap-3.5">
               <div
-                key={index}
-                className={`w-4 h-4 rounded-full transition-all duration-200 ${
-                  isFilled
-                    ? isDark
-                      ? 'bg-[#22C55E] shadow-md shadow-emerald-500/50 scale-110'
-                      : 'bg-[#047857] shadow-md shadow-emerald-950/30 scale-110'
-                    : isDark
-                    ? 'bg-[#182C21] border border-emerald-900/60'
-                    : 'bg-slate-200 border border-slate-300'
+                className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center shadow-lg shrink-0 ${
+                  isDark
+                    ? 'bg-[#10B981] text-[#05231C] shadow-emerald-950/50'
+                    : 'bg-[#084C41] text-white shadow-[#084C41]/25'
                 }`}
-              />
-            );
-          })}
-        </div>
+              >
+                <span className="text-sm font-extrabold tracking-wider leading-none">
+                  QFI
+                </span>
+                <span className="text-[8px] font-bold uppercase tracking-widest opacity-80 mt-0.5">
+                  MT v1
+                </span>
+              </div>
+              <div>
+                <h1 className="text-lg md:text-xl font-extrabold tracking-tight text-[var(--text-primary)]">
+                  MARVIZ AI
+                </h1>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Modern Trade Sales Channel&middot;
+                </p>
+              </div>
+            </div>
 
-        {error && (
-          <p className="text-[11px] font-semibold text-rose-500 tracking-wide mt-1">{error}</p>
-        )}
-      </div>
+            {/* Executive Name Selector */}
+            <div className="w-full glass-subtle rounded-2xl p-3 flex items-center gap-3">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  isDark
+                    ? 'bg-emerald-500/15 text-[#34D399]'
+                    : 'bg-[#084C41]/10 text-[#084C41]'
+                }`}
+              >
+                <User size={16} />
+              </div>
 
-      {/* Bottom: Tactile Numeric Keypad */}
-      <div className="pb-2">
-        <div className="grid grid-cols-3 gap-2 max-w-[280px] mx-auto mb-3">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+              <div className="flex-1 min-w-0 text-left">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--accent-primary)]">
+                    Executive
+                  </span>
+                  <span className="text-[10px] font-mono tabular-nums font-bold text-[var(--text-secondary)]">
+                    {activeExecutive.repId}
+                  </span>
+                </div>
+
+                <div className="relative mt-0.5 flex items-center">
+                  <select
+                    value={selectedExecutiveUsername}
+                    onChange={(e) => setSelectedExecutiveUsername(e.target.value)}
+                    aria-label="Executive Name"
+                    className="w-full appearance-none bg-transparent text-sm font-bold pr-6 focus:outline-none cursor-pointer text-[var(--text-primary)]"
+                  >
+                    {EXECUTIVE_PROFILES.map((exec) => (
+                      <option
+                        key={exec.username}
+                        value={exec.username}
+                        className={
+                          isDark
+                            ? 'bg-[#111D19] text-[#ECFDF5]'
+                            : 'bg-white text-[#0F1B17]'
+                        }
+                      >
+                        {exec.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={15}
+                    className="absolute right-0 pointer-events-none text-[var(--accent-primary)]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <p className="hidden md:block text-xs text-[var(--text-secondary)] leading-relaxed">
+              Sign in with your 4-digit executive PIN to launch today&apos;s Modern Trade PJP
+              route and shelf verification tools.
+            </p>
+          </div>
+
+          {/* Right Column: PIN Dots, Keypad & Sign In CTA */}
+          <div className="flex flex-col items-center space-y-4">
+            <div className="flex flex-col items-center space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">
+                <Lock size={13} className="text-[var(--accent-primary)]" />
+                <span>Enter 4-Digit Security PIN</span>
+              </div>
+
+              {/* 4 PIN Dots */}
+              <div className="flex items-center gap-4 pt-1">
+                {[0, 1, 2, 3].map((index) => {
+                  const isFilled = pin.length > index;
+                  return (
+                    <div
+                      key={index}
+                      className={`w-3.5 h-3.5 rounded-full transition-all duration-200 ${
+                        isFilled
+                          ? isDark
+                            ? 'bg-[#10B981] scale-110 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                            : 'bg-[#084C41] scale-110 shadow-sm'
+                          : isDark
+                          ? 'bg-white/10 border border-white/20'
+                          : 'bg-[#084C41]/10 border border-[#084C41]/20'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+
+              {error && (
+                <p className="text-xs font-semibold text-rose-500 tracking-wide pt-0.5">
+                  {error}
+                </p>
+              )}
+            </div>
+
+            {/* Tactile Frosted Numeric Keypad */}
+            <div className="grid grid-cols-3 gap-2 w-full max-w-[276px]">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                <button
+                  key={digit}
+                  type="button"
+                  onClick={() => handleKeyPress(digit)}
+                  className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                >
+                  {digit}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={handleQuickDemo}
+                className={`h-12 rounded-2xl text-[11px] font-bold transition-all flex items-center justify-center text-center leading-tight px-1 active:scale-95 cursor-pointer border ${
+                  isDark
+                    ? 'bg-[#10B981]/15 hover:bg-[#10B981]/25 border-emerald-500/30 text-[#34D399]'
+                    : 'bg-[#084C41]/10 hover:bg-[#084C41]/15 border-[#084C41]/20 text-[#084C41]'
+                }`}
+                title="Auto-fill Demo PIN"
+              >
+                Demo (2026)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleKeyPress('0')}
+                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+              >
+                0
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                aria-label="Delete last digit"
+              >
+                <Delete size={18} />
+              </button>
+            </div>
+
             <button
-              key={digit}
               type="button"
-              onClick={() => handleKeyPress(digit)}
-              className={`h-12 rounded-2xl border text-base font-bold transition-all flex items-center justify-center shadow-xs active:scale-95 ${
-                isDark
-                  ? 'bg-[#132219]/90 hover:bg-[#182C21] border-emerald-900/50 text-[#F0FDF4]'
-                  : 'bg-white hover:bg-emerald-50/50 border-emerald-950/10 text-[#061A12] shadow-xs'
+              onClick={() => attemptLogin(selectedExecutiveUsername, pin)}
+              disabled={pin.length !== 4}
+              className={`w-full max-w-[276px] min-h-[48px] py-3 rounded-2xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2 ${
+                pin.length === 4
+                  ? isDark
+                    ? 'bg-[#10B981] text-[#05231C] shadow-lg shadow-emerald-950/40 hover:brightness-105 active:scale-[0.99] cursor-pointer'
+                    : 'bg-[#084C41] text-white shadow-lg shadow-[#084C41]/25 hover:brightness-110 active:scale-[0.99] cursor-pointer'
+                  : 'glass-subtle text-[var(--text-muted)] cursor-not-allowed opacity-70'
               }`}
             >
-              {digit}
+              <CheckCircle size={15} />
+              <span className="whitespace-nowrap">Sign In &amp; Start Route</span>
             </button>
-          ))}
-          <button
-            type="button"
-            onClick={handleQuickDemo}
-            className={`h-12 rounded-2xl border text-[10px] font-bold transition-all flex items-center justify-center text-center leading-tight px-1 active:scale-95 ${
-              isDark
-                ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-700/50 text-emerald-300'
-                : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-300 text-emerald-800'
-            }`}
-            title="Auto-fill Demo PIN"
-          >
-            Demo (2026)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleKeyPress('0')}
-            className={`h-12 rounded-2xl border text-base font-bold transition-all flex items-center justify-center shadow-xs active:scale-95 ${
-              isDark
-                ? 'bg-[#132219]/90 hover:bg-[#182C21] border-emerald-900/50 text-[#F0FDF4]'
-                : 'bg-white hover:bg-emerald-50/50 border-emerald-950/10 text-[#061A12] shadow-xs'
-            }`}
-          >
-            0
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            className={`h-12 rounded-2xl border transition-all flex items-center justify-center active:scale-95 ${
-              isDark
-                ? 'bg-[#132219]/90 hover:bg-[#182C21] border-emerald-900/50 text-slate-400 hover:text-rose-400'
-                : 'bg-white hover:bg-emerald-50/50 border-emerald-950/10 text-slate-500 hover:text-rose-600 shadow-xs'
-            }`}
-            aria-label="Delete last digit"
-          >
-            <Delete size={18} />
-          </button>
+          </div>
         </div>
-
-        <button
-          onClick={() => attemptLogin(selectedExecutiveUsername, pin)}
-          disabled={pin.length !== 4}
-          className={`w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
-            pin.length === 4
-              ? 'bg-gradient-to-r from-[#047857] via-[#065F46] to-[#10B981] text-white shadow-lg shadow-emerald-950/30 hover:brightness-105 active:scale-[0.99] border border-emerald-400/30'
-              : isDark
-              ? 'bg-[#132219] border border-emerald-950 text-slate-500 cursor-not-allowed'
-              : 'bg-slate-200 border border-slate-300 text-slate-400 cursor-not-allowed'
-          }`}
-        >
-          <CheckCircle size={15} />
-          Sign In &amp; Start PJP Route
-        </button>
       </div>
     </div>
   );
