@@ -1,15 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  RotateCcw,
   CheckCircle2,
   AlertTriangle,
   ShieldAlert,
   ArrowRight,
   Camera,
   ShieldCheck,
-  Calendar,
   RefreshCw
 } from 'lucide-react';
 import {
@@ -27,6 +25,14 @@ import {
   CategoryFilter,
   normalizeAccountLabel
 } from '../utils/homeAnalyticsData';
+import {
+  WheelDateRangePicker,
+  CalendarDateValue,
+  compareCalendarDates,
+  diffCalendarDaysInclusive,
+  formatShortCalendarDate,
+  formatCompactCalendarDate
+} from './WheelDateRangePicker';
 
 interface HomeAnalyticsScreenProps {
   executive: UserProfile | null;
@@ -135,12 +141,16 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   const { isDark } = useTheme();
 
   // Global Filters (0B)
-  const [fromDay, setFromDay] = useState<number>(1);
-  const [toDay, setToDay] = useState<number>(17);
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState<boolean>(false);
-  const [pickingStep, setPickingStep] = useState<'from' | 'to'>('from');
-  const [hoverDay, setHoverDay] = useState<number | null>(null);
-  const datePickerRef = useRef<HTMLDivElement | null>(null);
+  const [fromDate, setFromDate] = useState<CalendarDateValue>({
+    year: 2026,
+    month: 10,
+    day: 1
+  });
+  const [toDate, setToDate] = useState<CalendarDateValue>({
+    year: 2026,
+    month: 10,
+    day: 17
+  });
 
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('All');
   const [accountFilter, setAccountFilter] = useState<string>('All');
@@ -178,37 +188,31 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
 
   const scheduleMeta = baseMasterData.scheduleMeta;
 
+  const defaultFromDate = useMemo<CalendarDateValue>(
+    () => ({ year: scheduleMeta.year, month: scheduleMeta.month, day: 1 }),
+    [scheduleMeta.year, scheduleMeta.month]
+  );
+  const defaultToDate = useMemo<CalendarDateValue>(
+    () => ({
+      year: scheduleMeta.year,
+      month: scheduleMeta.month,
+      day: scheduleMeta.cutoffDay
+    }),
+    [scheduleMeta.year, scheduleMeta.month, scheduleMeta.cutoffDay]
+  );
+
   // Keep selected date bounds & active calendar day aligned when executive or PJP month updates
   useEffect(() => {
-    setFromDay(1);
-    setToDay(scheduleMeta.cutoffDay);
+    setFromDate({ year: scheduleMeta.year, month: scheduleMeta.month, day: 1 });
+    setToDate({
+      year: scheduleMeta.year,
+      month: scheduleMeta.month,
+      day: scheduleMeta.cutoffDay
+    });
     setSelectedDay(scheduleMeta.cutoffDay);
     setAccountFilter('All');
     setOutletFilter('All');
   }, [executive?.name, scheduleMeta.month, scheduleMeta.year, scheduleMeta.cutoffDay]);
-
-  // Smooth outside-click & Escape close for Frosted Date Range Popover
-  useEffect(() => {
-    if (!isDatePickerOpen) return;
-    const handlePointerDown = (e: MouseEvent) => {
-      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
-        setIsDatePickerOpen(false);
-        setHoverDay(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsDatePickerOpen(false);
-        setHoverDay(null);
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isDatePickerOpen]);
 
   // Palette adapted to Light & Dark Glass
   const tealColor = isDark ? '#10B981' : '#0B6B63';
@@ -231,49 +235,38 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     isDark ? '#38BDF8' : '#2563EB'
   ];
 
-  // Derived period bounds from user's explicit From / To selection
-  const startDay = Math.max(1, Math.min(fromDay, scheduleMeta.daysInMonth));
-  const endDay = Math.max(startDay, Math.min(toDay, scheduleMeta.daysInMonth));
-  const observedStartDay = Math.min(scheduleMeta.cutoffDay, startDay);
-  const observedEndDay = Math.max(
-    observedStartDay,
-    Math.min(scheduleMeta.cutoffDay, endDay)
-  );
-  const sliceDaysCount = Math.max(1, observedEndDay - observedStartDay + 1);
-  const totalSelectedDaysCount = Math.max(1, endDay - startDay + 1);
+  // Derived period bounds from user's explicit Wheel From / To selection (2025-2027)
+  const totalSelectedDaysCount = diffCalendarDaysInclusive(fromDate, toDate);
+  const isInsidePjpMonth =
+    fromDate.year === scheduleMeta.year &&
+    fromDate.month === scheduleMeta.month &&
+    toDate.year === scheduleMeta.year &&
+    toDate.month === scheduleMeta.month;
+
+  const pjpCycleStart: CalendarDateValue = {
+    year: scheduleMeta.year,
+    month: scheduleMeta.month,
+    day: 1
+  };
+  const pjpCycleEnd: CalendarDateValue = {
+    year: scheduleMeta.year,
+    month: scheduleMeta.month,
+    day: scheduleMeta.cutoffDay
+  };
+  const overlapStart =
+    compareCalendarDates(fromDate, pjpCycleStart) > 0 ? fromDate : pjpCycleStart;
+  const overlapEnd =
+    compareCalendarDates(toDate, pjpCycleEnd) < 0 ? toDate : pjpCycleEnd;
+  const hasPjpOverlap = compareCalendarDates(overlapStart, overlapEnd) <= 0;
+
+  const observedStartDay = hasPjpOverlap ? overlapStart.day : 1;
+  const observedEndDay = hasPjpOverlap ? overlapEnd.day : scheduleMeta.cutoffDay;
+  const sliceDaysCount = isInsidePjpMonth
+    ? Math.max(1, observedEndDay - observedStartDay + 1)
+    : totalSelectedDaysCount;
   const periodScale = sliceDaysCount / Math.max(1, scheduleMeta.cutoffDay);
 
   const masterData = baseMasterData;
-
-  const handleOpenDatePicker = (step: 'from' | 'to') => {
-    if (isDatePickerOpen && pickingStep === step) {
-      setIsDatePickerOpen(false);
-      setHoverDay(null);
-    } else {
-      setPickingStep(step);
-      setIsDatePickerOpen(true);
-    }
-  };
-
-  const handleCalendarDayClick = (d: number) => {
-    if (pickingStep === 'from') {
-      setFromDay(d);
-      if (d > endDay) {
-        setToDay(d);
-      }
-      setPickingStep('to');
-      setHoverDay(null);
-    } else {
-      if (d < startDay) {
-        setFromDay(d);
-        setPickingStep('to');
-      } else {
-        setToDay(d);
-        setIsDatePickerOpen(false);
-        setHoverDay(null);
-      }
-    }
-  };
 
   // Cascading Outlets list dependent on selected Account (0B.4)
   const availableOutletsForDropdown = useMemo(() => {
@@ -445,11 +438,11 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       0.08,
       Math.min(1, totalMton / Math.max(1, masterData.allOutlets.length * 10.5 * periodScale))
     );
-    const monthDaysTotal = Math.max(sliceDaysCount, endDay - startDay + 1);
-    const targetScale =
-      startDay === 1 && endDay >= scheduleMeta.cutoffDay - 1
+    const targetScale = isInsidePjpMonth
+      ? fromDate.day === 1 && toDate.day >= scheduleMeta.cutoffDay - 1
         ? 1
-        : Math.max(0.1, monthDaysTotal / scheduleMeta.daysInMonth);
+        : Math.max(0.1, totalSelectedDaysCount / scheduleMeta.daysInMonth)
+      : Math.max(0.1, totalSelectedDaysCount / 30);
 
     const baseTarget =
       300 *
@@ -469,7 +462,13 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       )
     );
 
-    const dailySlice = DAILY_BASE_SALES.slice(observedStartDay - 1, observedEndDay);
+    const dailySlice = isInsidePjpMonth
+      ? DAILY_BASE_SALES.slice(observedStartDay - 1, observedEndDay)
+      : DAILY_BASE_SALES.slice(0, Math.min(31, totalSelectedDaysCount));
+    const multiMonthScale = isInsidePjpMonth
+      ? 1
+      : totalSelectedDaysCount / Math.max(1, dailySlice.length);
+
     let runningSales = 0;
     const catFactor =
       categoryFilter === 'All'
@@ -485,39 +484,40 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
         : Math.max(0.12, scopeRatio * 1.45);
 
     const cumulative = dailySlice.map((val) => {
-      runningSales += val * 0.82 * catFactor * accScopeMult;
+      runningSales += val * 0.82 * catFactor * accScopeMult * multiMonthScale;
       return runningSales;
     });
 
     const mtdMton = Math.round(cumulative[cumulative.length - 1] || 0);
     const achievementPct = Math.min(140, Math.round((mtdMton / scaledTarget) * 100));
-    const pacePct = Math.min(
-      100,
-      Math.round((sliceDaysCount / scheduleMeta.daysInMonth) * 100)
-    );
+    const paceDenom = isInsidePjpMonth
+      ? scheduleMeta.daysInMonth
+      : Math.max(30, totalSelectedDaysCount);
+    const pacePct = Math.min(100, Math.round((sliceDaysCount / paceDenom) * 100));
     const arcLen = Math.PI * 95;
     const phi = Math.PI * (pacePct / 100);
     const remainingMton = Math.max(0, scaledTarget - mtdMton);
-    const remainingDays = Math.max(1, scheduleMeta.daysInMonth - observedEndDay);
+    const remainingDays = isInsidePjpMonth
+      ? Math.max(1, scheduleMeta.daysInMonth - observedEndDay)
+      : Math.max(1, Math.round(totalSelectedDaysCount * 0.25));
 
     const W = 326;
     const H = 122;
     const ymax = Math.max(scaledTarget * 1.05, (cumulative[cumulative.length - 1] || 1) * 1.15);
-    const totalXSpan = Math.max(
-      sliceDaysCount,
-      endDay <= scheduleMeta.cutoffDay && startDay === 1
+    const curvePtsCount = Math.max(1, cumulative.length);
+    const totalXSpan =
+      isInsidePjpMonth && toDate.day <= scheduleMeta.cutoffDay && fromDate.day === 1
         ? scheduleMeta.daysInMonth
-        : sliceDaysCount
-    );
+        : curvePtsCount;
     const xAt = (idx: number) =>
-      ((sliceDaysCount === 1 ? 1 : idx / Math.max(1, totalXSpan - 1)) * W).toFixed(1);
+      ((curvePtsCount === 1 ? 1 : idx / Math.max(1, totalXSpan - 1)) * W).toFixed(1);
     const yAt = (v: number) => (H - (v / ymax) * H).toFixed(1);
 
     const actualPath =
-      sliceDaysCount === 1
+      curvePtsCount === 1
         ? `M0 ${yAt(0)} L${W} ${yAt(cumulative[0] || 0)}`
         : `M${cumulative.map((v, i) => `${xAt(i)} ${yAt(v)}`).join(' L')}`;
-    const lastDotX = sliceDaysCount === 1 ? String(W) : xAt(cumulative.length - 1);
+    const lastDotX = curvePtsCount === 1 ? String(W) : xAt(cumulative.length - 1);
 
     // Sub-category breakdown
     const subCategories = CATEGORIES.map((cat) => {
@@ -753,12 +753,20 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
         targetPath: `M0 ${H} L${W} ${yAt(scaledTarget)}`,
         dotX: lastDotX,
         dotY: yAt(mtdMton),
-        startLabel: `${startDay} ${scheduleMeta.monthShort}`,
+        startLabel:
+          fromDate.year === toDate.year
+            ? formatCompactCalendarDate(fromDate)
+            : formatShortCalendarDate(fromDate),
         midLabel:
-          startDay === 1 && endDay >= scheduleMeta.cutoffDay
+          isInsidePjpMonth &&
+          fromDate.day === 1 &&
+          toDate.day >= scheduleMeta.cutoffDay
             ? `${scheduleMeta.cutoffDay} ${scheduleMeta.monthShort}`
             : undefined,
-        endLabel: `${endDay} ${scheduleMeta.monthShort}`
+        endLabel:
+          fromDate.year === toDate.year
+            ? formatCompactCalendarDate(toDate)
+            : formatShortCalendarDate(toDate)
       },
       subCategories,
       displayAccountGroups,
@@ -779,8 +787,10 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     accountFilter,
     outletFilter,
     categoryFilter,
-    startDay,
-    endDay,
+    fromDate,
+    toDate,
+    isInsidePjpMonth,
+    totalSelectedDaysCount,
     observedStartDay,
     observedEndDay,
     sliceDaysCount,
@@ -978,17 +988,15 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   }, [selectedOosCell, masterData.allOutlets]);
 
   const hasFilters =
-    startDay !== 1 ||
-    endDay !== scheduleMeta.cutoffDay ||
+    compareCalendarDates(fromDate, defaultFromDate) !== 0 ||
+    compareCalendarDates(toDate, defaultToDate) !== 0 ||
     categoryFilter !== 'All' ||
     accountFilter !== 'All' ||
     outletFilter !== 'All';
 
   const handleResetFilters = () => {
-    setFromDay(1);
-    setToDay(scheduleMeta.cutoffDay);
-    setIsDatePickerOpen(false);
-    setHoverDay(null);
+    setFromDate(defaultFromDate);
+    setToDate(defaultToDate);
     setCategoryFilter('All');
     setAccountFilter('All');
     setOutletFilter('All');
@@ -1049,236 +1057,21 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
           </div>
         </header>
 
-        {/* 0B. GLOBAL FILTERS CARD: Smooth Frosted From/To Date Picker + 3-Col Cascading Filters */}
+        {/* 0B. GLOBAL FILTERS CARD: Cylindrical Wheel/Drum From/To Date Picker + 3-Col Cascading Filters */}
         <section className="glass-panel rounded-2xl p-3.5 md:p-4 space-y-3 relative z-20">
-          {/* Row 1: Smooth Interactive Frosted Date Range Trigger & Popover */}
-          <div className="relative" ref={datePickerRef}>
-            <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-              <div className="flex-1 min-w-[260px] glass-subtle rounded-xl p-1 flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleOpenDatePicker('from')}
-                  aria-expanded={isDatePickerOpen && pickingStep === 'from'}
-                  className={`flex-1 min-h-[40px] px-3 py-1.5 rounded-lg flex items-center gap-2 text-left transition-all cursor-pointer ${
-                    isDatePickerOpen && pickingStep === 'from'
-                      ? isDark
-                        ? 'bg-[#10B981]/18 text-[#ECFDF5] ring-1 ring-[#10B981]/60'
-                        : 'bg-white/85 text-[#084C41] shadow-sm ring-1 ring-[#084C41]/25'
-                      : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
-                  }`}
-                >
-                  <Calendar size={14} className="text-[var(--accent-primary)] shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-semibold text-[var(--text-muted)] leading-none">
-                      From
-                    </div>
-                    <div className="text-xs sm:text-[13px] font-bold text-[var(--text-primary)] tabular-nums truncate mt-0.5">
-                      {startDay} {scheduleMeta.monthLabel}
-                    </div>
-                  </div>
-                </button>
-
-                <div className="px-1.5 flex items-center gap-1 text-[11px] font-semibold text-[var(--text-muted)] tabular-nums shrink-0">
-                  <ArrowRight size={13} />
-                  <span className="hidden xs:inline">{totalSelectedDaysCount}d</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleOpenDatePicker('to')}
-                  aria-expanded={isDatePickerOpen && pickingStep === 'to'}
-                  className={`flex-1 min-h-[40px] px-3 py-1.5 rounded-lg flex items-center justify-between gap-2 text-left transition-all cursor-pointer ${
-                    isDatePickerOpen && pickingStep === 'to'
-                      ? isDark
-                        ? 'bg-[#10B981]/18 text-[#ECFDF5] ring-1 ring-[#10B981]/60'
-                        : 'bg-white/85 text-[#084C41] shadow-sm ring-1 ring-[#084C41]/25'
-                      : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-semibold text-[var(--text-muted)] leading-none">
-                      To
-                    </div>
-                    <div className="text-xs sm:text-[13px] font-bold text-[var(--text-primary)] tabular-nums truncate mt-0.5">
-                      {endDay} {scheduleMeta.monthLabel}
-                    </div>
-                  </div>
-                  <ChevronDown
-                    size={14}
-                    className={`text-[var(--text-muted)] shrink-0 transition-transform duration-200 ${
-                      isDatePickerOpen ? 'rotate-180' : ''
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {hasFilters && (
-                <button
-                  type="button"
-                  onClick={handleResetFilters}
-                  className="min-h-[48px] px-3.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                >
-                  <RotateCcw size={13} />
-                  <span>Reset</span>
-                </button>
-              )}
-            </div>
-
-            {/* Smooth Frosted Calendar Range Popover */}
-            {isDatePickerOpen && (
-              <div
-                role="dialog"
-                aria-label="Select From and To dates"
-                className={`absolute left-0 top-full mt-2 w-full sm:w-[356px] rounded-2xl p-4 shadow-2xl border border-[var(--border-glass)] backdrop-blur-2xl z-40 animate-fade-in ${
-                  isDark ? 'bg-[#0F1B17]/95' : 'bg-[#FAF9F5]/95'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <div>
-                    <div className="text-sm font-extrabold text-[var(--text-primary)]">
-                      {scheduleMeta.monthLabel}
-                    </div>
-                    <div className="text-[11px] text-[var(--text-secondary)]">
-                      {pickingStep === 'from'
-                        ? 'Tap a start date (From)'
-                        : 'Tap an end date (To)'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 p-0.5 rounded-lg glass-subtle text-[11px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setPickingStep('from')}
-                      className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
-                        pickingStep === 'from'
-                          ? isDark
-                            ? 'bg-[#10B981] text-[#05231C]'
-                            : 'bg-[#084C41] text-white'
-                          : 'text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      From
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPickingStep('to')}
-                      className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
-                        pickingStep === 'to'
-                          ? isDark
-                            ? 'bg-[#10B981] text-[#05231C]'
-                            : 'bg-[#084C41] text-white'
-                          : 'text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      To
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1 mb-1">
-                  {DAY_NAMES.map((dn) => (
-                    <span
-                      key={dn}
-                      className="text-center text-[10px] font-semibold text-[var(--text-muted)] py-1"
-                    >
-                      {dn}
-                    </span>
-                  ))}
-                </div>
-
-                <div
-                  className="grid grid-cols-7 gap-y-1"
-                  onMouseLeave={() => setHoverDay(null)}
-                >
-                  {Array.from({ length: scheduleMeta.firstWeekdayOffset }, (_, i) => (
-                    <span key={`blank-${i}`} className="h-9" />
-                  ))}
-
-                  {Array.from({ length: scheduleMeta.daysInMonth }, (_, idx) => {
-                    const d = idx + 1;
-                    let previewStart = startDay;
-                    let previewEnd = endDay;
-                    if (hoverDay !== null) {
-                      if (pickingStep === 'from') {
-                        previewStart = hoverDay;
-                        previewEnd = hoverDay > endDay ? hoverDay : endDay;
-                      } else {
-                        previewStart = hoverDay < startDay ? hoverDay : startDay;
-                        previewEnd = hoverDay < startDay ? startDay : hoverDay;
-                      }
-                    }
-
-                    const isStart = d === previewStart;
-                    const isEnd = d === previewEnd;
-                    const isEndpoint = isStart || isEnd;
-                    const isInSpan = d > previewStart && d < previewEnd;
-                    const hasScheduledPjp = Boolean(scheduleMeta.scheduleByDay[d]);
-
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        onMouseEnter={() => setHoverDay(d)}
-                        onClick={() => handleCalendarDayClick(d)}
-                        className={`relative h-9 text-xs font-bold tabular-nums flex flex-col items-center justify-center transition-all cursor-pointer ${
-                          isEndpoint
-                            ? isDark
-                              ? 'bg-[#10B981] text-[#05231C] rounded-lg shadow-sm z-10'
-                              : 'bg-[#084C41] text-white rounded-lg shadow-sm z-10'
-                            : isInSpan
-                            ? isDark
-                              ? 'bg-[#10B981]/20 text-[#ECFDF5]'
-                              : 'bg-[#084C41]/12 text-[#084C41]'
-                            : 'text-[var(--text-primary)] hover:bg-black/5 dark:hover:bg-white/10 rounded-lg'
-                        }`}
-                      >
-                        <span>{d}</span>
-                        {hasScheduledPjp && !isEndpoint && (
-                          <span
-                            className="w-1 h-1 rounded-full mt-0.5"
-                            style={{ backgroundColor: tealColor }}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-[var(--border-glass)]">
-                  <span className="text-[11px] font-medium text-[var(--text-secondary)] tabular-nums">
-                    {startDay} – {endDay} {scheduleMeta.monthShort} · {totalSelectedDaysCount}{' '}
-                    day{totalSelectedDaysCount > 1 ? 's' : ''}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFromDay(1);
-                        setToDay(scheduleMeta.cutoffDay);
-                        setHoverDay(null);
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      Reset
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDatePickerOpen(false);
-                        setHoverDay(null);
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
-                        isDark
-                          ? 'bg-[#10B981] text-[#05231C]'
-                          : 'bg-[#084C41] text-white'
-                      }`}
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Row 1: iOS-Style Scroll-Snap Wheel/Drum From & To Picker */}
+          <WheelDateRangePicker
+            fromDate={fromDate}
+            toDate={toDate}
+            defaultFromDate={defaultFromDate}
+            defaultToDate={defaultToDate}
+            hasAnyFilters={hasFilters}
+            onChangeRange={(nextFrom, nextTo) => {
+              setFromDate(nextFrom);
+              setToDate(nextTo);
+            }}
+            onResetAllFilters={handleResetFilters}
+          />
 
           {/* Row 2: 3-Column Cascading Filters on Desktop (Category, Account Name, Outlet Name) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
@@ -1443,8 +1236,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 Sales
               </h3>
               <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                Target vs achievement · MTON ({startDay} {scheduleMeta.monthShort} – {endDay}{' '}
-                {scheduleMeta.monthShort})
+                Target vs achievement · MTON ({formatShortCalendarDate(fromDate)} –{' '}
+                {formatShortCalendarDate(toDate)})
               </p>
             </div>
 
@@ -1983,12 +1776,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                   />
                 </svg>
                 <div className="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)] mt-1 tabular-nums">
-                  <span>
-                    {startDay} {scheduleMeta.monthShort}
-                  </span>
-                  <span>
-                    {endDay} {scheduleMeta.monthShort}
-                  </span>
+                  <span>{formatShortCalendarDate(fromDate)}</span>
+                  <span>{formatShortCalendarDate(toDate)}</span>
                 </div>
               </div>
             </div>
@@ -2697,7 +2486,14 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                     (d) => {
                       const sched = scheduleMeta.scheduleByDay[d];
                       const isFuture = d > scheduleMeta.cutoffDay;
-                      const inRange = d >= startDay && d <= endDay;
+                      const cellDate: CalendarDateValue = {
+                        year: scheduleMeta.year,
+                        month: scheduleMeta.month,
+                        day: d
+                      };
+                      const inRange =
+                        compareCalendarDates(cellDate, fromDate) >= 0 &&
+                        compareCalendarDates(cellDate, toDate) <= 0;
                       const isSelected = scheduleMetrics.activeCalDay === d;
 
                       let bg = isDark ? 'rgba(255,255,255,0.06)' : '#ECEAE3';
