@@ -24,6 +24,7 @@ interface PJPScreenProps {
   planograms?: PlanogramRecord[];
   isSyncingMatch?: boolean;
   onRefreshMatch?: () => void;
+  requestedFilter?: { value: 'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE'; nonce: number } | null;
 }
 
 export const PJPScreen: React.FC<PJPScreenProps> = ({
@@ -33,10 +34,19 @@ export const PJPScreen: React.FC<PJPScreenProps> = ({
   executive,
   planograms = [],
   isSyncingMatch = false,
-  onRefreshMatch
+  onRefreshMatch,
+  requestedFilter
 }) => {
   const { isDark } = useTheme();
-  const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE'>(
+    requestedFilter?.value || 'ALL'
+  );
+
+  React.useEffect(() => {
+    if (requestedFilter?.value) {
+      setFilter(requestedFilter.value);
+    }
+  }, [requestedFilter?.nonce, requestedFilter?.value]);
 
   const completedCount = outlets.filter((o) =>
     Object.values(o.progress).every((status) => status === 'Completed')

@@ -118,6 +118,10 @@ export default function App() {
   });
 
   const [isAddOutletModalOpen, setIsAddOutletModalOpen] = useState<boolean>(false);
+  const [pjpRequestedFilter, setPjpRequestedFilter] = useState<{
+    value: 'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE';
+    nonce: number;
+  } | null>(null);
   const [planograms, setPlanograms] = useState<PlanogramRecord[]>(() => getCachedActivePlanograms());
   const [liveMasterOutlets, setLiveMasterOutlets] = useState<MasterOutletOption[]>(
     () => getCachedLivePjpData().masterOutlets
@@ -229,6 +233,9 @@ export default function App() {
     setActiveTab(tab);
     setIsFinishingOutlet(false);
     setSelectedCategory(null);
+    if (tab === 'pjp') {
+      setPjpRequestedFilter(null);
+    }
 
     if (tab === 'today') {
       setSelectedOutlet(null);
@@ -240,6 +247,15 @@ export default function App() {
       setSelectedOutlet(null);
       setCurrentScreen('PJP');
     }
+  };
+
+  const navigateToPendingPjp = () => {
+    setPjpRequestedFilter({ value: 'PENDING', nonce: Date.now() });
+    setActiveTab('pjp');
+    setIsFinishingOutlet(false);
+    setSelectedCategory(null);
+    setSelectedOutlet(null);
+    setCurrentScreen('PJP');
   };
 
   const handleSaveAudit = (record: CategoryAuditRecord, deferExit: boolean = false) => {
@@ -514,6 +530,7 @@ export default function App() {
                   planograms={planograms}
                   isSyncingMatch={isSyncingMatch}
                   onRefreshMatch={() => syncPjpAndPlanograms(user?.name, true)}
+                  requestedFilter={pjpRequestedFilter}
                   onSelectOutlet={(outlet) => {
                     setSelectedOutlet(outlet);
                     setCurrentScreen('OUTLET_OVERVIEW');
@@ -531,7 +548,9 @@ export default function App() {
                 <DashboardScreen
                   outlets={outlets}
                   audits={audits}
-                  onBack={() => handleSelectTab('pjp')}
+                  executive={user}
+                  onBack={navigateToPendingPjp}
+                  onNavigateToPendingPjp={navigateToPendingPjp}
                   onResetData={handleResetData}
                 />
               )}
