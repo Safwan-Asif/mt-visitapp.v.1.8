@@ -16,9 +16,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const saved = localStorage.getItem('mta_theme') || localStorage.getItem('shelf_audit_theme');
       if (saved === 'dark' || saved === 'light') return saved;
-      return 'light'; // Light mode is default on first load
+      return 'dark'; // Dark mode is default
     } catch {
-      return 'light';
+      return 'dark';
     }
   });
 

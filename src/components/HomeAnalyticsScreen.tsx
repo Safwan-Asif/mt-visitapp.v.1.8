@@ -50,6 +50,13 @@ interface HomeAnalyticsScreenProps {
   isSyncingPjp?: boolean;
   onSyncPjp?: () => void;
   onNavigateToPendingPjp: () => void;
+  selectedMapOutlet?: {
+    id: string;
+    name: string;
+    area: string;
+    nonce: number;
+  } | null;
+  onClearMapOutlet?: () => void;
 }
 
 type ViewTabId =
@@ -148,7 +155,9 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   planograms,
   isSyncingPjp = false,
   onSyncPjp,
-  onNavigateToPendingPjp
+  onNavigateToPendingPjp,
+  selectedMapOutlet = null,
+  onClearMapOutlet
 }) => {
   const { isDark } = useTheme();
 
@@ -224,6 +233,32 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     setAccountFilter('All');
     setOutletFilter('All');
   }, [executive?.name, scheduleMeta.month, scheduleMeta.year, scheduleMeta.cutoffDay]);
+
+  // Apply outlet filter automatically when arriving from Map "MORE DETAILS ->"
+  useEffect(() => {
+    if (!selectedMapOutlet) return;
+    const targetName = selectedMapOutlet.name.toLowerCase();
+    const matchedOutlet =
+      basePjpData.allOutlets.find((o) => o.id === selectedMapOutlet.id) ||
+      basePjpData.allOutlets.find(
+        (o) =>
+          o.name.toLowerCase().includes(targetName) ||
+          targetName.includes(o.branch.toLowerCase())
+      );
+
+    if (matchedOutlet) {
+      setAccountFilter(matchedOutlet.account);
+      setOutletFilter(matchedOutlet.id);
+    } else {
+      const matchedAcct = basePjpData.accounts.find((g) =>
+        targetName.includes(g.account.toLowerCase().split(' ')[0])
+      );
+      if (matchedAcct) {
+        setAccountFilter(matchedAcct.account);
+        setOutletFilter('All');
+      }
+    }
+  }, [selectedMapOutlet?.nonce, basePjpData.allOutlets, basePjpData.accounts]);
 
   // Palette adapted to Light & Dark Glass
   const tealColor = isDark ? '#10B981' : '#0B6B63';
@@ -1059,6 +1094,31 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
             </div>
           </div>
         </header>
+
+        {selectedMapOutlet && (
+          <div className="glass-panel rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 border border-sky-500/35">
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-500">
+                Selected from Map · {selectedMapOutlet.id}
+              </span>
+              <p className="text-xs font-bold text-[var(--text-primary)] truncate">
+                {selectedMapOutlet.name} · {selectedMapOutlet.area}
+              </p>
+            </div>
+            {onClearMapOutlet && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClearMapOutlet();
+                  handleResetFilters();
+                }}
+                className="min-h-[36px] px-2.5 rounded-xl text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer shrink-0"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {/* 0B. GLOBAL FILTERS CARD: Cylindrical Wheel/Drum From/To Date Picker + 3-Col Cascading Filters */}
         <section className="glass-panel rounded-2xl p-3.5 md:p-4 space-y-3 relative z-20">

@@ -1,0 +1,321 @@
+import React, { useEffect, useMemo, useRef } from 'react';
+import {
+  MapContainer,
+  TileLayer,
+  Polyline,
+  Marker,
+  useMap,
+  useMapEvents
+} from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { Plus, Minus, Crosshair } from 'lucide-react';
+import {
+  DOHA_CENTER,
+  DOHA_LANDMARKS,
+  DohaLandmark,
+  ExecutiveLocation,
+  MapOutlet,
+  PerformanceLayerId
+} from '../../data/data';
+import { OutletPin, createExecutiveBeaconIcon } from './OutletPin';
+import { BottomSheetState } from './OutletBottomSheet';
+
+function createLandmarkIcon(landmark: DohaLandmark): L.DivIcon {
+  const iconSvg =
+    landmark.kind === 'stadium'
+      ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><ellipse cx="12" cy="11" rx="9" ry="5"/><path d="M3 11v4c0 2.8 4 5 9 5s9-2.2 9-5v-4"/></svg>`
+      : landmark.kind === 'corniche'
+      ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#E2E8F0" stroke-width="2"><path d="M12 2v14"/><path d="M7 18h10"/><path d="M9 18l3-9 3 9"/></svg>`
+      : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#E2E8F0" stroke-width="2"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.2-1.1.7l-.5 1.2 6.8 3.6-2.8 2.8-2.2-.6-1 1 2.5 1.5L8 19l1-1-.6-2.2 2.8-2.8 3.6 6.8 1.2-.5c.5-.2.8-.6.7-1.1z"/></svg>`;
+
+  const arrowHtml =
+    landmark.arrowDirection === 'left'
+      ? `<span style="color:#94A3B8;font-size:12px;font-weight:700;">&larr;</span>`
+      : landmark.arrowDirection === 'right'
+      ? `<span style="color:#38BDF8;font-size:12px;font-weight:700;">&rarr;</span>`
+      : '';
+
+  const html = `
+    <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(8,18,33,0.78);border:1px solid rgba(148,163,184,0.28);backdrop-filter:blur(8px);box-shadow:0 4px 12px rgba(0,0,0,0.45);white-space:nowrap;pointer-events:none;">
+      ${arrowHtml}
+      <span style="display:flex;align-items:center;justify-content:center;">${iconSvg}</span>
+      <span style="font-size:10.5px;font-weight:600;color:#F1F5F9;line-height:1.15;letter-spacing:0.01em;">${landmark.name}</span>
+    </div>
+  `;
+
+  return L.divIcon({
+    className: 'marviz-pin-icon',
+    html,
+    iconSize: [140, 28],
+    iconAnchor: [70, 14]
+  });
+}
+
+interface MapViewProps {
+  outlets: MapOutlet[];
+  allOutlets: MapOutlet[];
+  activeLayer: PerformanceLayerId;
+  showJourneyPlan: boolean;
+  selectedOutlet: MapOutlet | null;
+  sheetState: BottomSheetState;
+  executiveLocation: ExecutiveLocation;
+  centerRequestNonce: number;
+  onSelectOutlet: (outlet: MapOutlet) => void;
+  onMapBackgroundTap: () => void;
+  onRecenterExecutive: () => void;
+  onResetFilter?: () => void;
+}
+
+interface MapControllerProps {
+  selectedOutlet: MapOutlet | null;
+  sheetState: BottomSheetState;
+  executiveLocation: ExecutiveLocation;
+  centerRequestNonce: number;
+  mapRef: React.MutableRefObject<L.Map | null>;
+  onMapBackgroundTap: () => void;
+}
+
+const MapController: React.FC<MapControllerProps> = ({
+  selectedOutlet,
+  sheetState,
+  executiveLocation,
+  centerRequestNonce,
+  mapRef,
+  onMapBackgroundTap
+}) => {
+  const map = useMap();
+
+  useEffect(() => {
+    mapRef.current = map;
+  }, [map, mapRef]);
+
+  useMapEvents({
+    click: () => {
+      onMapBackgroundTap();
+    }
+  });
+
+  // Smoothly focus selected outlet slightly above center when sheet is open
+  useEffect(() => {
+    if (!selectedOutlet || sheetState === 'closed') return;
+    const currentZoom = Math.max(map.getZoom(), 13);
+    const targetLatOffset = sheetState === 'expanded' ? -0.0085 : -0.004;
+    map.flyTo(
+      [selectedOutlet.latitude + targetLatOffset, selectedOutlet.longitude],
+      currentZoom,
+      { duration: 0.45 }
+    );
+  }, [selectedOutlet?.id, sheetState, map]);
+
+  // Explicit user re-centre on executive location
+  useEffect(() => {
+    if (centerRequestNonce === 0) return;
+    map.flyTo([executiveLocation.latitude, executiveLocation.longitude], 13, {
+      duration: 0.5
+    });
+  }, [centerRequestNonce, executiveLocation.latitude, executiveLocation.longitude, map]);
+
+  return null;
+};
+
+export const MapView: React.FC<MapViewProps> = ({
+  outlets,
+  allOutlets,
+  activeLayer,
+  showJourneyPlan,
+  selectedOutlet,
+  sheetState,
+  executiveLocation,
+  centerRequestNonce,
+  onSelectOutlet,
+  onMapBackgroundTap,
+  onRecenterExecutive,
+  onResetFilter
+}) => {
+  const mapRef = useRef<L.Map | null>(null);
+
+  const executiveBeaconIcon = useMemo(() => createExecutiveBeaconIcon(), []);
+
+  // Build illustrative planned journey sequence coordinates from today's 8 scheduled outlets
+  const journeyRoutePositions = useMemo<[number, number][]>(() => {
+    return allOutlets
+      .filter((o) => o.scheduledForToday && o.visitOrder !== null)
+      .sort((a, b) => (a.visitOrder ?? 99) - (b.visitOrder ?? 99))
+      .map((o) => [o.latitude, o.longitude]);
+  }, [allOutlets]);
+
+  const landmarkIcons = useMemo(
+    () =>
+      DOHA_LANDMARKS.map((lm) => ({
+        landmark: lm,
+        icon: createLandmarkIcon(lm)
+      })),
+    []
+  );
+
+  const handleZoomIn = () => {
+    mapRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapRef.current?.zoomOut();
+  };
+
+  const controlsBottomClass =
+    sheetState === 'expanded'
+      ? 'bottom-[calc(360px+env(safe-area-inset-bottom,0px))] md:bottom-4'
+      : sheetState === 'peek'
+      ? 'bottom-[calc(200px+env(safe-area-inset-bottom,0px))] md:bottom-4'
+      : 'bottom-[calc(76px+env(safe-area-inset-bottom,0px))] md:bottom-4';
+
+  return (
+    <div className="relative w-full h-full">
+      <MapContainer
+        center={DOHA_CENTER}
+        zoom={12}
+        minZoom={10}
+        maxZoom={18}
+        zoomControl={false}
+        attributionControl={true}
+        className="marviz-leaflet-container"
+      >
+        <TileLayer
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+          maxZoom={18}
+        />
+
+        <MapController
+          selectedOutlet={selectedOutlet}
+          sheetState={sheetState}
+          executiveLocation={executiveLocation}
+          centerRequestNonce={centerRequestNonce}
+          mapRef={mapRef}
+          onMapBackgroundTap={onMapBackgroundTap}
+        />
+
+        {/* Illustrative Planned Journey Route Polyline (Glowing Cyan-Blue) */}
+        {showJourneyPlan && journeyRoutePositions.length > 1 && (
+          <>
+            <Polyline
+              positions={journeyRoutePositions}
+              pathOptions={{
+                color: '#38BDF8',
+                weight: 9,
+                opacity: 0.28,
+                lineCap: 'round',
+                lineJoin: 'round',
+                className: 'marviz-route-glow'
+              }}
+            />
+            <Polyline
+              positions={journeyRoutePositions}
+              pathOptions={{
+                color: '#38BDF8',
+                weight: 3.2,
+                opacity: 0.92,
+                dashArray: '8 7',
+                lineCap: 'round',
+                lineJoin: 'round'
+              }}
+            />
+          </>
+        )}
+
+        {/* Doha Geographic Landmark Callouts */}
+        {landmarkIcons.map(({ landmark, icon }) => (
+          <Marker
+            key={landmark.id}
+            position={[landmark.latitude, landmark.longitude]}
+            icon={icon}
+            zIndexOffset={50}
+            interactive={false}
+          />
+        ))}
+
+        {/* Executive Pulsing Location Indicator */}
+        <Marker
+          position={[executiveLocation.latitude, executiveLocation.longitude]}
+          icon={executiveBeaconIcon}
+          zIndexOffset={700}
+          interactive={false}
+        />
+
+        {/* Filtered Outlet Pins */}
+        {outlets.map((outlet) => (
+          <OutletPin
+            key={outlet.id}
+            outlet={outlet}
+            activeLayer={activeLayer}
+            isSelected={selectedOutlet?.id === outlet.id && sheetState !== 'closed'}
+            onSelect={onSelectOutlet}
+          />
+        ))}
+      </MapContainer>
+
+      {/* Subtle Tactical Vignette around screen edges for contrast */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-[380] bg-[radial-gradient(circle_at_center,transparent_58%,rgba(4,12,24,0.45)_100%)]"
+      />
+
+      {/* Empty Filter State */}
+      {outlets.length === 0 && (
+        <div className="absolute inset-0 z-[430] flex items-center justify-center px-6 pointer-events-none">
+          <div className="marviz-glass-strong rounded-2xl p-4 text-center max-w-xs pointer-events-auto text-white">
+            <p className="font-heading text-base font-bold uppercase tracking-wide">
+              No matching outlets
+            </p>
+            <p className="text-xs text-slate-300 mt-1">
+              Adjust your filter chip to view assigned Doha territory outlets.
+            </p>
+            {onResetFilter && (
+              <button
+                type="button"
+                onClick={onResetFilter}
+                className="mt-3 min-h-[40px] px-4 rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-xs font-bold uppercase tracking-wider text-white cursor-pointer transition-colors"
+              >
+                Show All Outlets
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Right-Side Floating Map Controls: Zoom +/- and Re-centre GPS */}
+      <div
+        className={`absolute right-3 z-[450] flex flex-col gap-2 transition-all duration-200 ${controlsBottomClass}`}
+      >
+        <div className="marviz-glass rounded-2xl flex flex-col divide-y divide-slate-700/70 overflow-hidden">
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            aria-label="Zoom in map"
+            className="w-11 h-11 flex items-center justify-center text-slate-100 hover:bg-white/10 active:bg-white/15 transition-colors cursor-pointer"
+          >
+            <Plus size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            aria-label="Zoom out map"
+            className="w-11 h-11 flex items-center justify-center text-slate-100 hover:bg-white/10 active:bg-white/15 transition-colors cursor-pointer"
+          >
+            <Minus size={18} />
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRecenterExecutive}
+          aria-label="Re-centre on current location"
+          title="Re-centre on Doha executive position"
+          className="w-11 h-11 rounded-2xl marviz-glass flex items-center justify-center text-sky-300 hover:text-white hover:border-sky-400/60 active:scale-95 transition-all cursor-pointer"
+        >
+          <Crosshair size={18} />
+        </button>
+      </div>
+    </div>
+  );
+};

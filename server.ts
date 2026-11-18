@@ -578,7 +578,7 @@ app.get('/api/planograms', async (req, res) => {
 // Live MT PJP Google Sheet Proxy & Short-TTL Cache (reads SAP Code directly from gid=0)
 const PJP_LIVE_CSV_URL =
   process.env.PJP_LIVE_CSV_URL ||
-  'https://docs.google.com/spreadsheets/d/19kxrCdBsXZ07-66o971p1dC5hAbXnucpHr-jQZZYC94/export?format=csv&gid=0';
+  'https://docs.google.com/spreadsheets/d/1OU38-cb5c4TUndDKRHhjKm76pjYRU1sjMC1Xp7xqXbU/export?format=csv&gid=856705612';
 const PJP_CACHE_FILE = path.join(DATA_DIR, 'pjp_cache.json');
 let cachedPjpPayload: { visits: any[]; masterOutlets: any[]; fetchedAt: number } | null = null;
 

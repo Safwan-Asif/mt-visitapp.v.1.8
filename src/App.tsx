@@ -17,6 +17,7 @@ import { AddOutletModal } from './components/AddOutletModal';
 import { DesktopSidebar, MobileBottomNav, AppTab } from './components/NavigationShell';
 import { PlaceholderTabScreen } from './components/PlaceholderTabScreen';
 import { HomeAnalyticsScreen } from './components/HomeAnalyticsScreen';
+import { MobileMapScreen } from './components/map/MobileMapScreen';
 import { sendAuditToAppsScriptProxy, autoSaveAuditToGoogleSheet } from './services/googleSheetsService';
 import { fetchActivePlanograms, getCachedActivePlanograms } from './services/planogramService';
 import {
@@ -120,6 +121,12 @@ export default function App() {
   });
 
   const [isAddOutletModalOpen, setIsAddOutletModalOpen] = useState<boolean>(false);
+  const [mapAnalyticsTarget, setMapAnalyticsTarget] = useState<{
+    id: string;
+    name: string;
+    area: string;
+    nonce: number;
+  } | null>(null);
   const [pjpRequestedFilter, setPjpRequestedFilter] = useState<{
     value: 'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE';
     nonce: number;
@@ -415,8 +422,8 @@ export default function App() {
 
       {/* Main Content Shell */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
-        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet and Hidden during Active Category Audits) */}
-        {isAuthenticated && !isActiveAudit && (
+        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits, and full-viewport Map View) */}
+        {isAuthenticated && !isActiveAudit && activeTab !== 'map' && (
           <header className="md:hidden h-12 px-4 glass-nav border-b flex items-center justify-between shrink-0 z-20">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
@@ -535,11 +542,69 @@ export default function App() {
                   isSyncingPjp={isSyncingMatch}
                   onSyncPjp={() => syncPjpAndPlanograms(user?.name, true)}
                   onNavigateToPendingPjp={navigateToPendingPjp}
+                  selectedMapOutlet={mapAnalyticsTarget}
+                  onClearMapOutlet={() => setMapAnalyticsTarget(null)}
                 />
               )}
 
-              {(activeTab === 'map' || activeTab === 'requests') && (
-                <PlaceholderTabScreen tab={activeTab} />
+              {activeTab === 'map' && (
+                <MobileMapScreen
+                  executive={user}
+                  onStartOutletVisit={(mapOutlet) => {
+                    const lowerName = mapOutlet.name.toLowerCase();
+                    const existing =
+                      outlets.find((o) => o.id === mapOutlet.id) ||
+                      outlets.find(
+                        (o) =>
+                          o.name.toLowerCase().includes(lowerName) ||
+                          lowerName.includes(o.name.toLowerCase().split(' - ')[0])
+                      );
+
+                    const catStatus =
+                      mapOutlet.visitStatus === 'completed' ? 'Completed' : 'Not Started';
+
+                    const targetOutlet: Outlet = existing || {
+                      id: mapOutlet.id,
+                      code: mapOutlet.id,
+                      name: `${mapOutlet.name} - ${mapOutlet.area.split(',')[0]}`,
+                      account: mapOutlet.name.split(' ')[0],
+                      branch: mapOutlet.area.split(',')[0].trim(),
+                      sequence: String(mapOutlet.visitOrder ?? 99),
+                      address: mapOutlet.area,
+                      latitude: mapOutlet.latitude,
+                      longitude: mapOutlet.longitude,
+                      status:
+                        mapOutlet.visitStatus === 'completed' ? 'Completed' : 'Not Started',
+                      progress: {
+                        Flour: catStatus,
+                        'Edible Oil': catStatus,
+                        Pasta: catStatus
+                      }
+                    };
+
+                    if (!existing) {
+                      setOutlets((prev) => [targetOutlet, ...prev]);
+                    }
+                    setSelectedOutlet(targetOutlet);
+                    setCurrentScreen('OUTLET_OVERVIEW');
+                  }}
+                  onMoreDetails={(outletId, mapOutlet) => {
+                    setMapAnalyticsTarget({
+                      id: outletId,
+                      name: mapOutlet.name,
+                      area: mapOutlet.area,
+                      nonce: Date.now()
+                    });
+                    setActiveTab('home');
+                    setCurrentScreen('DASHBOARD');
+                  }}
+                  onNavigateTab={(tab) => handleSelectTab(tab)}
+                  onLogout={handleLogout}
+                />
+              )}
+
+              {activeTab === 'requests' && (
+                <PlaceholderTabScreen tab="requests" />
               )}
 
               {activeTab === 'pjp' && (
@@ -578,8 +643,8 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation Bar (5 Tabs, hidden during active category audits & login) */}
-      {isAuthenticated && !isActiveAudit && (
+      {/* Mobile Bottom Navigation Bar (Hidden during active category audits, login, and Map view which owns its 4-tab bar) */}
+      {isAuthenticated && !isActiveAudit && activeTab !== 'map' && (
         <MobileBottomNav
           activeTab={activeTab}
           onSelectTab={handleSelectTab}

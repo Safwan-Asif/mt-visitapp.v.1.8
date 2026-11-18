@@ -3,39 +3,39 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --bg-canvas: #F5F4EF;
-  --bg-glass: rgba(255, 255, 255, 0.72);
-  --bg-glass-strong: rgba(255, 255, 255, 0.88);
-  --bg-glass-subtle: rgba(255, 255, 255, 0.52);
-  --bg-nav: rgba(255, 255, 255, 0.88);
-  --border-glass: rgba(8, 76, 65, 0.11);
-  --border-glass-strong: rgba(8, 76, 65, 0.18);
-  --text-primary: #0F1B17;
-  --text-secondary: #52635D;
-  --text-muted: #7C8B85;
-  --accent-primary: #084C41;
-  --accent-primary-hover: #063D34;
-  --accent-soft: rgba(8, 76, 65, 0.08);
-  --badge-alert: #B83B28;
-  --glass-shadow: 0 12px 32px -12px rgba(8, 40, 32, 0.10), 0 1px 0 0 rgba(255, 255, 255, 0.8) inset;
+  --bg-canvas: #F4F7FB;
+  --bg-glass: rgba(255, 255, 255, 0.85);
+  --bg-glass-strong: rgba(255, 255, 255, 0.96);
+  --bg-glass-subtle: rgba(255, 255, 255, 0.65);
+  --bg-nav: rgba(255, 255, 255, 0.92);
+  --border-glass: #DCE5F0;
+  --border-glass-strong: #CBD5E1;
+  --text-primary: #142338;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --accent-primary: #0878E8;
+  --accent-primary-hover: #0260C2;
+  --accent-soft: rgba(8, 120, 232, 0.10);
+  --badge-alert: #DC2626;
+  --glass-shadow: 0 10px 30px -10px rgba(14, 116, 144, 0.08), 0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
 }
 
 .dark {
-  --bg-canvas: #0B110F;
-  --bg-glass: rgba(17, 29, 25, 0.74);
-  --bg-glass-strong: rgba(17, 29, 25, 0.90);
-  --bg-glass-subtle: rgba(17, 29, 25, 0.48);
-  --bg-nav: rgba(15, 25, 22, 0.88);
-  --border-glass: rgba(16, 185, 129, 0.16);
-  --border-glass-strong: rgba(52, 211, 153, 0.28);
-  --text-primary: #ECFDF5;
-  --text-secondary: #9CAEA8;
-  --text-muted: #647771;
-  --accent-primary: #10B981;
-  --accent-primary-hover: #34D399;
-  --accent-soft: rgba(16, 185, 129, 0.14);
-  --badge-alert: #DC4B36;
-  --glass-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.55), 0 1px 0 0 rgba(255, 255, 255, 0.05) inset;
+  --bg-canvas: #071421;
+  --bg-glass: rgba(18, 35, 55, 0.78);
+  --bg-glass-strong: rgba(18, 35, 55, 0.92);
+  --bg-glass-subtle: rgba(18, 35, 55, 0.50);
+  --bg-nav: rgba(10, 19, 33, 0.88);
+  --border-glass: rgba(59, 130, 246, 0.18);
+  --border-glass-strong: rgba(59, 130, 246, 0.32);
+  --text-primary: #F3F6FA;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --accent-primary: #1685FF;
+  --accent-primary-hover: #3B82F6;
+  --accent-soft: rgba(22, 133, 255, 0.16);
+  --badge-alert: #EF4444;
+  --glass-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.65), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset;
 }
 
 @layer base {
@@ -45,11 +45,16 @@
   body {
     background-color: var(--bg-canvas);
     color: var(--text-primary);
-    font-family: 'Plus Jakarta Sans', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
   }
+}
+
+.font-heading {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.02em;
 }
 
 /* Frosted Glass Surface Utilities */
@@ -187,3 +192,137 @@
 .dark ::-webkit-scrollbar-thumb:hover {
   background: rgba(52, 211, 153, 0.45);
 }
+
+/* =========================================================
+   MARVIZ AI — MT Field Sales Tactical Map Design Tokens
+   ========================================================= */
+:root {
+  --map-glass-bg: rgba(10, 20, 36, 0.80);
+  --map-glass-strong: rgba(9, 18, 33, 0.92);
+  --map-glass-border: rgba(56, 189, 248, 0.22);
+  --map-glass-border-strong: rgba(56, 189, 248, 0.38);
+  --map-text-primary: #F1F5F9;
+  --map-text-secondary: #94A3B8;
+  --map-text-muted: #64748B;
+  --map-blue: #1D8EFF;
+  --map-cyan: #38BDF8;
+  --map-teal: #14B8A6;
+  --map-green: #22C55E;
+  --map-amber: #F59E0B;
+  --map-red: #EF4444;
+  --map-grey: #64748B;
+  --map-cta-blue: #1685FF;
+  --map-cta-blue-hover: #0B70E6;
+}
+
+.marviz-glass {
+  background: var(--map-glass-bg);
+  backdrop-filter: blur(18px) saturate(155%);
+  -webkit-backdrop-filter: blur(18px) saturate(155%);
+  border: 1px solid var(--map-glass-border);
+  box-shadow: 0 12px 32px -10px rgba(2, 8, 23, 0.72), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset;
+}
+
+.marviz-glass-strong {
+  background: var(--map-glass-strong);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  border: 1px solid var(--map-glass-border-strong);
+  box-shadow: 0 -10px 38px -8px rgba(2, 8, 23, 0.85), 0 1px 0 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+/* Leaflet container tuning for dark satellite tactical map */
+.marviz-leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #06101e;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  outline: none;
+}
+
+.marviz-leaflet-container .leaflet-tile-pane {
+  filter: brightness(0.78) contrast(1.08) saturate(0.88);
+}
+
+.marviz-leaflet-container .leaflet-control-attribution {
+  background: rgba(7, 17, 31, 0.78) !important;
+  color: rgba(203, 213, 225, 0.86) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 9px !important;
+  line-height: 1.25 !important;
+  padding: 2px 6px !important;
+  border-radius: 6px 0 0 0;
+  border-top: 1px solid rgba(56, 189, 248, 0.16);
+  border-left: 1px solid rgba(56, 189, 248, 0.16);
+  max-width: 72vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+  z-index: 390 !important;
+}
+
+@media (min-width: 768px) {
+  .marviz-leaflet-container .leaflet-control-attribution {
+    margin-bottom: 0px !important;
+  }
+}
+
+.marviz-leaflet-container .leaflet-control-attribution a {
+  color: #7dd3fc !important;
+}
+
+/* Custom pin wrapper reset */
+.marviz-pin-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+@keyframes marvizBeaconPulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.75);
+    opacity: 0.85;
+  }
+  70% {
+    transform: translate(-50%, -50%) scale(2.25);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.25);
+    opacity: 0;
+  }
+}
+
+@keyframes marvizSelectedHalo {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.9;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.22);
+    opacity: 0.45;
+  }
+}
+
+.marviz-beacon-ring {
+  animation: marvizBeaconPulse 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.marviz-selected-halo {
+  animation: marvizSelectedHalo 1.8s ease-in-out infinite;
+}
+
+/* Glowing SVG journey polyline */
+.marviz-route-glow {
+  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.75));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marviz-beacon-ring,
+  .marviz-selected-halo {
+    animation: none !important;
+    opacity: 0.65;
+  }
+}
+
