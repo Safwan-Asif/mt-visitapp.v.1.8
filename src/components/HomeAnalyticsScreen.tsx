@@ -7,8 +7,15 @@ import {
   ShieldAlert,
   ArrowRight,
   Camera,
-  ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  TrendingUp,
+  Building2,
+  Layers,
+  ClipboardCheck,
+  CalendarDays,
+  Clock,
+  LayoutGrid,
+  ArrowLeft
 } from 'lucide-react';
 import {
   Outlet,
@@ -46,6 +53,7 @@ interface HomeAnalyticsScreenProps {
 }
 
 type ViewTabId =
+  | 'all'
   | 'sales'
   | 'account'
   | 'shelf'
@@ -53,13 +61,19 @@ type ViewTabId =
   | 'productivity'
   | 'workhours';
 
-const VIEW_TABS: Array<{ id: ViewTabId; label: string }> = [
-  { id: 'sales', label: 'Sales' },
-  { id: 'account', label: 'Account' },
-  { id: 'shelf', label: 'Shelf' },
-  { id: 'execution', label: 'Execution' },
-  { id: 'productivity', label: 'Productivity' },
-  { id: 'workhours', label: 'Workhours' }
+const VIEW_TABS: Array<{
+  id: ViewTabId;
+  label: string;
+  mobileLabel: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
+}> = [
+  { id: 'all', label: 'All', mobileLabel: 'All', icon: LayoutGrid },
+  { id: 'sales', label: 'Sales', mobileLabel: 'Sales', icon: TrendingUp },
+  { id: 'account', label: 'Account', mobileLabel: 'Acct', icon: Building2 },
+  { id: 'shelf', label: 'Shelf', mobileLabel: 'Shelf', icon: Layers },
+  { id: 'execution', label: 'Execution', mobileLabel: 'Exec', icon: ClipboardCheck },
+  { id: 'productivity', label: 'Productivity', mobileLabel: 'PJP', icon: CalendarDays },
+  { id: 'workhours', label: 'Workhours', mobileLabel: 'Hours', icon: Clock }
 ];
 
 const DAILY_BASE_SALES = [
@@ -154,8 +168,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   const [accountFilter, setAccountFilter] = useState<string>('All');
   const [outletFilter, setOutletFilter] = useState<string>('All');
 
-  // Exclusive Section View Tab (0C)
-  const [activeTab, setActiveTab] = useState<ViewTabId>('sales');
+  // Unified Dashboard View State (0C) — Default 'all', clicking a button focuses that tab
+  const [activeTab, setActiveTab] = useState<ViewTabId>('all');
 
   // Interactive Drilldown States
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
@@ -720,12 +734,6 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       return true;
     });
 
-    // Freshness / Expiry Check across scoped route/prioritized outlets
-    const freshnessRows = activeSet
-      .filter((o) => o.isRouteOutlet || o.freshness.evaluated)
-      .slice(0, 8);
-    const freshnessPassCount = freshnessRows.filter((o) => o.freshness.passed).length;
-
     return {
       totalMton,
       avgSos,
@@ -773,9 +781,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       posmMetrics,
       flyerDonut,
       flyerBreakdownRows,
-      filteredCompetitorPromos,
-      freshnessRows,
-      freshnessPassCount
+      filteredCompetitorPromos
     };
   }, [
     scopedOutlets,
@@ -1140,105 +1146,169 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
           </div>
         </section>
 
-        {/* 0C. EXCLUSIVE VIEW TABS (Single Active Card View) */}
-        <nav
-          aria-label="Analytics section view tabs"
-          className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5"
-        >
-          {VIEW_TABS.map((tab) => {
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                aria-pressed={active}
-                className={`min-h-[40px] px-4 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer active:scale-[0.98] ${
-                  active
-                    ? isDark
-                      ? 'bg-[#10B981] text-[#05231C] shadow-sm'
-                      : 'bg-[#084C41] text-white shadow-sm'
-                    : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* 0D. EXPANDED 5-TILE KPI STRIP (5 cols desktop, 2-col wrap mobile) */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 md:gap-3">
-          <div className="glass-panel rounded-2xl p-3 md:p-3.5">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+        {/* 0C. SYMMETRICAL 5-TILE KPI STRIP (3+2 Balanced Mobile Grid -> 5 Equal Columns Desktop) */}
+        <div className="grid grid-cols-6 md:grid-cols-5 gap-2.5 md:gap-3">
+          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
               Achievement
             </div>
-            <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-0.5">
+            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
               {metrics.gauge.pct}%
             </div>
           </div>
 
-          <div className="glass-panel rounded-2xl p-3 md:p-3.5">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
               SOS
             </div>
-            <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-0.5">
+            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
               {metrics.avgSos}%
             </div>
           </div>
 
-          <div className="glass-panel rounded-2xl p-3 md:p-3.5">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
               PJP
             </div>
-            <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-0.5">
+            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
               {metrics.pjpBase}%
             </div>
           </div>
 
-          <div className="glass-panel rounded-2xl p-3 md:p-3.5">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)]">
+          <div className="col-span-3 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
+            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
               OOS
             </div>
             <div
-              className="text-2xl font-extrabold tracking-tight tabular-nums mt-0.5"
+              className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums mt-1"
               style={{ color: metrics.oosPct >= 15 ? crimsonColor : 'var(--text-primary)' }}
             >
               {metrics.oosPct}%
             </div>
           </div>
 
-          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5">
+          <div className="col-span-3 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between gap-1">
               <span className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-                Planogram Compliance
+                Planogram
               </span>
-              <span className="text-[10px] font-bold text-[var(--accent-primary)]">
+              <span className="text-[10px] font-bold text-[var(--accent-primary)] shrink-0">
                 Live
               </span>
             </div>
-            <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-0.5">
+            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
               {livePlanogram.hasData ? `${livePlanogram.overallScore}%` : '—'}
             </div>
           </div>
         </div>
 
+        {/* 0D. UNIFIED SINGLE-DASHBOARD TABBED WORKSPACE */}
+        <section
+          aria-label="Analytics Dashboard"
+          className="glass-panel rounded-[22px] overflow-hidden"
+        >
+          {/* Full-Width Symmetrical 7-Column Segmented Tab Bar (Zero-Scroll Mobile Icon Row + Equal Desktop Bar) */}
+          <div
+            role="tablist"
+            aria-label="Analytics section view tabs"
+            className={`grid grid-cols-7 gap-0.5 sm:gap-1 md:gap-1.5 p-1.5 md:p-2 border-b border-[var(--border-glass)] ${
+              isDark ? 'bg-white/[0.025]' : 'bg-black/[0.02]'
+            }`}
+          >
+            {VIEW_TABS.map((tab) => {
+              const active = activeTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  id={`dashboard-tab-${tab.id}`}
+                  role="tab"
+                  type="button"
+                  aria-selected={active}
+                  aria-controls={`dashboard-panel-${activeTab}`}
+                  onClick={() =>
+                    setActiveTab((prev) =>
+                      tab.id !== 'all' && prev === tab.id ? 'all' : tab.id
+                    )
+                  }
+                  className={`min-h-[50px] md:min-h-[44px] px-0.5 sm:px-2 md:px-3 py-1.5 rounded-xl md:rounded-2xl flex flex-col md:flex-row items-center justify-center gap-1 md:gap-1.5 transition-all duration-150 cursor-pointer active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] ${
+                    active
+                      ? isDark
+                        ? 'bg-[#10B981] text-[#05231C] shadow-sm font-bold'
+                        : 'bg-[#084C41] text-white shadow-sm font-bold'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.05] font-semibold'
+                  }`}
+                >
+                  <Icon size={16} strokeWidth={active ? 2.25 : 1.85} className="shrink-0" />
+                  <span className="md:hidden text-[9.5px] sm:text-[10px] leading-none whitespace-nowrap tracking-tight">
+                    {tab.mobileLabel}
+                  </span>
+                  <span className="hidden md:inline text-xs leading-none whitespace-nowrap truncate">
+                    {tab.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Dashboard Content Viewport (All 6 Sections by Default, or Focused Single Section) */}
+          <div
+            key={activeTab}
+            id={`dashboard-panel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={`dashboard-tab-${activeTab}`}
+            className="p-3 sm:p-4 md:p-5 animate-fade-in"
+          >
+            <div
+              className={
+                activeTab === 'all'
+                  ? 'grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-5 items-stretch'
+                  : 'grid grid-cols-1 gap-4'
+              }
+            >
         {/* ============================================================
             TAB 1: SALES
            ============================================================ */}
-        {activeTab === 'sales' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Sales
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                Target vs achievement · MTON ({formatShortCalendarDate(fromDate)} –{' '}
-                {formatShortCalendarDate(toDate)})
-              </p>
+        {(activeTab === 'all' || activeTab === 'sales') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Sales
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
+                  Target vs achievement · MTON ({formatShortCalendarDate(fromDate)} –{' '}
+                  {formatShortCalendarDate(toDate)})
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('sales')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-stretch">
               {/* 1.1 Achievement Gauge */}
               <div className="flex flex-col items-center">
                 <svg
@@ -1414,21 +1484,48 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 Vertical marker = 100% of monthly target
               </p>
             </div>
-          </section>
+          </div>
         )}
 
         {/* ============================================================
             TAB 2: ACCOUNT (MTON Donut + Account-to-Outlet Drilldown)
            ============================================================ */}
-        {activeTab === 'account' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Accounts
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Tap an account row to drill down into child outlets ranked by MTON contribution
-              </p>
+        {(activeTab === 'all' || activeTab === 'account') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Accounts
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Tap an account row to drill down into child outlets ranked by MTON contribution
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('account')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
             {/* 2.1 Overall MTON Donut Chart */}
@@ -1584,35 +1681,68 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           <span>MTON · SOS %</span>
                         </div>
 
-                        {grp.outlets.map((child, cIdx) => (
-                          <button
-                            key={child.id}
-                            type="button"
-                            onClick={() => {
-                              setAccountFilter(grp.account);
-                              setOutletFilter(child.id);
-                            }}
-                            className="w-full min-h-[42px] px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                          >
-                            <div className="min-w-0 flex items-center gap-2">
-                              <span className="text-[11px] font-mono tabular-nums text-[var(--text-muted)] w-5">
-                                {cIdx + 1}.
-                              </span>
-                              <div className="min-w-0">
-                                <div className="text-xs font-bold text-[var(--text-primary)] truncate">
-                                  {child.branch}
+                        {grp.outlets.map((child, cIdx) => {
+                          const maxChildMton = Math.max(
+                            1,
+                            ...grp.outlets.map((o) => o.filteredMton)
+                          );
+                          return (
+                            <button
+                              key={child.id}
+                              type="button"
+                              onClick={() => {
+                                setAccountFilter(grp.account);
+                                setOutletFilter(child.id);
+                              }}
+                              className="w-full px-2.5 py-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-left space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0 flex items-center gap-2">
+                                  <span className="text-[11px] font-mono tabular-nums text-[var(--text-muted)] w-5">
+                                    {cIdx + 1}.
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-bold text-[var(--text-primary)] truncate">
+                                      {child.branch}
+                                    </div>
+                                    <div className="text-[10px] text-[var(--text-muted)] tabular-nums truncate">
+                                      {child.code ? `SAP ${child.code}` : child.account}
+                                      {child.hasLiveAudit ? ' · Live audit recorded' : ''}
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="text-[10px] text-[var(--text-muted)] tabular-nums truncate">
-                                  {child.code ? `SAP ${child.code}` : child.account}
-                                  {child.hasLiveAudit ? ' · Live audit recorded' : ''}
-                                </div>
+                                <span className="text-xs font-bold tabular-nums text-[var(--text-primary)] shrink-0">
+                                  {child.filteredMton} MTON · {child.filteredSos}% SOS
+                                </span>
                               </div>
-                            </div>
-                            <span className="text-xs font-bold tabular-nums text-[var(--text-primary)] shrink-0">
-                              {child.filteredMton} MTON · {child.filteredSos}% SOS
-                            </span>
-                          </button>
-                        ))}
+
+                              <div
+                                className="h-1.5 rounded overflow-hidden"
+                                style={{ backgroundColor: neutralBarTrack }}
+                              >
+                                <div
+                                  className="h-full rounded transition-all duration-300"
+                                  style={{
+                                    width: `${Math.min(100, (child.filteredMton / maxChildMton) * 100).toFixed(1)}%`,
+                                    backgroundColor: tealColor
+                                  }}
+                                />
+                              </div>
+                              <div
+                                className="h-1.5 rounded overflow-hidden"
+                                style={{ backgroundColor: neutralBarTrack }}
+                              >
+                                <div
+                                  className="h-full rounded transition-all duration-300"
+                                  style={{
+                                    width: `${Math.min(100, (child.filteredSos / 65) * 100).toFixed(1)}%`,
+                                    backgroundColor: primaryInk
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1636,24 +1766,51 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </span>
               </div>
             </div>
-          </section>
+          </div>
         )}
 
         {/* ============================================================
             TAB 3: SHELF (Interactive Category SOS + Trendline + Account->Outlet OOS Heatmap)
            ============================================================ */}
-        {activeTab === 'shelf' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Shelf
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Tap a category bar to isolate its SOS trend · expand an account to inspect outlet OOS counts
-              </p>
+        {(activeTab === 'all' || activeTab === 'shelf') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'xl:col-span-2 glass-subtle rounded-[18px] p-4 md:p-5 space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Shelf
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Tap a category bar to isolate its SOS trend · expand an account to inspect outlet OOS counts
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('shelf')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
               {/* 3.1 Interactive Category SOS Tiles synced with Global Filter */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -1865,6 +2022,17 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           const totalCatOos = grp.oosTotals[cat];
                           const isDimmed =
                             categoryFilter !== 'All' && categoryFilter !== cat;
+
+                          let bg = tealSoftBg;
+                          let fg = tealDarkText;
+                          if (totalCatOos >= 3) {
+                            bg = crimsonColor;
+                            fg = '#FFFFFF';
+                          } else if (totalCatOos >= 1) {
+                            bg = isDark ? 'rgba(245, 158, 11, 0.85)' : '#F3D27A';
+                            fg = '#16181D';
+                          }
+
                           return (
                             <div
                               key={cat}
@@ -1872,8 +2040,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                                 isDimmed ? 'opacity-35' : 'opacity-100'
                               }`}
                               style={{
-                                backgroundColor: neutralBarTrack,
-                                color: 'var(--text-primary)'
+                                backgroundColor: bg,
+                                color: fg
                               }}
                             >
                               {totalCatOos}
@@ -1994,25 +2162,52 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </div>
               )}
             </div>
-          </section>
+          </div>
         )}
 
         {/* ============================================================
             TAB 4: EXECUTION (Live Planogram + Expiry/Freshness + POSM + Flyers + Comp Promos)
            ============================================================ */}
-        {activeTab === 'execution' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Execution
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                Live planogram, freshness verification, outlet-linked POSM, flyers and competitor intelligence
-              </p>
+        {(activeTab === 'all' || activeTab === 'execution') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'xl:col-span-2 glass-subtle rounded-[18px] p-4 md:p-5 space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Execution
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Live planogram, outlet-linked POSM, flyers and competitor intelligence
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('execution')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
-            {/* 4.1 Planogram Compliance & Freshness / Expiry Verification */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 4.1 Planogram Compliance */}
+            <div>
               {/* Live Planogram Compliance */}
               <div className="glass-subtle rounded-2xl p-4 flex flex-col justify-between space-y-3">
                 <div className="flex items-center justify-between gap-2">
@@ -2106,45 +2301,6 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                     </button>
                   </div>
                 )}
-              </div>
-
-              {/* 4.1B Freshness / Expiry Verification Indicator */}
-              <div className="glass-subtle rounded-2xl p-4 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <ShieldCheck size={15} style={{ color: tealColor }} />
-                    <span className="text-xs font-bold text-[var(--text-primary)]">
-                      Freshness & expiry verification
-                    </span>
-                  </div>
-                  <span className="text-xs font-bold tabular-nums text-[var(--accent-primary)]">
-                    {metrics.freshnessPassCount}/{metrics.freshnessRows.length} · 0 Expired Stock
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                  {metrics.freshnessRows.map((o) => (
-                    <div
-                      key={o.id}
-                      className="flex items-center justify-between gap-2 py-1 border-b border-[var(--border-glass)] last:border-b-0 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-semibold text-[var(--text-primary)] truncate">
-                          {o.name}
-                        </div>
-                        <div className="text-[10px] text-[var(--text-muted)] truncate">
-                          {o.freshness.note}
-                        </div>
-                      </div>
-                      <span
-                        className="text-[11px] font-bold shrink-0"
-                        style={{ color: o.freshness.passed ? tealDarkText : crimsonColor }}
-                      >
-                        {o.freshness.passed ? '0 Expired · PASS' : 'Expired Flag · FAIL'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
 
@@ -2442,25 +2598,58 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </div>
               )}
             </div>
-          </section>
+          </div>
         )}
 
         {/* ============================================================
             TAB 5: PRODUCTIVITY (Synced Executive PJP Calendar + Route Roster)
            ============================================================ */}
-        {activeTab === 'productivity' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Productivity · {scheduleMeta.monthLabel} PJP
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                Assigned PJP schedule for {executive?.name || 'Safwan Asif'} ·{' '}
-                {scheduleMetrics.workingDaysAll.length} working days · tap any scheduled day
-              </p>
+        {(activeTab === 'all' || activeTab === 'productivity') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Productivity · {scheduleMeta.monthLabel} PJP
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
+                  Assigned PJP schedule for {executive?.name || 'Safwan Asif'} ·{' '}
+                  {scheduleMetrics.workingDaysAll.length} working days · tap any scheduled day
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('productivity')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div
+              className={
+                activeTab === 'all'
+                  ? 'grid grid-cols-1 gap-5'
+                  : 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch'
+              }
+            >
               {/* 5.1 Synced Executive Monthly Calendar + 5.2 Banner + Scheduled Outlets */}
               <div>
                 <div className="grid grid-cols-7 gap-1 mb-1">
@@ -2699,24 +2888,57 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </p>
               </div>
             </div>
-          </section>
+          </div>
         )}
 
         {/* ============================================================
             TAB 6: WORKHOURS
            ============================================================ */}
-        {activeTab === 'workhours' && (
-          <section className="glass-panel rounded-[20px] p-4 md:p-6 space-y-6 animate-fade-in">
-            <div>
-              <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                Work hours and discipline
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                Each block is one outlet visit, by photo punch time · {scheduleMetrics.daySummaryText}
-              </p>
+        {(activeTab === 'all' || activeTab === 'workhours') && (
+          <div
+            className={
+              activeTab === 'all'
+                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
+                : 'space-y-6'
+            }
+          >
+            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
+              <div className="min-w-0">
+                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
+                  Work hours and discipline
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
+                  Each block is one outlet visit, by photo punch time · {scheduleMetrics.daySummaryText}
+                </p>
+              </div>
+              {activeTab === 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('workhours')}
+                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
+                >
+                  <span>View only</span>
+                  <ChevronRight size={13} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <ArrowLeft size={13} />
+                  <span>All tabs</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div
+              className={
+                activeTab === 'all'
+                  ? 'grid grid-cols-1 gap-5'
+                  : 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch'
+              }
+            >
               {/* 6.1 5-Day Punch Gantt Timeline */}
               <div>
                 <div className="relative h-4 ml-12 mb-1">
@@ -2823,8 +3045,11 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </p>
               </div>
             </div>
-          </section>
+          </div>
         )}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
