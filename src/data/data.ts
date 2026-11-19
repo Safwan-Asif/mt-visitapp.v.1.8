@@ -628,8 +628,15 @@ export async function fetchDrivingRoadRoute(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ waypoints })
     });
-    if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (res.status === 429) {
+      window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+    }
+    if (res.ok && contentType.includes('application/json')) {
       const json = await res.json();
+      if (json?.quotaExceeded) {
+        window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+      }
       if (json?.ok && Array.isArray(json.coordinates) && json.coordinates.length >= 2) {
         return {
           coordinates: json.coordinates,

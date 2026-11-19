@@ -2,6 +2,7 @@ import { Outlet, CategoryType, BoundingBox } from './types';
 import edibleOilImage from './assets/images/shelf_edible_oil_1792994653879.jpg';
 import flourImage from './assets/images/shelf_flour_aisle_1792994654371.jpg';
 import pastaImage from './assets/images/shelf_pasta_boxes_1792994654786.jpg';
+import { resolveDohaAreaCoords } from './utils/dohaCoords';
 
 export const CATEGORIES: CategoryType[] = ['Edible Oil', 'Flour', 'Pasta'];
 
@@ -290,22 +291,26 @@ export function getInitialOutletsForExecutive(execName: string): Outlet[] {
   }
 
   const total = visits.length;
-  return visits.map((v, idx) => ({
-    id: `out-pjp-${idx + 1}-${Math.abs((v.executive + v.outlet).split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0))}`,
-    name: v.account ? `${v.account} - ${v.outlet}` : v.outlet,
-    code: v.code || undefined,
-    account: v.account || undefined,
-    branch: v.area || v.account || 'Doha',
-    sequence: `${idx + 1} of ${total}`,
-    address: `${v.area ? v.area + ', ' : ''}${v.account ? v.account + ', ' : ''}Qatar`,
-    status: 'Not Started' as const,
-    progress: {
-      'Edible Oil': 'Not Started' as const,
-      'Flour': 'Not Started' as const,
-      'Pasta': 'Not Started' as const
-    },
-    latitude: 25.2854 + (idx * 0.012),
-    longitude: 51.5310 + (idx * 0.008)
-  }));
+  return visits.map((v, idx) => {
+    const outletName = v.account ? `${v.account} - ${v.outlet}` : v.outlet;
+    const coords = resolveDohaAreaCoords(`${outletName} ${v.area || ''} ${v.account || ''}`, idx);
+    return {
+      id: `out-pjp-${idx + 1}-${Math.abs((v.executive + v.outlet).split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0))}`,
+      name: outletName,
+      code: v.code || undefined,
+      account: v.account || undefined,
+      branch: v.area || v.account || 'Doha',
+      sequence: `${idx + 1} of ${total}`,
+      address: `${v.area ? v.area + ', ' : ''}${v.account ? v.account + ', ' : ''}Qatar`,
+      status: 'Not Started' as const,
+      progress: {
+        'Edible Oil': 'Not Started' as const,
+        'Flour': 'Not Started' as const,
+        'Pasta': 'Not Started' as const
+      },
+      latitude: coords.lat,
+      longitude: coords.lng
+    };
+  });
 }
 

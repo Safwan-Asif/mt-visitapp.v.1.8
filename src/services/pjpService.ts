@@ -2,6 +2,13 @@ import { Outlet, PlanogramRecord } from '../types';
 import { INITIAL_OUTLETS, MasterOutletOption } from '../constants';
 import { MASTER_PJP_OUTLETS, PJP_SCHEDULE_VISITS, PjpVisitRow } from '../data/pjpMasterData';
 import { normalizeSapCode } from './planogramService';
+import {
+  OLD_DOHA_PORT_FALLBACK,
+  resolveDohaAreaCoords,
+  isSyntheticOrOffshoreCoord
+} from '../utils/dohaCoords';
+
+export { OLD_DOHA_PORT_FALLBACK };
 
 const PJP_LIVE_STORAGE_KEY = 'mta_live_pjp_cache_v1';
 
@@ -80,74 +87,12 @@ export function getCachedLivePjpData(): LivePjpDataset {
   return memoryPjpCache || hydratePjpFromStorage() || getFallbackPjpDataset();
 }
 
-function resolveDohaAreaCoords(text: string, fallbackIndex: number = 0): { lat: number; lng: number } {
-  const lower = text.toLowerCase();
-  const areaCoords: Array<[RegExp, number, number]> = [
-    [/old doha port|corniche/, 25.2916, 51.5477],
-    [/wakra|wakrah|wukair|madinatna/, 25.1768, 51.6035],
-    [/barwa village/, 25.2145, 51.5648],
-    [/barwa city/, 25.2225, 51.5194],
-    [/mall of qatar|qatar mall|mall of qata/, 25.3218, 51.3506],
-    [/festival city/, 25.3886, 51.4398],
-    [/pearl|floresta|medina central|porto arabia/, 25.3713, 51.5492],
-    [/lagoona|west bay|city center|dafna|marina/, 25.3256, 51.5295],
-    [/mansoura/, 25.2749, 51.5398],
-    [/muntaza|muntazah/, 25.2698, 51.5315],
-    [/msheireb|musherib/, 25.2867, 51.5298],
-    [/bin mahmoud/, 25.2842, 51.5141],
-    [/bin omran/, 25.2995, 51.5032],
-    [/al sadd|sadd/, 25.2816, 51.4988],
-    [/villaggio|hyatt|aziziah|azizia/, 25.2602, 51.4426],
-    [/salwa|west walk/, 25.2618, 51.4914],
-    [/ain khalid|abu sidra|abuhamour|abu hamour/, 25.2328, 51.4712],
-    [/muaither|maither|murra/, 25.2584, 51.4162],
-    [/rayyan|gharrafat|gharaffa|q mall|izghawa|zghawa/, 25.3092, 51.4424],
-    [/old airport|airport|matar/, 25.2524, 51.5568],
-    [/thumama|nuaija|mamoura/, 25.2422, 51.5385],
-    [/d ring/, 25.2562, 51.5236],
-    [/b ring|rawdat al khail/, 25.2718, 51.5294],
-    [/tawar|markhiya|leabeeb|leabaib|kheesha|umm salal/, 25.3446, 51.4728],
-    [/al khor|dhakhira/, 25.6804, 51.4969],
-    [/shahaniya/, 25.3735, 51.2244],
-    [/birkat al awamer/, 25.0752, 51.4664],
-    [/street 27|street 37|street 52|industrial|sanaya/, 25.1886, 51.4342]
-  ];
-
-  for (const [pattern, lat, lng] of areaCoords) {
-    if (pattern.test(lower)) {
-      const jitter = ((fallbackIndex % 5) - 2) * 0.0018;
-      return { lat: lat + jitter, lng: lng + jitter * 0.8 };
-    }
-  }
-
-  // Deterministic Doha grid fallback centered around Central Doha
-  const angle = fallbackIndex * 1.1;
-  const radius = 0.015 + (fallbackIndex % 4) * 0.01;
-  return {
-    lat: 25.2854 + Math.sin(angle) * radius,
-    lng: 51.531 + Math.cos(angle) * radius
-  };
-}
-
-export const OLD_DOHA_PORT_FALLBACK = {
-  lat: 25.2916,
-  lng: 51.5477,
-  label: 'Old Doha Port'
-} as const;
-
 export function resolveOutletCoordinates(
   outlet: Pick<Outlet, 'name' | 'branch' | 'address' | 'latitude' | 'longitude'>,
   fallbackIndex: number = 0
 ): { lat: number; lng: number } {
-  if (
-    typeof outlet.latitude === 'number' &&
-    typeof outlet.longitude === 'number' &&
-    Number.isFinite(outlet.latitude) &&
-    Number.isFinite(outlet.longitude) &&
-    Math.abs(outlet.latitude) > 1 &&
-    Math.abs(outlet.longitude) > 1
-  ) {
-    return { lat: outlet.latitude, lng: outlet.longitude };
+  if (!isSyntheticOrOffshoreCoord(outlet.latitude, outlet.longitude)) {
+    return { lat: outlet.latitude as number, lng: outlet.longitude as number };
   }
   const searchText = `${outlet.name || ''} ${outlet.branch || ''} ${outlet.address || ''}`;
   return resolveDohaAreaCoords(searchText, fallbackIndex);
@@ -181,6 +126,11 @@ export async function optimizePjpRouteWithGoogleMaps(
       stops
     })
   });
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('Route optimization backend (/api/pjp/optimize-route) is unavailable in static-only hosting; deploy with the Node server.');
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -289,10 +239,16 @@ export function enrichOutletsWithLivePjpSapCodes(
   dataset: LivePjpDataset
 ): Outlet[] {
   const master = dataset.masterOutlets || [];
-  if (master.length === 0) return outlets;
 
-  return outlets.map((o) => {
-    if (o.code && normalizeSapCode(o.code)) return o;
+  return outlets.map((o, idx) => {
+    const needsCoordRepair = isSyntheticOrOffshoreCoord(o.latitude, o.longitude);
+    const repairedCoords = needsCoordRepair ? resolveOutletCoordinates(o, idx) : null;
+
+    if (o.code && normalizeSapCode(o.code)) {
+      return repairedCoords
+        ? { ...o, latitude: repairedCoords.lat, longitude: repairedCoords.lng }
+        : o;
+    }
 
     const nameNorm = o.name.trim().toLowerCase();
     const branchNorm = (o.branch || '').trim().toLowerCase();
@@ -308,11 +264,17 @@ export function enrichOutletsWithLivePjpSapCodes(
       return false;
     });
 
-    if (!matched?.code) return o;
+    if (!matched?.code) {
+      return repairedCoords
+        ? { ...o, latitude: repairedCoords.lat, longitude: repairedCoords.lng }
+        : o;
+    }
+
     return {
       ...o,
       code: matched.code,
-      account: o.account || matched.account
+      account: o.account || matched.account,
+      ...(repairedCoords ? { latitude: repairedCoords.lat, longitude: repairedCoords.lng } : {})
     };
   });
 }

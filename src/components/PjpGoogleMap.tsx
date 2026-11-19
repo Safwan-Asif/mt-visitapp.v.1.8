@@ -15,6 +15,7 @@ import {
 } from '@vis.gl/react-google-maps';
 import { Navigation, MapPin, Loader2, ExternalLink } from 'lucide-react';
 import { Outlet } from '../types';
+import { decodeEncodedPolyline } from '../utils/dohaCoords';
 
 export interface PjpMapOutletItem {
   outlet: Outlet;
@@ -69,6 +70,7 @@ const MapQuotaMonitor: React.FC = () => {
 interface ViewportControllerProps {
   items: PjpMapOutletItem[];
   origin?: { lat: number; lng: number; source: 'gps' | 'old_doha_port' } | null;
+  decodedPath: Array<{ lat: number; lng: number }>;
   autoOptimize: boolean;
   encodedPolyline?: string;
   selectedOutletId: string | null;
@@ -77,6 +79,7 @@ interface ViewportControllerProps {
 const MapViewportController: React.FC<ViewportControllerProps> = ({
   items,
   origin,
+  decodedPath,
   autoOptimize,
   encodedPolyline,
   selectedOutletId
@@ -110,6 +113,13 @@ const MapViewportController: React.FC<ViewportControllerProps> = ({
       count++;
     });
 
+    if (autoOptimize && decodedPath.length > 0) {
+      const step = Math.max(1, Math.floor(decodedPath.length / 20));
+      for (let i = 0; i < decodedPath.length; i += step) {
+        bounds.extend(decodedPath[i]);
+      }
+    }
+
     if (count === 1) {
       const target = items[0]?.coords || DOHA_DEFAULT_CENTER;
       map.setCenter(target);
@@ -117,7 +127,7 @@ const MapViewportController: React.FC<ViewportControllerProps> = ({
     } else if (count > 1) {
       map.fitBounds(bounds, { top: 44, right: 44, bottom: 44, left: 44 });
     }
-  }, [map, coreLib, items, origin, autoOptimize, encodedPolyline]);
+  }, [map, coreLib, items, origin, decodedPath, autoOptimize, encodedPolyline]);
 
   // Pan smoothly to newly clicked outlet without overriding initial route fit
   useEffect(() => {
@@ -261,6 +271,11 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
   const [keyLoading, setKeyLoading] = useState<boolean>(!(cachedMapsApiKey || envKey));
   const [infoOutletId, setInfoOutletId] = useState<string | null>(null);
 
+  const decodedPath = useMemo(
+    () => (encodedPolyline ? decodeEncodedPolyline(encodedPolyline) : []),
+    [encodedPolyline]
+  );
+
   useEffect(() => {
     if (apiKey) {
       cachedMapsApiKey = apiKey;
@@ -271,8 +286,12 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
     let cancelled = false;
     if (!inflightKeyPromise) {
       inflightKeyPromise = fetch('/api/maps/config')
-        .then((r) => r.json())
-        .then((d) => String(d?.apiKey || '').trim())
+        .then(async (r) => {
+          const ct = r.headers.get('content-type') || '';
+          if (!r.ok || !ct.includes('application/json')) return '';
+          const d = await r.json();
+          return String(d?.apiKey || '').trim();
+        })
         .catch(() => '');
     }
 
@@ -349,6 +368,7 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
           <MapViewportController
             items={items}
             origin={origin}
+            decodedPath={decodedPath}
             autoOptimize={autoOptimize}
             encodedPolyline={encodedPolyline}
             selectedOutletId={selectedOutletId}
@@ -374,9 +394,9 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
             </AdvancedMarker>
           )}
 
-          {autoOptimize && encodedPolyline && (
+          {autoOptimize && decodedPath.length > 1 && (
             <Polyline
-              encodedPath={encodedPolyline}
+              path={decodedPath}
               strokeColor={isDark ? '#34D399' : '#084C41'}
               strokeOpacity={0.92}
               strokeWeight={5}
