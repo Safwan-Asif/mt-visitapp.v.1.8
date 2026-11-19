@@ -240,8 +240,26 @@
   outline: none;
 }
 
-.marviz-leaflet-container .leaflet-tile-pane {
+.marviz-tiles-satellite .leaflet-tile-pane {
   filter: brightness(0.78) contrast(1.08) saturate(0.88);
+}
+
+/* Call of Duty / GTA V style dark topographic terrain grading */
+.marviz-tiles-tactical-terrain .leaflet-tile-pane {
+  filter: invert(93%) hue-rotate(194deg) brightness(0.84) contrast(1.24) saturate(0.55);
+}
+
+/* Clean GTA V dark street vector grading */
+.marviz-tiles-tactical-dark .leaflet-tile-pane {
+  filter: brightness(1.08) contrast(1.16) saturate(1.05);
+}
+
+/* Subtle tactical gridlines overlay for Terrain & Dark tactical modes */
+.marviz-tactical-grid {
+  background-image:
+    linear-gradient(to right, rgba(56, 189, 248, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(56, 189, 248, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px;
 }
 
 .marviz-leaflet-container .leaflet-control-attribution {
@@ -255,11 +273,11 @@
   border-radius: 6px 0 0 0;
   border-top: 1px solid rgba(56, 189, 248, 0.16);
   border-left: 1px solid rgba(56, 189, 248, 0.16);
-  max-width: 72vw;
+  max-width: 68vw;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+  margin-bottom: calc(74px + env(safe-area-inset-bottom, 0px)) !important;
   z-index: 390 !important;
 }
 

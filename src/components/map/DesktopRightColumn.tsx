@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import {
   Flag,
-  TrendingDown,
-  TrendingUp,
-  Minus,
   AlertCircle,
   Calendar,
   CheckCircle2,
@@ -16,9 +13,11 @@ import {
   HealthBreakdown,
   JourneyMetrics,
   MapOutlet,
+  formatLastVisitRecency,
   getDeterministicOutletIssues,
   getDeterministicRecommendedActions
 } from '../../data/data';
+import { OutletKPIRow } from './OutletKPIRow';
 import storefrontImg from '../../assets/images/storefront_doha_hypermarket_1795012164873.jpg';
 
 interface DesktopRightColumnProps {
@@ -63,6 +62,9 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
 
   const issues = selectedOutlet ? getDeterministicOutletIssues(selectedOutlet) : [];
   const actions = selectedOutlet ? getDeterministicRecommendedActions(selectedOutlet) : [];
+  const lastVisitRecency = selectedOutlet
+    ? formatLastVisitRecency(selectedOutlet.lastVisitDate)
+    : null;
 
   const statusLabel =
     selectedOutlet?.visitStatus === 'completed'
@@ -243,58 +245,43 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               </button>
             </div>
 
-            {/* 3-Tile KPI Row */}
-            <div className="grid grid-cols-3 gap-1.5">
-              <div className="rounded-xl bg-slate-900/75 border border-slate-700/70 px-2 py-2 text-center">
-                <div className="flex items-center justify-center gap-1">
-                  <span className="font-heading text-[19px] font-bold text-white tabular-nums leading-none">
-                    {selectedOutlet.sosScore.toFixed(1)}
-                    <span className="text-[11px] font-normal text-slate-400"> / 5</span>
-                  </span>
-                  {sosDelta < 0 ? (
-                    <TrendingDown size={12} className="text-red-400" />
-                  ) : sosDelta > 0 ? (
-                    <TrendingUp size={12} className="text-emerald-400" />
-                  ) : (
-                    <Minus size={12} className="text-slate-400" />
-                  )}
+            {/* Dedicated Last Visit Recency & Baseline Banner Card */}
+            {lastVisitRecency && (
+              <div className="rounded-xl bg-slate-900/85 border border-slate-700/70 p-2.5 flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
+                    <Calendar size={15} className="text-sky-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Last Visit
+                      </span>
+                      <span
+                        className={`text-[9.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border leading-none ${lastVisitRecency.badgeClass}`}
+                      >
+                        {lastVisitRecency.relativeText}
+                      </span>
+                    </div>
+                    <div className="text-[11.5px] font-medium text-slate-200 mt-0.5 tabular-nums truncate">
+                      {lastVisitRecency.formattedDate}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-400 mt-1">SOS</div>
-              </div>
 
-              <div className="rounded-xl bg-slate-900/75 border border-slate-700/70 px-2 py-2 text-center">
-                <div className="flex items-center justify-center gap-1">
-                  <span className="font-heading text-[19px] font-bold text-white tabular-nums leading-none">
-                    {selectedOutlet.planogramPercentage}%
-                  </span>
-                  {planDelta < 0 ? (
-                    <Minus size={12} className="text-amber-400" />
-                  ) : (
-                    <TrendingUp size={12} className="text-emerald-400" />
-                  )}
+                <div className="text-right shrink-0 pl-2 border-l border-slate-700/60">
+                  <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">
+                    Baseline
+                  </div>
+                  <div className="text-[10.5px] font-mono text-slate-200 tabular-nums">
+                    SOS {selectedOutlet.previousSosScore.toFixed(1)} · PG {selectedOutlet.previousPlanogramPercentage}%
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-400 mt-1">Planogram</div>
               </div>
+            )}
 
-              <div className="rounded-xl bg-slate-900/75 border border-slate-700/70 px-2 py-2 text-center">
-                <div className="flex items-center justify-center gap-1">
-                  <span className="font-heading text-[19px] font-bold text-white tabular-nums leading-none">
-                    {selectedOutlet.oosSkuCount}
-                  </span>
-                  <AlertCircle
-                    size={12}
-                    className={
-                      selectedOutlet.oosSkuCount >= 4
-                        ? 'text-red-400'
-                        : selectedOutlet.oosSkuCount >= 1
-                        ? 'text-amber-400'
-                        : 'text-emerald-400'
-                    }
-                  />
-                </div>
-                <div className="text-[10px] text-slate-400 mt-1">OOS SKUs</div>
-              </div>
-            </div>
+            {/* 2+3 Category KPI Grid: Planogram + OOS & Flour/Oil/Pasta SOS% (>50% Target) */}
+            <OutletKPIRow outlet={selectedOutlet} compact />
 
             {/* Issues Requiring Attention Box */}
             {issues.length > 0 && (
@@ -313,18 +300,6 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               </div>
             )}
 
-            {/* Historical Baseline Line */}
-            <div className="flex items-center justify-between text-[11px] text-slate-300 pt-0.5 border-t border-slate-800/80">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Calendar size={12} className="text-slate-400" />
-                <span>{formatVisitDateShort(selectedOutlet.lastVisitDate)} Visit</span>
-              </span>
-              <span className="tabular-nums text-slate-400">
-                Prev SOS: <strong className="text-slate-200">{selectedOutlet.previousSosScore.toFixed(1)}</strong>{' '}
-                | PG: <strong className="text-slate-200">{selectedOutlet.previousPlanogramPercentage}%</strong>
-              </span>
-            </div>
-
             {/* Recommended Actions Checklist */}
             <div>
               <div className="text-[11px] font-bold text-slate-100 mb-1">
@@ -340,15 +315,26 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               </ul>
             </div>
 
-            {/* Primary CTA: START OUTLET VISIT */}
-            <button
-              type="button"
-              onClick={() => onStartOutletVisit(selectedOutlet)}
-              className="w-full min-h-[44px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_22px_rgba(22,133,255,0.5)] cursor-pointer transition-all active:scale-[0.99]"
-            >
-              <Navigation size={15} className="fill-white" />
-              <span>START OUTLET VISIT</span>
-            </button>
+            {/* Conditional CTA: Completed outlets show ONLY Analytics CTA */}
+            {selectedOutlet.visitStatus === 'completed' ? (
+              <button
+                type="button"
+                onClick={() => onMoreDetails(selectedOutlet)}
+                className="w-full min-h-[44px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_22px_rgba(22,133,255,0.5)] cursor-pointer transition-all active:scale-[0.99]"
+              >
+                <BarChart3 size={16} />
+                <span>ANALYTICS</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onStartOutletVisit(selectedOutlet)}
+                className="w-full min-h-[44px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_22px_rgba(22,133,255,0.5)] cursor-pointer transition-all active:scale-[0.99]"
+              >
+                <Navigation size={15} className="fill-white" />
+                <span>START OUTLET VISIT</span>
+              </button>
+            )}
           </div>
         </section>
       )}

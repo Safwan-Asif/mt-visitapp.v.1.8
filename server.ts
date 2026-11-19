@@ -734,6 +734,360 @@ app.get('/api/pjp/live', async (req, res) => {
   });
 });
 
+// Cached OSRM Road Routing Proxy for Doha Field Sales Map
+const osrmRouteCache = new Map<
+  string,
+  {
+    coordinates: [number, number][];
+    distanceMeters: number;
+    durationSeconds: number;
+    fetchedAt: number;
+  }
+>();
+const OSRM_CACHE_TTL_MS = 60 * 60 * 1000;
+
+app.post('/api/map/route', async (req, res) => {
+  try {
+    const rawWaypoints = req.body?.waypoints;
+    if (!Array.isArray(rawWaypoints) || rawWaypoints.length < 2 || rawWaypoints.length > 25) {
+      return res.status(400).json({ ok: false, error: 'Invalid waypoints array' });
+    }
+
+    const waypoints: [number, number][] = [];
+    for (const pt of rawWaypoints) {
+      if (!Array.isArray(pt) || pt.length < 2) {
+        return res.status(400).json({ ok: false, error: 'Invalid waypoint coordinate' });
+      }
+      const lat = Number(pt[0]);
+      const lng = Number(pt[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return res.status(400).json({ ok: false, error: 'Non-numeric waypoint coordinate' });
+      }
+      waypoints.push([lat, lng]);
+    }
+
+    const coordStr = waypoints.map(([lat, lng]) => `${lng.toFixed(5)},${lat.toFixed(5)}`).join(';');
+    const cached = osrmRouteCache.get(coordStr);
+    if (cached && Date.now() - cached.fetchedAt < OSRM_CACHE_TTL_MS) {
+      return res.json({
+        ok: true,
+        source: 'osrm',
+        cached: true,
+        coordinates: cached.coordinates,
+        distanceMeters: cached.distanceMeters,
+        durationSeconds: cached.durationSeconds
+      });
+    }
+
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+    const upstream = await fetch(osrmUrl, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5500)
+    });
+
+    if (!upstream.ok) {
+      return res.json({ ok: false, source: 'fallback', reason: `OSRM HTTP ${upstream.status}` });
+    }
+
+    const data: any = await upstream.json();
+    const primaryRoute = data?.routes?.[0];
+    const geoCoords: any[] = primaryRoute?.geometry?.coordinates || [];
+
+    if (data?.code !== 'Ok' || geoCoords.length < 2) {
+      return res.json({ ok: false, source: 'fallback', reason: 'No OSRM geometry returned' });
+    }
+
+    // Convert [lng, lat] GeoJSON to Leaflet [lat, lng]
+    const coordinates: [number, number][] = geoCoords.map((pair) => [
+      Number(pair[1]),
+      Number(pair[0])
+    ]);
+    const distanceMeters = Math.round(Number(primaryRoute.distance || 0));
+    const durationSeconds = Math.round(Number(primaryRoute.duration || 0));
+
+    osrmRouteCache.set(coordStr, {
+      coordinates,
+      distanceMeters,
+      durationSeconds,
+      fetchedAt: Date.now()
+    });
+
+    return res.json({
+      ok: true,
+      source: 'osrm',
+      cached: false,
+      coordinates,
+      distanceMeters,
+      durationSeconds
+    });
+  } catch (err: any) {
+    return res.json({
+      ok: false,
+      source: 'fallback',
+      reason: err?.message || 'OSRM request failed'
+    });
+  }
+});
+
+// Google Maps Platform Client Key Config (reads provisioned environment secret safely)
+app.get('/api/maps/config', (_req, res) => {
+  const apiKey = (
+    process.env.VITE_GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    process.env.MAPS_API_KEY ||
+    ''
+  ).trim();
+  return res.json({
+    ok: Boolean(apiKey),
+    apiKey
+  });
+});
+
+// Google Maps Platform Routes API v2 Optimization Proxy (avoids browser CORS per CF1)
+interface PjpRouteStopInput {
+  id: string;
+  lat: number;
+  lng: number;
+}
+
+interface PjpOptimizedLegResponse {
+  fromId: string;
+  toId: string;
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
+const pjpRoutesCache = new Map<
+  string,
+  {
+    orderedIds: string[];
+    legs: PjpOptimizedLegResponse[];
+    totalDistanceMeters: number;
+    totalDurationSeconds: number;
+    encodedPolyline: string;
+    fetchedAt: number;
+  }
+>();
+const PJP_ROUTES_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function parseGoogleDurationSeconds(durationStr: unknown): number {
+  const str = String(durationStr || '0s');
+  const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(num) ? Math.round(num) : 0;
+}
+
+app.post('/api/pjp/optimize-route', async (req, res) => {
+  try {
+    const apiKey = (
+      process.env.GOOGLE_MAPS_API_KEY ||
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      process.env.MAPS_API_KEY ||
+      ''
+    ).trim();
+
+    if (!apiKey) {
+      return res.status(503).json({
+        ok: false,
+        missingApiKey: true,
+        error: 'Google Maps API key is not configured on the server'
+      });
+    }
+
+    const origin = req.body?.origin;
+    const rawStops: PjpRouteStopInput[] = req.body?.stops;
+    const originLat = Number(origin?.lat);
+    const originLng = Number(origin?.lng);
+
+    if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
+      return res.status(400).json({ ok: false, error: 'Invalid origin coordinates' });
+    }
+
+    if (!Array.isArray(rawStops) || rawStops.length === 0) {
+      return res.json({
+        ok: true,
+        orderedIds: [],
+        legs: [],
+        totalDistanceMeters: 0,
+        totalDurationSeconds: 0,
+        encodedPolyline: ''
+      });
+    }
+
+    const validStops = rawStops
+      .slice(0, 25)
+      .map((s) => ({
+        id: String(s?.id || ''),
+        lat: Number(s?.lat),
+        lng: Number(s?.lng)
+      }))
+      .filter((s) => s.id && Number.isFinite(s.lat) && Number.isFinite(s.lng));
+
+    if (validStops.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No valid stop coordinates provided' });
+    }
+
+    const cacheKey = `${originLat.toFixed(3)},${originLng.toFixed(3)}|${validStops
+      .map((s) => `${s.id}:${s.lat.toFixed(4)},${s.lng.toFixed(4)}`)
+      .sort()
+      .join(';')}`;
+
+    const cached = pjpRoutesCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < PJP_ROUTES_CACHE_TTL_MS) {
+      return res.json({
+        ok: true,
+        cached: true,
+        orderedIds: cached.orderedIds,
+        legs: cached.legs,
+        totalDistanceMeters: cached.totalDistanceMeters,
+        totalDurationSeconds: cached.totalDurationSeconds,
+        encodedPolyline: cached.encodedPolyline
+      });
+    }
+
+    // For a natural single-pass field route from origin, fix the farthest stop from origin as destination
+    // and optimize all intermediate stops via Routes API computeRoutes TSP solver.
+    let destinationStop = validStops[0];
+    let intermediateStops: PjpRouteStopInput[] = [];
+
+    if (validStops.length > 1) {
+      let farthestIdx = 0;
+      let maxDist = -1;
+      validStops.forEach((stop, idx) => {
+        const d = haversineMeters(originLat, originLng, stop.lat, stop.lng);
+        if (d > maxDist) {
+          maxDist = d;
+          farthestIdx = idx;
+        }
+      });
+      destinationStop = validStops[farthestIdx];
+      intermediateStops = validStops.filter((_, idx) => idx !== farthestIdx);
+    }
+
+    const useOptimization = intermediateStops.length >= 1;
+    const requestBody: Record<string, any> = {
+      origin: {
+        location: {
+          latLng: { latitude: originLat, longitude: originLng }
+        }
+      },
+      destination: {
+        location: {
+          latLng: { latitude: destinationStop.lat, longitude: destinationStop.lng }
+        }
+      },
+      travelMode: 'DRIVE',
+      routingPreference: 'TRAFFIC_AWARE'
+    };
+
+    if (useOptimization) {
+      requestBody.intermediates = intermediateStops.map((stop) => ({
+        location: {
+          latLng: { latitude: stop.lat, longitude: stop.lng }
+        }
+      }));
+      requestBody.optimizeWaypointOrder = true;
+    }
+
+    const fieldMask = useOptimization
+      ? 'routes.duration,routes.distanceMeters,routes.optimizedIntermediateWaypointIndex,routes.polyline.encodedPolyline,routes.legs.distanceMeters,routes.legs.duration'
+      : 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.distanceMeters,routes.legs.duration';
+
+    const routesRes = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        'X-Goog-FieldMask': fieldMask
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const routesJson: any = await routesRes.json().catch(() => ({}));
+
+    const isQuotaError =
+      routesRes.status === 429 ||
+      routesJson?.error?.status === 'RESOURCE_EXHAUSTED' ||
+      routesJson?.error?.status === 'OVER_QUERY_LIMIT';
+
+    if (isQuotaError) {
+      return res.status(429).json({
+        ok: false,
+        quotaExceeded: true,
+        error: routesJson?.error?.message || 'Google Maps Platform quota reached'
+      });
+    }
+
+    if (!routesRes.ok || !Array.isArray(routesJson?.routes) || routesJson.routes.length === 0) {
+      return res.status(routesRes.status >= 400 ? routesRes.status : 502).json({
+        ok: false,
+        error: routesJson?.error?.message || `Routes API error (HTTP ${routesRes.status})`
+      });
+    }
+
+    const route = routesJson.routes[0];
+    let orderedStops: PjpRouteStopInput[];
+
+    if (useOptimization && Array.isArray(route.optimizedIntermediateWaypointIndex)) {
+      orderedStops = [
+        ...route.optimizedIntermediateWaypointIndex
+          .map((idx: number) => intermediateStops[idx])
+          .filter(Boolean),
+        destinationStop
+      ];
+    } else if (useOptimization) {
+      orderedStops = [...intermediateStops, destinationStop];
+    } else {
+      orderedStops = [destinationStop];
+    }
+
+    const orderedIds = orderedStops.map((s) => s.id);
+    const rawLegs = Array.isArray(route.legs) ? route.legs : [];
+    const legs: PjpOptimizedLegResponse[] = orderedIds.map((stopId, idx) => ({
+      fromId: idx === 0 ? 'origin' : orderedIds[idx - 1],
+      toId: stopId,
+      distanceMeters: Number(rawLegs[idx]?.distanceMeters || 0),
+      durationSeconds: parseGoogleDurationSeconds(rawLegs[idx]?.duration)
+    }));
+
+    const resultPayload = {
+      orderedIds,
+      legs,
+      totalDistanceMeters: Number(route.distanceMeters || 0),
+      totalDurationSeconds: parseGoogleDurationSeconds(route.duration),
+      encodedPolyline: String(route.polyline?.encodedPolyline || '')
+    };
+
+    pjpRoutesCache.set(cacheKey, {
+      ...resultPayload,
+      fetchedAt: Date.now()
+    });
+
+    return res.json({
+      ok: true,
+      cached: false,
+      ...resultPayload
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || 'Failed to optimize PJP driving route'
+    });
+  }
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

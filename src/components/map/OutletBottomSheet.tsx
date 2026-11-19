@@ -5,9 +5,14 @@ import {
   ChevronUp,
   MapPin,
   AlertCircle,
-  Navigation
+  Navigation,
+  Calendar
 } from 'lucide-react';
-import { MapOutlet, getDeterministicOutletInsight } from '../../data/data';
+import {
+  MapOutlet,
+  formatLastVisitRecency,
+  getDeterministicOutletInsight
+} from '../../data/data';
 import { OutletKPIRow } from './OutletKPIRow';
 
 export type BottomSheetState = 'closed' | 'peek' | 'expanded';
@@ -79,6 +84,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
   const visitBadge = getVisitStatusBadge(outlet);
   const healthBadge = getHealthBadge(outlet);
   const insightLine = getDeterministicOutletInsight(outlet);
+  const lastVisitRecency = formatLastVisitRecency(outlet.lastVisitDate);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     dragStartY.current = e.clientY;
@@ -120,7 +126,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
       style={{
         transform: dragDeltaY !== 0 ? `translateY(${dragDeltaY}px)` : undefined
       }}
-      className="md:hidden fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none transition-transform duration-200 ease-out"
+      className="md:hidden fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none transition-transform duration-200 ease-out"
     >
       <div className="max-w-md mx-auto marviz-glass-strong rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white">
         {/* Touch-Draggable Header & Handle */}
@@ -178,10 +184,45 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
           </div>
         </div>
 
-        {/* Expanded State Body: 3 KPI Tiles + 1-Line Deterministic Summary + MORE DETAILS CTA */}
+        {/* Expanded State Body: Last Visit Banner + 2+3 KPI Grid + Deterministic Summary + Conditional CTAs */}
         {isExpanded && (
-          <div className="px-4 pb-3.5 pt-0.5 space-y-3 animate-fade-in">
-            <OutletKPIRow outlet={outlet} />
+          <div className="px-4 pb-3.5 pt-0.5 space-y-2.5 animate-fade-in">
+            {/* Dedicated Last Visit Recency & Baseline Banner Card */}
+            {lastVisitRecency && (
+              <div className="rounded-xl bg-slate-900/80 border border-slate-700/65 px-3 py-2 flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
+                    <Calendar size={14} className="text-sky-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Last Visit
+                      </span>
+                      <span
+                        className={`text-[9.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border leading-none ${lastVisitRecency.badgeClass}`}
+                      >
+                        {lastVisitRecency.relativeText}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-medium text-slate-200 mt-0.5 tabular-nums truncate">
+                      {lastVisitRecency.formattedDate}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0 pl-2 border-l border-slate-700/60">
+                  <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">
+                    Baseline
+                  </div>
+                  <div className="text-[10.5px] font-mono text-slate-300 tabular-nums">
+                    SOS {outlet.previousSosScore.toFixed(1)} · PG {outlet.previousPlanogramPercentage}%
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <OutletKPIRow outlet={outlet} compact />
 
             {/* Deterministic One-Line Intelligence Summary */}
             <div className="flex items-center gap-2 rounded-xl bg-slate-900/70 border border-slate-700/65 px-3 py-2">
@@ -200,26 +241,37 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
               </p>
             </div>
 
-            {/* Primary CTA + Compact Analytics Link */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onStartOutletVisit(outlet)}
-                className="flex-1 min-h-[46px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(22,133,255,0.45)] transition-all cursor-pointer active:scale-[0.99]"
-              >
-                <Navigation size={15} className="fill-white" />
-                <span>START OUTLET VISIT</span>
-              </button>
+            {/* Completed outlets show ONLY Analytics CTA; uncompleted show Start Visit + Analytics */}
+            {outlet.visitStatus === 'completed' ? (
               <button
                 type="button"
                 onClick={() => onMoreDetails(outlet)}
-                aria-label={`View analytics for ${outlet.name}`}
-                className="min-h-[46px] px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-sky-400/35 text-xs font-bold text-sky-300 hover:text-white flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                className="w-full min-h-[46px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(22,133,255,0.45)] transition-all cursor-pointer active:scale-[0.99]"
               >
-                <BarChart3 size={15} />
-                <span>Analytics</span>
+                <BarChart3 size={16} />
+                <span>ANALYTICS</span>
               </button>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onStartOutletVisit(outlet)}
+                  className="flex-1 min-h-[46px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(22,133,255,0.45)] transition-all cursor-pointer active:scale-[0.99]"
+                >
+                  <Navigation size={15} className="fill-white" />
+                  <span>START OUTLET VISIT</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMoreDetails(outlet)}
+                  aria-label={`View analytics for ${outlet.name}`}
+                  className="min-h-[46px] px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-sky-400/35 text-xs font-bold text-sky-300 hover:text-white flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                >
+                  <BarChart3 size={15} />
+                  <span>Analytics</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

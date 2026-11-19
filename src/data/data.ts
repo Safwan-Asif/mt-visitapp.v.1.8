@@ -14,6 +14,46 @@ export type MapFilterChipId = 'all' | 'planned' | 'completed' | 'issues';
 
 export type QuickFilterId = 'planned' | 'completed' | 'attention' | 'critical';
 
+export type MapBaseStyle = 'satellite' | 'tactical_terrain' | 'tactical_dark';
+
+export interface MapBaseStyleConfig {
+  id: MapBaseStyle;
+  label: string;
+  shortLabel: string;
+  description: string;
+  tileUrl: string;
+  attribution: string;
+}
+
+export const MAP_BASE_STYLES: MapBaseStyleConfig[] = [
+  {
+    id: 'satellite',
+    label: 'Esri Satellite',
+    shortLabel: 'Satellite',
+    description: 'High-resolution Doha satellite imagery',
+    tileUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+  },
+  {
+    id: 'tactical_terrain',
+    label: 'Tactical Terrain',
+    shortLabel: 'Terrain',
+    description: 'Dark topographic road & contour grading',
+    tileUrl: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  },
+  {
+    id: 'tactical_dark',
+    label: 'Tactical Dark',
+    shortLabel: 'Dark',
+    description: 'High-contrast midnight vector streets',
+    tileUrl: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+  }
+];
+
 export interface DohaLandmark {
   id: string;
   name: string;
@@ -37,6 +77,13 @@ export interface NextStopEstimate {
   isDemoEstimate: true;
 }
 
+export interface RoadRouteResult {
+  coordinates: [number, number][];
+  source: 'osrm' | 'arterial_fallback';
+  distanceMeters?: number;
+  durationSeconds?: number;
+}
+
 export interface MapOutlet {
   id: string;
   name: string;
@@ -48,8 +95,11 @@ export interface MapOutlet {
   healthStatus: OutletHealthStatus;
   scheduledForToday: boolean;
   visitOrder: number | null;
-  sosScore: number; // 0 - 5 scale
+  sosScore: number; // 0 - 5 aggregate index
   previousSosScore: number;
+  flourSosPct: number; // Target > 50%
+  edibleOilSosPct: number; // Target > 50%
+  pastaSosPct: number; // Target > 50%
   planogramPercentage: number; // 0 - 100
   previousPlanogramPercentage: number;
   oosSkuCount: number;
@@ -72,6 +122,8 @@ export interface ExecutiveLocation {
   isLiveGps: boolean;
 }
 
+export const SOS_TARGET_PCT = 50;
+
 export const DOHA_CENTER: [number, number] = [25.2854, 51.531];
 
 export const DEFAULT_EXECUTIVE_LOCATION: ExecutiveLocation = {
@@ -92,7 +144,8 @@ export const DEFAULT_EXECUTIVE_LOCATION: ExecutiveLocation = {
  *   - Completed today: 5 (visitOrder 1..5)
  *   - Planned pending: 3 (visitOrder 6..8)
  * - Assigned but not planned today: 10 (visitOrder null)
- * - Health status is tracked independently of visitStatus.
+ * - Health breakdown: 8 Healthy, 6 Needs Attention, 4 Critical (independent of visitStatus)
+ * - Category SOS% target: > 50% for Flour, Edible Oil, and Pasta
  */
 export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
   // --- TODAY'S 5 COMPLETED VISITS (visitOrder 1..5) ---
@@ -109,6 +162,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 1,
     sosScore: 4.4,
     previousSosScore: 4.1,
+    flourSosPct: 64,
+    edibleOilSosPct: 58,
+    pastaSosPct: 61,
     planogramPercentage: 92,
     previousPlanogramPercentage: 88,
     oosSkuCount: 0,
@@ -128,6 +184,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 2,
     sosScore: 4.1,
     previousSosScore: 4.0,
+    flourSosPct: 59,
+    edibleOilSosPct: 54,
+    pastaSosPct: 56,
     planogramPercentage: 86,
     previousPlanogramPercentage: 84,
     oosSkuCount: 1,
@@ -147,11 +206,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 3,
     sosScore: 3.4,
     previousSosScore: 3.7,
+    flourSosPct: 53,
+    edibleOilSosPct: 44,
+    pastaSosPct: 49,
     planogramPercentage: 74,
     previousPlanogramPercentage: 79,
     oosSkuCount: 3,
     lastVisitDate: '2026-11-18',
-    issues: ['Oil shelf facings dropped', '3 SKUs out of stock']
+    issues: ['Oil shelf facings dropped below 50%', '3 SKUs out of stock']
   },
   {
     id: 'MT-QA-104',
@@ -166,6 +228,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 4,
     sosScore: 4.0,
     previousSosScore: 3.8,
+    flourSosPct: 57,
+    edibleOilSosPct: 53,
+    pastaSosPct: 55,
     planogramPercentage: 84,
     previousPlanogramPercentage: 80,
     oosSkuCount: 0,
@@ -185,11 +250,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 5,
     sosScore: 2.6,
     previousSosScore: 3.3,
+    flourSosPct: 43,
+    edibleOilSosPct: 36,
+    pastaSosPct: 41,
     planogramPercentage: 61,
     previousPlanogramPercentage: 71,
     oosSkuCount: 5,
     lastVisitDate: '2026-11-18',
-    issues: ['Severe cooking oil OOS', 'Competitor end-cap encroachment']
+    issues: ['Severe cooking oil OOS', 'All categories below 50% SOS target']
   },
 
   // --- TODAY'S 3 PENDING PLANNED VISITS (visitOrder 6..8) ---
@@ -206,11 +274,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 6,
     sosScore: 3.2,
     previousSosScore: 3.8,
+    flourSosPct: 47,
+    edibleOilSosPct: 38,
+    pastaSosPct: 54,
     planogramPercentage: 68,
     previousPlanogramPercentage: 76,
     oosSkuCount: 4,
     lastVisitDate: '2026-11-12',
-    issues: ['Low shelf visibility', '4 SKUs currently out of stock']
+    issues: ['Edible Oil & Flour below 50% SOS', '4 SKUs currently out of stock']
   },
   {
     id: 'MT-QA-107',
@@ -225,11 +296,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 7,
     sosScore: 3.5,
     previousSosScore: 3.6,
+    flourSosPct: 48,
+    edibleOilSosPct: 52,
+    pastaSosPct: 55,
     planogramPercentage: 75,
     previousPlanogramPercentage: 78,
     oosSkuCount: 2,
     lastVisitDate: '2026-11-13',
-    issues: ['Planogram misalignment on flour bay']
+    issues: ['Flour bay SOS below 50% target', 'Planogram misalignment']
   },
   {
     id: 'MT-QA-108',
@@ -244,6 +318,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: 8,
     sosScore: 4.3,
     previousSosScore: 4.2,
+    flourSosPct: 62,
+    edibleOilSosPct: 57,
+    pastaSosPct: 60,
     planogramPercentage: 89,
     previousPlanogramPercentage: 87,
     oosSkuCount: 0,
@@ -265,6 +342,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 4.5,
     previousSosScore: 4.4,
+    flourSosPct: 66,
+    edibleOilSosPct: 61,
+    pastaSosPct: 65,
     planogramPercentage: 94,
     previousPlanogramPercentage: 92,
     oosSkuCount: 0,
@@ -284,6 +364,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 3.4,
     previousSosScore: 3.7,
+    flourSosPct: 52,
+    edibleOilSosPct: 48,
+    pastaSosPct: 45,
     planogramPercentage: 73,
     previousPlanogramPercentage: 77,
     oosSkuCount: 2,
@@ -303,6 +386,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 4.2,
     previousSosScore: 4.0,
+    flourSosPct: 58,
+    edibleOilSosPct: 55,
+    pastaSosPct: 57,
     planogramPercentage: 88,
     previousPlanogramPercentage: 85,
     oosSkuCount: 1,
@@ -322,6 +408,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 2.8,
     previousSosScore: 3.5,
+    flourSosPct: 44,
+    edibleOilSosPct: 39,
+    pastaSosPct: 46,
     planogramPercentage: 62,
     previousPlanogramPercentage: 74,
     oosSkuCount: 5,
@@ -341,6 +430,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 4.1,
     previousSosScore: 3.9,
+    flourSosPct: 56,
+    edibleOilSosPct: 54,
+    pastaSosPct: 58,
     planogramPercentage: 85,
     previousPlanogramPercentage: 82,
     oosSkuCount: 0,
@@ -360,11 +452,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 3.3,
     previousSosScore: 3.6,
+    flourSosPct: 51,
+    edibleOilSosPct: 42,
+    pastaSosPct: 49,
     planogramPercentage: 71,
     previousPlanogramPercentage: 75,
     oosSkuCount: 3,
     lastVisitDate: '2026-11-11',
-    issues: ['SOS decline on premium oil', '3 SKUs out of stock']
+    issues: ['Edible Oil & Pasta SOS under 50%', '3 SKUs out of stock']
   },
   {
     id: 'MT-QA-115',
@@ -379,6 +474,9 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 4.3,
     previousSosScore: 4.1,
+    flourSosPct: 60,
+    edibleOilSosPct: 56,
+    pastaSosPct: 59,
     planogramPercentage: 90,
     previousPlanogramPercentage: 88,
     oosSkuCount: 0,
@@ -398,11 +496,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 3.5,
     previousSosScore: 3.7,
+    flourSosPct: 53,
+    edibleOilSosPct: 47,
+    pastaSosPct: 51,
     planogramPercentage: 76,
     previousPlanogramPercentage: 79,
     oosSkuCount: 2,
     lastVisitDate: '2026-11-12',
-    issues: ['Shelf tag verification needed']
+    issues: ['Edible Oil SOS at 47%', 'Shelf tag verification needed']
   },
   {
     id: 'MT-QA-117',
@@ -417,11 +518,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 2.7,
     previousSosScore: 3.4,
+    flourSosPct: 42,
+    edibleOilSosPct: 37,
+    pastaSosPct: 44,
     planogramPercentage: 64,
     previousPlanogramPercentage: 72,
     oosSkuCount: 6,
     lastVisitDate: '2026-11-07',
-    issues: ['6 SKUs out of stock', 'Planogram non-compliance']
+    issues: ['6 SKUs out of stock', 'All SOS categories below 50%']
   },
   {
     id: 'MT-QA-118',
@@ -436,11 +540,14 @@ export const MOCK_DOHA_OUTLETS: MapOutlet[] = [
     visitOrder: null,
     sosScore: 3.5,
     previousSosScore: 3.8,
+    flourSosPct: 49,
+    edibleOilSosPct: 52,
+    pastaSosPct: 48,
     planogramPercentage: 77,
     previousPlanogramPercentage: 81,
     oosSkuCount: 2,
     lastVisitDate: '2026-11-14',
-    issues: ['2 low-stock cooking oil SKUs', 'Planogram spacing check']
+    issues: ['Flour & Pasta SOS near 50% threshold', '2 low-stock SKUs']
   }
 ];
 
@@ -471,6 +578,78 @@ export const DOHA_LANDMARKS: DohaLandmark[] = [
 ];
 
 /**
+ * Curated Doha arterial road-waypoint fallback tracing major expressways
+ * (West Bay -> Corniche -> Al Mansoura C-Ring -> Bin Mahmoud -> Salwa Rd -> Al Muntazah -> Al Waab -> Old Airport)
+ * used immediately until live OSRM road geometry loads (or if OSRM is unreachable).
+ */
+export const DOHA_ARTERIAL_ROUTE_FALLBACK: [number, number][] = [
+  [25.3256, 51.5295], // 1. Carrefour City Center
+  [25.3238, 51.5262],
+  [25.3198, 51.5238],
+  [25.3172, 51.5228], // 2. Monoprix West Bay
+  [25.3125, 51.5266],
+  [25.3028, 51.5335], // Corniche / Majlis Al Taawon St
+  [25.2912, 51.5384],
+  [25.2804, 51.5408], // Ras Abu Aboud / C-Ring approach
+  [25.2749, 51.5398], // 3. Al Meera Al Mansoura
+  [25.2742, 51.5318], // C-Ring Rd Westbound
+  [25.2788, 51.5205],
+  [25.2842, 51.5141], // 4. Lulu Express Bin Mahmoud
+  [25.2782, 51.5094],
+  [25.2695, 51.5022], // Salwa Rd / Ramada Signal
+  [25.2618, 51.4914], // 5. Safari Hypermarket Salwa
+  [25.2636, 51.5048], // Salwa Rd Eastbound
+  [25.2678, 51.5218],
+  [25.2698, 51.5315], // 6. Lulu Hypermarket Al Muntazah
+  [25.2645, 51.5238], // Rawdat Al Khail / Wholesale Market St
+  [25.2588, 51.5032],
+  [25.2564, 51.4742], // Al Waab St
+  [25.2602, 51.4426], // 7. Carrefour Villaggio
+  [25.2498, 51.4545], // Sabah Al Ahmad Corridor / E-Ring
+  [25.2442, 51.4925],
+  [25.2448, 51.5322],
+  [25.2524, 51.5568]  // 8. Al Meera Old Airport
+];
+
+/**
+ * Fetch real street-following driving geometry via backend OSRM proxy,
+ * returning curated Doha arterial waypoints cleanly on offline/timeout fallback.
+ */
+export async function fetchDrivingRoadRoute(
+  waypoints: [number, number][]
+): Promise<RoadRouteResult> {
+  if (waypoints.length < 2) {
+    return { coordinates: waypoints, source: 'arterial_fallback' };
+  }
+
+  try {
+    const res = await fetch('/api/map/route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waypoints })
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.ok && Array.isArray(json.coordinates) && json.coordinates.length >= 2) {
+        return {
+          coordinates: json.coordinates,
+          source: 'osrm',
+          distanceMeters: json.distanceMeters,
+          durationSeconds: json.durationSeconds
+        };
+      }
+    }
+  } catch {
+    // Graceful arterial road fallback below
+  }
+
+  return {
+    coordinates: DOHA_ARTERIAL_ROUTE_FALLBACK,
+    source: 'arterial_fallback'
+  };
+}
+
+/**
  * Derive Journey Progress HUD counters strictly from the dataset.
  */
 export function deriveJourneyMetrics(outlets: MapOutlet[]): JourneyMetrics {
@@ -494,11 +673,86 @@ export function deriveJourneyMetrics(outlets: MapOutlet[]): JourneyMetrics {
 /**
  * Compute days elapsed since last visit relative to reference date.
  */
-export function getDaysSinceLastVisit(lastVisitDate: string, referenceDate: Date = new Date('2026-11-18T12:00:00Z')): number {
+export function getDaysSinceLastVisit(
+  lastVisitDate: string,
+  referenceDate: Date = new Date('2026-11-18T12:00:00Z')
+): number {
   const parsed = new Date(`${lastVisitDate}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return 0;
   const diffMs = referenceDate.getTime() - parsed.getTime();
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+export interface LastVisitRecency {
+  days: number;
+  relativeText: string;
+  formattedDate: string;
+  tone: 'recent' | 'attention' | 'overdue';
+  badgeClass: string;
+}
+
+/**
+ * Format human-readable relative recency and calendar date for Last Visit banners.
+ */
+export function formatLastVisitRecency(
+  lastVisitDate: string,
+  referenceDate: Date = new Date('2026-11-18T12:00:00Z')
+): LastVisitRecency {
+  const days = getDaysSinceLastVisit(lastVisitDate, referenceDate);
+  const parsed = new Date(`${lastVisitDate}T00:00:00Z`);
+  const formattedDate = !Number.isNaN(parsed.getTime())
+    ? parsed.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC'
+      })
+    : lastVisitDate;
+
+  let relativeText = 'Today';
+  let tone: 'recent' | 'attention' | 'overdue' = 'recent';
+  let badgeClass = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40';
+
+  if (days === 0) {
+    relativeText = 'Today';
+    tone = 'recent';
+    badgeClass = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40';
+  } else if (days === 1) {
+    relativeText = '1 day ago';
+    tone = 'recent';
+    badgeClass = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40';
+  } else if (days < 4) {
+    relativeText = `${days} days ago`;
+    tone = 'recent';
+    badgeClass = 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40';
+  } else if (days < 8) {
+    relativeText = `${days} days ago`;
+    tone = 'attention';
+    badgeClass = 'bg-amber-500/20 text-amber-300 border-amber-400/40';
+  } else {
+    relativeText = `${days} days ago · Overdue`;
+    tone = 'overdue';
+    badgeClass = 'bg-red-500/20 text-red-300 border-red-400/40';
+  }
+
+  return {
+    days,
+    relativeText,
+    formattedDate,
+    tone,
+    badgeClass
+  };
+}
+
+/**
+ * Count how many categories are currently below the > 50% SOS target.
+ */
+export function getBelowTargetSosCategories(outlet: MapOutlet): string[] {
+  const lagging: string[] = [];
+  if (outlet.flourSosPct <= SOS_TARGET_PCT) lagging.push('Flour');
+  if (outlet.edibleOilSosPct <= SOS_TARGET_PCT) lagging.push('Edible Oil');
+  if (outlet.pastaSosPct <= SOS_TARGET_PCT) lagging.push('Pasta');
+  return lagging;
 }
 
 /**
@@ -506,15 +760,14 @@ export function getDaysSinceLastVisit(lastVisitDate: string, referenceDate: Date
  * Never randomized; strictly computed from outlet KPI thresholds.
  */
 export function getDeterministicOutletInsight(outlet: MapOutlet): string {
-  const lowSos = outlet.sosScore < 3.4;
-  const warnSos = outlet.sosScore >= 3.4 && outlet.sosScore < 3.8;
+  const laggingCats = getBelowTargetSosCategories(outlet);
   const lowPlanogram = outlet.planogramPercentage < 70;
   const warnPlanogram = outlet.planogramPercentage >= 70 && outlet.planogramPercentage < 82;
   const highOos = outlet.oosSkuCount >= 4;
   const modOos = outlet.oosSkuCount >= 2 && outlet.oosSkuCount <= 3;
 
-  if (lowSos && highOos) {
-    return `Low shelf visibility · ${outlet.oosSkuCount} SKUs currently out of stock`;
+  if (laggingCats.length > 0 && highOos) {
+    return `${laggingCats.join(' & ')} SOS ≤50% · ${outlet.oosSkuCount} SKUs out of stock`;
   }
   if (lowPlanogram && highOos) {
     return `Planogram drift at ${outlet.planogramPercentage}% · ${outlet.oosSkuCount} SKUs out of stock`;
@@ -522,28 +775,22 @@ export function getDeterministicOutletInsight(outlet: MapOutlet): string {
   if (highOos) {
     return `Critical replenishment gap · ${outlet.oosSkuCount} SKUs currently out of stock`;
   }
-  if (lowSos) {
-    return `Low shelf visibility (${outlet.sosScore.toFixed(1)}/5) · Shelf recovery needed`;
+  if (laggingCats.length > 0) {
+    return `${laggingCats.join(', ')} SOS below 50% target · Expand shelf facings`;
   }
   if (lowPlanogram) {
     return `Planogram compliance at ${outlet.planogramPercentage}% · Bay reset required`;
   }
-  if (warnSos && modOos) {
-    return `Moderate SOS slip · ${outlet.oosSkuCount} SKUs awaiting restock`;
-  }
   if (warnPlanogram && modOos) {
-    return `Planogram at ${outlet.planogramPercentage}% · ${outlet.oosSkuCount} SKUs currently out of stock`;
+    return `Planogram at ${outlet.planogramPercentage}% · ${outlet.oosSkuCount} SKUs out of stock`;
   }
   if (modOos) {
-    return `Minor availability watch · ${outlet.oosSkuCount} SKUs low or out of stock`;
-  }
-  if (warnSos || warnPlanogram) {
-    return `Shelf holding steady · Minor facing alignment recommended`;
+    return `Minor availability watch · ${outlet.oosSkuCount} SKUs awaiting restock`;
   }
   if (outlet.oosSkuCount === 1) {
-    return `Strong execution · 1 SKU replenishment check on next visit`;
+    return `All SOS categories >50% target · 1 SKU restock check`;
   }
-  return `Optimal shelf presence · Full SKU availability & planogram alignment`;
+  return `All SOS categories above 50% target · Optimal shelf execution`;
 }
 
 /**
@@ -581,10 +828,9 @@ export function getDeterministicOutletIssues(outlet: MapOutlet): string[] {
   if (outlet.planogramPercentage < 82) {
     result.push('Planogram compliance below target');
   }
-  if (outlet.sosScore < 3.5) {
-    result.push('SOS below 3.5');
-  } else if (outlet.sosScore < 3.8) {
-    result.push('SOS slightly under 3.8 benchmark');
+  const lagging = getBelowTargetSosCategories(outlet);
+  if (lagging.length > 0) {
+    result.push(`${lagging.join(' & ')} SOS below 50% target`);
   }
   if (result.length === 0 && outlet.issues.length > 0) {
     return outlet.issues.slice(0, 3);
@@ -603,21 +849,20 @@ export function getDeterministicRecommendedActions(outlet: MapOutlet): string[] 
   if (outlet.planogramPercentage < 85) {
     actions.push('Correct shelf arrangement');
   }
-  if (outlet.sosScore < 4.0) {
-    actions.push('Improve brand visibility');
+  if (getBelowTargetSosCategories(outlet).length > 0) {
+    actions.push('Reclaim facings to reach >50% SOS');
   }
   if (actions.length < 3) {
     actions.push('Verify promotional price tags');
   }
   if (actions.length < 3) {
-    actions.push('Capture post-restock shelf photo');
+    actions.push('Confirm POSM wobbler placement');
   }
   return actions.slice(0, 3);
 }
 
 /**
  * Compute an illustrative demo distance & ETA estimate to the next pending visit.
- * Explicitly marked as a demonstration estimate rather than live traffic routing.
  */
 export function getNextStopDemoEstimate(
   outlets: MapOutlet[],

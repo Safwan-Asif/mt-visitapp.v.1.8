@@ -10,9 +10,16 @@ import {
   Star,
   History
 } from 'lucide-react';
-import { PerformanceLayerId, QuickFilterId } from '../../data/data';
+import {
+  MAP_BASE_STYLES,
+  MapBaseStyle,
+  PerformanceLayerId,
+  QuickFilterId
+} from '../../data/data';
 
 interface DesktopLeftRailProps {
+  mapBaseStyle: MapBaseStyle;
+  onSelectBaseStyle: (style: MapBaseStyle) => void;
   showJourneyPlan: boolean;
   onToggleJourneyPlan: () => void;
   activeLayer: PerformanceLayerId;
@@ -79,6 +86,8 @@ const LEGEND_ITEMS: Array<{
 ];
 
 export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
+  mapBaseStyle,
+  onSelectBaseStyle,
   showJourneyPlan,
   onToggleJourneyPlan,
   activeLayer,
@@ -88,6 +97,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
 }) => {
   const [layersExpanded, setLayersExpanded] = useState(true);
   const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [legendExpanded, setLegendExpanded] = useState(false);
 
   return (
     <aside
@@ -95,10 +105,11 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
       className="hidden md:flex flex-col gap-2 w-[228px] max-h-[calc(100%-76px)] overflow-y-auto no-scrollbar pointer-events-auto"
     >
       {/* 1. MAP LAYERS */}
-      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white">
+      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
         <button
           type="button"
           onClick={() => setLayersExpanded((v) => !v)}
+          aria-expanded={layersExpanded}
           className="w-full px-3 py-2 flex items-center justify-between border-b border-slate-700/60 hover:bg-white/5 cursor-pointer"
         >
           <span className="font-heading text-[12px] font-bold uppercase tracking-wider text-slate-100">
@@ -113,6 +124,39 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
 
         {layersExpanded && (
           <div className="p-2 space-y-1">
+            {/* Base Map Layout Selector: Satellite / Tactical Terrain / Dark Grid */}
+            <div className="px-1 pb-1.5">
+              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                Map Mode
+              </div>
+              <div
+                role="radiogroup"
+                aria-label="Map base style"
+                className="grid grid-cols-3 gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-700/60"
+              >
+                {MAP_BASE_STYLES.map((style) => {
+                  const selected = mapBaseStyle === style.id;
+                  return (
+                    <button
+                      key={style.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => onSelectBaseStyle(style.id)}
+                      title={style.description}
+                      className={`min-h-[28px] px-1 rounded-lg text-[10.5px] font-semibold transition-all cursor-pointer ${
+                        selected
+                          ? 'bg-[#1685FF] text-white shadow-sm'
+                          : 'text-slate-300 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      {style.shortLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Independent Journey Plan Route Overlay */}
             <button
               type="button"
@@ -190,10 +234,11 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
       </section>
 
       {/* 2. QUICK FILTERS */}
-      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white">
+      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
         <button
           type="button"
           onClick={() => setFiltersExpanded((v) => !v)}
+          aria-expanded={filtersExpanded}
           className="w-full px-3 py-2 flex items-center justify-between border-b border-slate-700/60 hover:bg-white/5 cursor-pointer"
         >
           <span className="font-heading text-[12px] font-bold uppercase tracking-wider text-slate-100">
@@ -229,53 +274,70 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
         )}
       </section>
 
-      {/* 3. OUTLET LEGEND */}
-      <section className="marviz-glass-strong rounded-2xl p-2.5 text-white">
-        <div className="font-heading text-[11px] font-bold uppercase tracking-wider text-slate-200 pb-1.5 mb-1.5 border-b border-slate-700/60">
-          OUTLET LEGEND
-        </div>
-        <div className="space-y-1.5">
-          {LEGEND_ITEMS.map((entry) => (
-            <div key={entry.label} className="flex items-center gap-2">
-              <span
-                className="w-4 h-5 flex items-center justify-center shrink-0"
-                aria-hidden="true"
-              >
-                <svg width="14" height="17" viewBox="0 0 30 36" fill="none">
-                  <path
-                    d="M15 1C7.82 1 2 6.82 2 14C2 23.25 15 35 15 35C15 35 28 23.25 28 14C28 6.82 22.18 1 15 1Z"
-                    fill={entry.color}
-                  />
-                  {entry.symbol === 'alert' ? (
-                    <text
-                      x="15"
-                      y="19"
-                      textAnchor="middle"
-                      fill="#FFFFFF"
-                      fontSize="16"
-                      fontWeight="900"
-                    >
-                      !
-                    </text>
-                  ) : entry.symbol === 'check' ? (
-                    <polyline
-                      points="9,14 13,18 21,10"
-                      fill="none"
-                      stroke="#FFFFFF"
-                      strokeWidth="3.2"
-                      strokeLinecap="round"
+      {/* 3. OUTLET LEGEND (Collapsible, closed by default) */}
+      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
+        <button
+          type="button"
+          onClick={() => setLegendExpanded((v) => !v)}
+          aria-expanded={legendExpanded}
+          className={`w-full px-3 py-1.5 flex items-center justify-between hover:bg-white/5 cursor-pointer ${
+            legendExpanded ? 'border-b border-slate-700/60' : ''
+          }`}
+        >
+          <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-slate-200">
+            OUTLET LEGEND
+          </span>
+          {legendExpanded ? (
+            <ChevronUp size={13} className="text-slate-400" />
+          ) : (
+            <ChevronDown size={13} className="text-slate-400" />
+          )}
+        </button>
+
+        {legendExpanded && (
+          <div className="px-2.5 py-2 space-y-1">
+            {LEGEND_ITEMS.map((entry) => (
+              <div key={entry.label} className="flex items-center gap-1.5">
+                <span
+                  className="w-3.5 h-4 flex items-center justify-center shrink-0"
+                  aria-hidden="true"
+                >
+                  <svg width="11" height="14" viewBox="0 0 30 36" fill="none">
+                    <path
+                      d="M15 1C7.82 1 2 6.82 2 14C2 23.25 15 35 15 35C15 35 28 23.25 28 14C28 6.82 22.18 1 15 1Z"
+                      fill={entry.color}
                     />
-                  ) : (
-                    <circle cx="15" cy="13" r="4.5" fill="#FFFFFF" opacity="0.9" />
-                  )}
-                </svg>
-              </span>
-              <span className="text-[11px] text-slate-200 font-medium leading-none">
-                {entry.label}
-              </span>
-            </div>
-          ))}
-        </div>
+                    {entry.symbol === 'alert' ? (
+                      <text
+                        x="15"
+                        y="19"
+                        textAnchor="middle"
+                        fill="#FFFFFF"
+                        fontSize="16"
+                        fontWeight="900"
+                      >
+                        !
+                      </text>
+                    ) : entry.symbol === 'check' ? (
+                      <polyline
+                        points="9,14 13,18 21,10"
+                        fill="none"
+                        stroke="#FFFFFF"
+                        strokeWidth="3.2"
+                        strokeLinecap="round"
+                      />
+                    ) : (
+                      <circle cx="15" cy="13" r="4.5" fill="#FFFFFF" opacity="0.9" />
+                    )}
+                  </svg>
+                </span>
+                <span className="text-[10.5px] text-slate-200 font-medium leading-none">
+                  {entry.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </aside>
   );

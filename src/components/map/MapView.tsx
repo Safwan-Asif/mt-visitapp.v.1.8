@@ -9,12 +9,14 @@ import {
 } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Plus, Minus, Crosshair } from 'lucide-react';
+import { Plus, Minus, Crosshair, Map as MapIcon, Mountain, Globe } from 'lucide-react';
 import {
   DOHA_CENTER,
   DOHA_LANDMARKS,
   DohaLandmark,
   ExecutiveLocation,
+  MAP_BASE_STYLES,
+  MapBaseStyle,
   MapOutlet,
   PerformanceLayerId
 } from '../../data/data';
@@ -54,7 +56,9 @@ function createLandmarkIcon(landmark: DohaLandmark): L.DivIcon {
 
 interface MapViewProps {
   outlets: MapOutlet[];
-  allOutlets: MapOutlet[];
+  roadRouteCoords: [number, number][];
+  routeSource: 'osrm' | 'arterial_fallback';
+  mapBaseStyle: MapBaseStyle;
   activeLayer: PerformanceLayerId;
   showJourneyPlan: boolean;
   selectedOutlet: MapOutlet | null;
@@ -64,6 +68,7 @@ interface MapViewProps {
   onSelectOutlet: (outlet: MapOutlet) => void;
   onMapBackgroundTap: () => void;
   onRecenterExecutive: () => void;
+  onCycleBaseStyle?: () => void;
   onResetFilter?: () => void;
 }
 
@@ -121,7 +126,9 @@ const MapController: React.FC<MapControllerProps> = ({
 
 export const MapView: React.FC<MapViewProps> = ({
   outlets,
-  allOutlets,
+  roadRouteCoords,
+  routeSource,
+  mapBaseStyle,
   activeLayer,
   showJourneyPlan,
   selectedOutlet,
@@ -131,19 +138,25 @@ export const MapView: React.FC<MapViewProps> = ({
   onSelectOutlet,
   onMapBackgroundTap,
   onRecenterExecutive,
+  onCycleBaseStyle,
   onResetFilter
 }) => {
   const mapRef = useRef<L.Map | null>(null);
 
   const executiveBeaconIcon = useMemo(() => createExecutiveBeaconIcon(), []);
 
-  // Build illustrative planned journey sequence coordinates from today's 8 scheduled outlets
-  const journeyRoutePositions = useMemo<[number, number][]>(() => {
-    return allOutlets
-      .filter((o) => o.scheduledForToday && o.visitOrder !== null)
-      .sort((a, b) => (a.visitOrder ?? 99) - (b.visitOrder ?? 99))
-      .map((o) => [o.latitude, o.longitude]);
-  }, [allOutlets]);
+  const activeStyleConfig = useMemo(
+    () =>
+      MAP_BASE_STYLES.find((s) => s.id === mapBaseStyle) || MAP_BASE_STYLES[0],
+    [mapBaseStyle]
+  );
+
+  const tileThemeClass =
+    mapBaseStyle === 'tactical_terrain'
+      ? 'marviz-tiles-tactical-terrain'
+      : mapBaseStyle === 'tactical_dark'
+      ? 'marviz-tiles-tactical-dark'
+      : 'marviz-tiles-satellite';
 
   const landmarkIcons = useMemo(
     () =>
@@ -164,10 +177,10 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const controlsBottomClass =
     sheetState === 'expanded'
-      ? 'bottom-[calc(360px+env(safe-area-inset-bottom,0px))] md:bottom-4'
+      ? 'bottom-[calc(422px+env(safe-area-inset-bottom,0px))] md:bottom-4'
       : sheetState === 'peek'
-      ? 'bottom-[calc(200px+env(safe-area-inset-bottom,0px))] md:bottom-4'
-      : 'bottom-[calc(76px+env(safe-area-inset-bottom,0px))] md:bottom-4';
+      ? 'bottom-[calc(216px+env(safe-area-inset-bottom,0px))] md:bottom-4'
+      : 'bottom-[calc(88px+env(safe-area-inset-bottom,0px))] md:bottom-4';
 
   return (
     <div className="relative w-full h-full">
@@ -178,11 +191,12 @@ export const MapView: React.FC<MapViewProps> = ({
         maxZoom={18}
         zoomControl={false}
         attributionControl={true}
-        className="marviz-leaflet-container"
+        className={`marviz-leaflet-container ${tileThemeClass}`}
       >
         <TileLayer
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-          attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+          key={activeStyleConfig.id}
+          url={activeStyleConfig.tileUrl}
+          attribution={activeStyleConfig.attribution}
           maxZoom={18}
         />
 
@@ -195,27 +209,27 @@ export const MapView: React.FC<MapViewProps> = ({
           onMapBackgroundTap={onMapBackgroundTap}
         />
 
-        {/* Illustrative Planned Journey Route Polyline (Glowing Cyan-Blue) */}
-        {showJourneyPlan && journeyRoutePositions.length > 1 && (
+        {/* Doha Road-Following Planned Journey Polyline (OSRM / Arterial Fallback) */}
+        {showJourneyPlan && roadRouteCoords.length > 1 && (
           <>
             <Polyline
-              positions={journeyRoutePositions}
+              positions={roadRouteCoords}
               pathOptions={{
-                color: '#38BDF8',
-                weight: 9,
-                opacity: 0.28,
+                color: '#0EA5E9',
+                weight: 10,
+                opacity: 0.30,
                 lineCap: 'round',
                 lineJoin: 'round',
                 className: 'marviz-route-glow'
               }}
             />
             <Polyline
-              positions={journeyRoutePositions}
+              positions={roadRouteCoords}
               pathOptions={{
                 color: '#38BDF8',
-                weight: 3.2,
-                opacity: 0.92,
-                dashArray: '8 7',
+                weight: 4,
+                opacity: 0.95,
+                dashArray: routeSource === 'osrm' ? undefined : '10 6',
                 lineCap: 'round',
                 lineJoin: 'round'
               }}
@@ -254,10 +268,18 @@ export const MapView: React.FC<MapViewProps> = ({
         ))}
       </MapContainer>
 
+      {/* Subtle Tactical Sector Grid Overlay for Terrain & Dark Tactical Modes */}
+      {mapBaseStyle !== 'satellite' && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[375] marviz-tactical-grid"
+        />
+      )}
+
       {/* Subtle Tactical Vignette around screen edges for contrast */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-[380] bg-[radial-gradient(circle_at_center,transparent_58%,rgba(4,12,24,0.45)_100%)]"
+        className="pointer-events-none absolute inset-0 z-[380] bg-[radial-gradient(circle_at_center,transparent_58%,rgba(4,12,24,0.48)_100%)]"
       />
 
       {/* Empty Filter State */}
@@ -283,10 +305,31 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       )}
 
-      {/* Right-Side Floating Map Controls: Zoom +/- and Re-centre GPS */}
+      {/* Right-Side Floating Map Controls: Style Toggle, Zoom +/- and Re-centre GPS */}
       <div
         className={`absolute right-3 z-[450] flex flex-col gap-2 transition-all duration-200 ${controlsBottomClass}`}
       >
+        {onCycleBaseStyle && (
+          <button
+            type="button"
+            onClick={onCycleBaseStyle}
+            aria-label={`Switch map layout (current: ${activeStyleConfig.label})`}
+            title={`Map Mode: ${activeStyleConfig.label} — Tap to switch`}
+            className="w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center text-sky-300 hover:text-white hover:border-sky-400/60 active:scale-95 transition-all cursor-pointer"
+          >
+            {mapBaseStyle === 'tactical_terrain' ? (
+              <Mountain size={16} />
+            ) : mapBaseStyle === 'tactical_dark' ? (
+              <MapIcon size={16} />
+            ) : (
+              <Globe size={16} />
+            )}
+            <span className="text-[8px] font-bold uppercase tracking-tight leading-none mt-0.5 text-slate-200">
+              {activeStyleConfig.shortLabel}
+            </span>
+          </button>
+        )}
+
         <div className="marviz-glass rounded-2xl flex flex-col divide-y divide-slate-700/70 overflow-hidden">
           <button
             type="button"

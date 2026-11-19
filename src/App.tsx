@@ -102,6 +102,13 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('LOGIN');
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [isFinishingOutlet, setIsFinishingOutlet] = useState<boolean>(false);
+  const [isMapsQuotaExceeded, setIsMapsQuotaExceeded] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setIsMapsQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
 
   const [selectedOutlet, setSelectedOutlet] = useState<Outlet | null>(() => {
     try {
@@ -393,10 +400,28 @@ export default function App() {
 
   return (
     <div
-      className={`h-[100dvh] w-full overflow-hidden flex flex-col md:flex-row relative antialiased select-none transition-colors duration-300 ${
+      className={`h-[100dvh] w-full overflow-hidden flex flex-col relative antialiased select-none transition-colors duration-300 ${
         isDark ? 'bg-[#0B110F] text-[#ECFDF5]' : 'bg-[#F5F4EF] text-[#0F1B17]'
       }`}
     >
+      {isMapsQuotaExceeded && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm shrink-0">
+          <span>
+            Google Maps Platform quota reached. If you are the app owner, visit{' '}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
+            >
+              maps developer site
+            </a>{' '}
+            for instructions to update your account.
+          </span>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden relative">
       {/* Subtle Ambient Frosted Mesh Radiance */}
       <div
         className={`fixed -top-24 -left-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
@@ -643,8 +668,8 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation Bar (Hidden during active category audits, login, and Map view which owns its 4-tab bar) */}
-      {isAuthenticated && !isActiveAudit && activeTab !== 'map' && (
+      {/* Mobile Bottom Navigation Bar (5 Tabs: Home, Map, +, Today, Requests — hidden only during active audits & login) */}
+      {isAuthenticated && !isActiveAudit && (
         <MobileBottomNav
           activeTab={activeTab}
           onSelectTab={handleSelectTab}
@@ -663,6 +688,7 @@ export default function App() {
         liveMasterOutlets={liveMasterOutlets}
         planograms={planograms}
       />
+      </div>
     </div>
   );
 }

@@ -1,111 +1,191 @@
-import React from 'react';
-import { Navigation, Compass } from 'lucide-react';
-import { UserProfile } from '../../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, X, MapPin } from 'lucide-react';
+import { MapOutlet } from '../../data/data';
 
 interface MobileHeaderProps {
-  executive: UserProfile | null;
-  isLiveGps: boolean;
-  onCenterExecutive?: () => void;
+  outlets: MapOutlet[];
+  onSelectOutletFromSearch: (outlet: MapOutlet) => void;
 }
 
-function getInitials(name?: string): string {
-  if (!name) return 'SA';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
-}
-
-function formatCompactDate(): string {
-  return new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short'
-  });
+function getOutletStatusIndicator(outlet: MapOutlet): {
+  dotClass: string;
+  label: string;
+} {
+  if (outlet.visitStatus === 'completed') {
+    return { dotClass: 'bg-emerald-400', label: 'Completed' };
+  }
+  if (outlet.visitStatus === 'planned') {
+    return { dotClass: 'bg-[#1D8EFF]', label: 'Planned' };
+  }
+  return { dotClass: 'bg-slate-400', label: 'Unplanned' };
 }
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({
-  executive,
-  isLiveGps,
-  onCenterExecutive
+  outlets,
+  onSelectOutletFromSearch
 }) => {
-  const execName = executive?.name || 'Safwan Asif';
-  const initials = getInitials(execName);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (isSearchOpen) {
+      inputRef.current?.focus();
+    }
+  }, [isSearchOpen]);
+
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsSearchOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [isSearchOpen]);
+
+  const matchingOutlets = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return outlets.slice(0, 6);
+    }
+    return outlets
+      .filter(
+        (o) =>
+          o.name.toLowerCase().includes(q) ||
+          o.area.toLowerCase().includes(q) ||
+          o.id.toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  }, [outlets, query]);
+
+  const handleSelect = (outlet: MapOutlet) => {
+    onSelectOutletFromSearch(outlet);
+    setQuery('');
+    setIsSearchOpen(false);
+  };
 
   return (
-    <header
-      aria-label="Field Sales Header"
-      className="marviz-glass rounded-2xl px-3 py-2 flex items-center justify-between gap-2 text-[var(--map-text-primary)]"
-    >
-      {/* Left: Brand + Wordmark + Territory & Date */}
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div
-          className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#1685FF] to-[#0EA5E9] flex items-center justify-center shrink-0 shadow-[0_4px_14px_rgba(22,133,255,0.45)] border border-sky-300/30"
-          aria-hidden="true"
-        >
-          <Compass size={17} strokeWidth={2.2} className="text-white" />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="font-heading text-[15px] font-bold tracking-wide uppercase leading-none text-white truncate">
-              MT Field Sales
-            </span>
-            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/25 leading-none shrink-0">
-              Marviz AI
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-300/90 truncate">
-            <span className="font-medium text-sky-300/95">Territory: Doha</span>
-            <span className="text-slate-500" aria-hidden="true">·</span>
-            <span className="tabular-nums text-slate-300/80">{formatCompactDate()}</span>
-          </div>
-        </div>
-      </div>
+    <div ref={containerRef} className="relative">
+      <header
+        aria-label="Map View Header"
+        className="marviz-glass rounded-xl px-2.5 py-1 flex items-center justify-between gap-2 text-white border border-slate-700/40 bg-slate-900/60 backdrop-blur-md"
+      >
+        {/* Subtle Single-Line Title */}
+        <span className="font-heading text-[11px] font-bold tracking-[0.08em] uppercase leading-none text-slate-300/90 pl-0.5">
+          MAP VIEW
+        </span>
 
-      {/* Right: Executive Avatar + Name + GPS Status */}
-      <div className="flex items-center gap-2 shrink-0">
+        {/* Subtle Search Trigger Button */}
         <button
           type="button"
-          onClick={onCenterExecutive}
-          title={isLiveGps ? 'Live GPS Active — Tap to centre' : 'Doha Demo GPS — Tap to centre'}
-          aria-label="GPS status indicator"
-          className="min-h-[36px] min-w-[36px] px-2 rounded-xl bg-slate-900/65 hover:bg-slate-800/80 border border-slate-700/70 flex items-center gap-1.5 transition-colors cursor-pointer active:scale-95"
+          onClick={() => setIsSearchOpen((prev) => !prev)}
+          aria-label={isSearchOpen ? 'Close outlet search' : 'Search Doha outlets'}
+          aria-expanded={isSearchOpen}
+          className={`w-6 h-6 rounded-lg flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
+            isSearchOpen
+              ? 'bg-[#1685FF] text-white'
+              : 'text-slate-400 hover:text-white hover:bg-white/10'
+          }`}
         >
-          <span className="relative flex h-2 w-2 shrink-0">
-            <span
-              className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                isLiveGps ? 'bg-emerald-400 animate-ping' : 'bg-sky-400'
-              }`}
-            />
-            <span
-              className={`relative inline-flex rounded-full h-2 w-2 ${
-                isLiveGps ? 'bg-emerald-400' : 'bg-sky-400'
-              }`}
-            />
-          </span>
-          <Navigation size={11} className={isLiveGps ? 'text-emerald-400' : 'text-sky-300'} />
-          <span className="text-[10px] font-semibold tracking-wide text-slate-200 uppercase">
-            GPS
-          </span>
+          {isSearchOpen ? <X size={13} /> : <Search size={13} />}
         </button>
+      </header>
 
-        <div className="flex items-center gap-1.5 pl-1">
-          <div className="hidden sm:block text-right max-w-[110px]">
-            <p className="text-[11px] font-semibold text-white leading-tight truncate">
-              {execName}
-            </p>
-            <p className="text-[9px] font-medium text-slate-400 leading-tight truncate">
-              {executive?.repId || '#9'} · MT Exec
-            </p>
+      {/* Expandable Floating Outlet Quick-Search Drawer */}
+      {isSearchOpen && (
+        <div
+          role="dialog"
+          aria-label="Search Doha outlets"
+          className="mt-1.5 marviz-glass-strong rounded-2xl p-2 text-white shadow-2xl border border-sky-400/30 animate-fade-in"
+        >
+          <div className="flex items-center gap-2 px-2.5 h-10 rounded-xl bg-slate-950/70 border border-slate-700/75 focus-within:border-sky-400/70">
+            <Search size={15} className="text-sky-400 shrink-0" />
+            <input
+              ref={inputRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && matchingOutlets.length > 0) {
+                  handleSelect(matchingOutlets[0]);
+                }
+              }}
+              placeholder="Search outlet, area or ID..."
+              aria-label="Search outlet name, area, or ID"
+              className="w-full bg-transparent text-xs text-white placeholder:text-slate-400 focus:outline-none"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label="Clear search query"
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
-          <div
-            className="w-8 h-8 rounded-full bg-slate-800 border border-sky-400/45 flex items-center justify-center text-[11px] font-bold text-sky-200 shadow-inner shrink-0"
-            title={execName}
-            aria-label={`Sales executive ${execName}`}
-          >
-            {initials}
-          </div>
+
+          <ul className="mt-1.5 max-h-56 overflow-y-auto divide-y divide-slate-800/70 no-scrollbar">
+            {matchingOutlets.length === 0 ? (
+              <li className="py-3 px-2 text-center text-xs text-slate-400">
+                No matching Doha outlets
+              </li>
+            ) : (
+              matchingOutlets.map((outlet) => {
+                const status = getOutletStatusIndicator(outlet);
+                return (
+                  <li key={outlet.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelect(outlet)}
+                      className="w-full min-h-[44px] px-2.5 py-2 rounded-xl hover:bg-white/10 active:bg-white/15 flex items-center justify-between gap-2 text-left cursor-pointer transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${status.dotClass}`}
+                            aria-hidden="true"
+                          />
+                          <span className="text-xs font-semibold text-white truncate">
+                            {outlet.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10.5px] text-slate-400 mt-0.5 truncate pl-3.5">
+                          <MapPin size={10} className="text-sky-400 shrink-0" />
+                          <span className="truncate">{outlet.area}</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] font-mono text-slate-300 tabular-nums block">
+                          {outlet.id}
+                        </span>
+                        <span className="text-[9.5px] font-medium text-slate-400">
+                          {status.label}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
         </div>
-      </div>
-    </header>
+      )}
+    </div>
   );
 };

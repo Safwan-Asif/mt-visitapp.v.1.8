@@ -1,10 +1,16 @@
 import React from 'react';
 import { Layers, Route, X, Check } from 'lucide-react';
-import { PerformanceLayerId } from '../../data/data';
+import {
+  MAP_BASE_STYLES,
+  MapBaseStyle,
+  PerformanceLayerId
+} from '../../data/data';
 
 interface MapLayerSelectorProps {
   isOpen: boolean;
   onToggleOpen: () => void;
+  mapBaseStyle: MapBaseStyle;
+  onSelectBaseStyle: (style: MapBaseStyle) => void;
   showJourneyPlan: boolean;
   onToggleJourneyPlan: () => void;
   activeLayer: PerformanceLayerId;
@@ -28,6 +34,8 @@ const PERFORMANCE_LAYERS: Array<{
 export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
   isOpen,
   onToggleOpen,
+  mapBaseStyle,
+  onSelectBaseStyle,
   showJourneyPlan,
   onToggleJourneyPlan,
   activeLayer,
@@ -62,6 +70,38 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
             >
               <X size={15} />
             </button>
+          </div>
+
+          {/* Map Base Style Switcher */}
+          <div className="pt-2 pb-2 border-b border-slate-700/60">
+            <div className="px-1 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+              Map Layout
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Map base style"
+              className="grid grid-cols-3 gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-700/60"
+            >
+              {MAP_BASE_STYLES.map((style) => {
+                const selected = mapBaseStyle === style.id;
+                return (
+                  <button
+                    key={style.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => onSelectBaseStyle(style.id)}
+                    className={`min-h-[34px] px-1.5 rounded-lg text-[10.5px] font-semibold transition-all cursor-pointer ${
+                      selected
+                        ? 'bg-[#1685FF] text-white shadow-sm'
+                        : 'text-slate-300 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    {style.shortLabel}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Independent Journey Plan Route Overlay Toggle */}

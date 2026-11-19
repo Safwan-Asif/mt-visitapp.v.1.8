@@ -102,27 +102,11 @@ const ACH_BASE: Record<CategoryType, number> = {
   Pasta: 66
 };
 
-function getInitials(name?: string): string {
-  if (!name) return 'SA';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
-}
-
 function getTimeGreeting(): string {
   const hr = new Date().getHours();
   if (hr < 12) return 'Good morning';
   if (hr < 17) return 'Good afternoon';
   return 'Good evening';
-}
-
-function formatCurrentHeaderDate(): string {
-  return new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  });
 }
 
 function formatHourClock(t: number): string {
@@ -1058,16 +1042,12 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   return (
     <div className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden pb-28 md:pb-10 px-4 md:px-6 lg:px-8 pt-4 md:pt-6 animate-fade-in">
       <div className="max-w-7xl mx-auto space-y-4">
-        {/* 0A. HEADER: Greeting + Role + Current Date + Territory + Sync PJP + Avatar */}
+        {/* 0A. HEADER: Greeting + Sync PJP + Avatar */}
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-[var(--text-primary)] leading-tight truncate">
               {getTimeGreeting()}, {executive?.name || 'Safwan Asif'}
             </h2>
-            <p className="text-xs font-medium text-[var(--text-secondary)] mt-0.5 truncate tabular-nums">
-              {executive?.role || 'Sales Executive'} · {formatCurrentHeaderDate()} ·{' '}
-              {executive?.territory || 'Qatar Modern Trade'}
-            </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {onSyncPjp && (
@@ -1084,14 +1064,6 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                 </span>
               </button>
             )}
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shadow-sm shrink-0 ${
-                isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-              }`}
-              aria-label={executive?.name || 'Executive Avatar'}
-            >
-              {getInitials(executive?.name)}
-            </div>
           </div>
         </header>
 

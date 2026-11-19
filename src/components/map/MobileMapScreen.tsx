@@ -4,7 +4,10 @@ import { UserProfile } from '../../types';
 import { useTheme } from '../../ThemeContext';
 import {
   DEFAULT_EXECUTIVE_LOCATION,
+  DOHA_ARTERIAL_ROUTE_FALLBACK,
   ExecutiveLocation,
+  MAP_BASE_STYLES,
+  MapBaseStyle,
   MapFilterChipId,
   MapOutlet,
   MOCK_DOHA_OUTLETS,
@@ -12,6 +15,7 @@ import {
   QuickFilterId,
   deriveHealthBreakdown,
   deriveJourneyMetrics,
+  fetchDrivingRoadRoute,
   getNextStopDemoEstimate,
   mockOutletDataSource
 } from '../../data/data';
@@ -21,7 +25,6 @@ import { MapFilterChips } from './MapFilterChips';
 import { MapLayerSelector } from './MapLayerSelector';
 import { MapView } from './MapView';
 import { BottomSheetState, OutletBottomSheet } from './OutletBottomSheet';
-import { MapMobileTabId, MobileBottomNavigation } from './MobileBottomNavigation';
 import { DesktopTopBar } from './DesktopTopBar';
 import { DesktopLeftRail } from './DesktopLeftRail';
 import { DesktopRightColumn } from './DesktopRightColumn';
@@ -46,9 +49,16 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
 
   const [outlets, setOutlets] = useState<MapOutlet[]>(MOCK_DOHA_OUTLETS);
   const [isLoadingOutlets, setIsLoadingOutlets] = useState<boolean>(true);
+  const [mapBaseStyle, setMapBaseStyle] = useState<MapBaseStyle>('satellite');
   const [activeLayer, setActiveLayer] = useState<PerformanceLayerId>('visit_status');
   const [showJourneyPlan, setShowJourneyPlan] = useState<boolean>(true);
   const [isLayersOpen, setIsLayersOpen] = useState<boolean>(false);
+  const [roadRouteCoords, setRoadRouteCoords] = useState<[number, number][]>(
+    DOHA_ARTERIAL_ROUTE_FALLBACK
+  );
+  const [routeSource, setRouteSource] = useState<'osrm' | 'arterial_fallback'>(
+    'arterial_fallback'
+  );
 
   // Mobile segmented chip filter & Desktop 2x2 Quick Filters
   const [activeFilter, setActiveFilter] = useState<MapFilterChipId>('all');
@@ -90,6 +100,28 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
       active = false;
     };
   }, []);
+
+  // Fetch real Doha street-following driving route across today's 8 scheduled stops
+  useEffect(() => {
+    const plannedStops = outlets
+      .filter((o) => o.scheduledForToday && o.visitOrder !== null)
+      .sort((a, b) => (a.visitOrder ?? 99) - (b.visitOrder ?? 99))
+      .map((o): [number, number] => [o.latitude, o.longitude]);
+
+    if (plannedStops.length < 2) return;
+
+    let active = true;
+    fetchDrivingRoadRoute(plannedStops).then((result) => {
+      if (!active) return;
+      if (result.coordinates.length >= 2) {
+        setRoadRouteCoords(result.coordinates);
+        setRouteSource(result.source);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [outlets]);
 
   // Derive Journey HUD totals & Outlet Health breakdown directly from outlet records
   const journeyMetrics = useMemo(() => deriveJourneyMetrics(outlets), [outlets]);
@@ -160,6 +192,14 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     setIsLayersOpen(false);
   };
 
+  const handleSelectOutletFromSearch = (outlet: MapOutlet) => {
+    setActiveQuickFilters([]);
+    setActiveFilter('all');
+    setSelectedOutletId(outlet.id);
+    setSheetState('peek');
+    setIsLayersOpen(false);
+  };
+
   const handleCloseSelection = () => {
     setSheetState('closed');
     setSelectedOutletId(null);
@@ -182,6 +222,14 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     setActiveQuickFilters((prev) =>
       prev.includes(filterId) ? prev.filter((f) => f !== filterId) : [...prev, filterId]
     );
+  };
+
+  const handleCycleBaseStyle = () => {
+    setMapBaseStyle((prev) => {
+      const idx = MAP_BASE_STYLES.findIndex((s) => s.id === prev);
+      const next = MAP_BASE_STYLES[(idx + 1) % MAP_BASE_STYLES.length];
+      return next.id;
+    });
   };
 
   const handleRecenterExecutive = () => {
@@ -211,41 +259,23 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     }
   };
 
-  const handleBottomTabSelect = (tab: MapMobileTabId) => {
-    if (tab === 'map') {
-      setIsSettingsOpen(false);
-      return;
-    }
-    if (tab === 'analytics') {
-      onNavigateTab('home');
-      return;
-    }
-    if (tab === 'activity') {
-      onNavigateTab('pjp');
-      return;
-    }
-    if (tab === 'settings') {
-      setIsSettingsOpen((prev) => !prev);
-      setIsLayersOpen(false);
-    }
-  };
-
-  // Lift mobile lower-left Layers button cleanly above the bottom sheet
+  // Lift mobile lower-left Layers button cleanly above the bottom sheet and native 5-tab MobileBottomNav
   const layersBottomOffsetClass =
     sheetState === 'expanded'
-      ? 'bottom-[calc(360px+env(safe-area-inset-bottom,0px))]'
+      ? 'bottom-[calc(422px+env(safe-area-inset-bottom,0px))]'
       : sheetState === 'peek'
-      ? 'bottom-[calc(200px+env(safe-area-inset-bottom,0px))]'
-      : 'bottom-[calc(76px+env(safe-area-inset-bottom,0px))]';
+      ? 'bottom-[calc(216px+env(safe-area-inset-bottom,0px))]'
+      : 'bottom-[calc(88px+env(safe-area-inset-bottom,0px))]';
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#071421] select-none">
       {/* DESKTOP COMMAND CENTER HEADER BAR (md+) */}
       <DesktopTopBar
-        executive={executive}
         metrics={journeyMetrics}
+        outlets={outlets}
         isLiveGps={executiveLocation.isLiveGps}
         onCenterExecutive={handleRecenterExecutive}
+        onSelectOutletFromSearch={handleSelectOutletFromSearch}
       />
 
       {/* MAIN MAP WORKSPACE */}
@@ -253,7 +283,9 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         {/* Full-Viewport Satellite Map */}
         <MapView
           outlets={filteredOutlets}
-          allOutlets={outlets}
+          roadRouteCoords={roadRouteCoords}
+          routeSource={routeSource}
+          mapBaseStyle={mapBaseStyle}
           activeLayer={activeLayer}
           showJourneyPlan={showJourneyPlan}
           selectedOutlet={selectedOutlet}
@@ -263,6 +295,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           onSelectOutlet={handleSelectOutlet}
           onMapBackgroundTap={handleMapBackgroundTap}
           onRecenterExecutive={handleRecenterExecutive}
+          onCycleBaseStyle={handleCycleBaseStyle}
           onResetFilter={() => {
             setActiveQuickFilters([]);
             setActiveFilter('all');
@@ -281,6 +314,8 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         {/* DESKTOP LEFT FLOATING RAIL: MAP LAYERS + QUICK FILTERS + OUTLET LEGEND */}
         <div className="hidden md:block absolute left-3 top-3 bottom-3 z-[455] pointer-events-none">
           <DesktopLeftRail
+            mapBaseStyle={mapBaseStyle}
+            onSelectBaseStyle={setMapBaseStyle}
             showJourneyPlan={showJourneyPlan}
             onToggleJourneyPlan={() => setShowJourneyPlan((v) => !v)}
             activeLayer={activeLayer}
@@ -311,13 +346,12 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           />
         </div>
 
-        {/* MOBILE FLOATING TOP STACK (< md): Header + Journey HUD + Filter Chips */}
+        {/* MOBILE FLOATING TOP STACK (< md): Slim Header + Journey HUD + Filter Chips */}
         <div className="md:hidden absolute inset-x-0 top-0 z-[450] pt-[max(0.5rem,env(safe-area-inset-top))] px-2.5 sm:px-4 pointer-events-none">
           <div className="max-w-lg mx-auto space-y-1.5 pointer-events-auto">
             <MobileHeader
-              executive={executive}
-              isLiveGps={executiveLocation.isLiveGps}
-              onCenterExecutive={handleRecenterExecutive}
+              outlets={outlets}
+              onSelectOutletFromSearch={handleSelectOutletFromSearch}
             />
             <JourneyProgressHUD metrics={journeyMetrics} />
             <MapFilterChips
@@ -333,6 +367,8 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           <MapLayerSelector
             isOpen={isLayersOpen}
             onToggleOpen={() => setIsLayersOpen((prev) => !prev)}
+            mapBaseStyle={mapBaseStyle}
+            onSelectBaseStyle={setMapBaseStyle}
             showJourneyPlan={showJourneyPlan}
             onToggleJourneyPlan={() => setShowJourneyPlan((prev) => !prev)}
             activeLayer={activeLayer}
@@ -423,12 +459,6 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
             </div>
           </div>
         )}
-
-        {/* MOBILE FIXED 4-TAB BOTTOM NAVIGATION (< md) */}
-        <MobileBottomNavigation
-          activeTab={isSettingsOpen ? 'settings' : 'map'}
-          onSelectTab={handleBottomTabSelect}
-        />
       </div>
     </div>
   );
