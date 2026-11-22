@@ -869,6 +869,7 @@ export function createApiApp(): express.Express {
       }
 
       const googleMapsKey = (
+        process.env.GOOGLE_MAPS_SERVER_API_KEY ||
         process.env.GOOGLE_MAPS_API_KEY ||
         process.env.VITE_GOOGLE_MAPS_API_KEY ||
         process.env.MAPS_API_KEY ||
@@ -1035,6 +1036,7 @@ export function createApiApp(): express.Express {
   app.post('/api/pjp/optimize-route', async (req, res) => {
     try {
       const apiKey = (
+        process.env.GOOGLE_MAPS_SERVER_API_KEY ||
         process.env.GOOGLE_MAPS_API_KEY ||
         process.env.VITE_GOOGLE_MAPS_API_KEY ||
         process.env.MAPS_API_KEY ||
