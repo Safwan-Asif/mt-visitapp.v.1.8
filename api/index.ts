@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { createApiApp } from '../serverApp';
+import { createApiApp } from '../serverApp.js';
 
 const app = createApiApp();
 

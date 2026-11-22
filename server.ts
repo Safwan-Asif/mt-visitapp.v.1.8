@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
-import { createApiApp } from './serverApp';
+import { createApiApp } from './serverApp.js';
 
 const app = createApiApp();
 // AI Studio dev server runs on port 3000 (container nginx proxies port 8080 to 3000)

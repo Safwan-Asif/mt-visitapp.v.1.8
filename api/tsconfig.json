@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "rootDir": "..",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
