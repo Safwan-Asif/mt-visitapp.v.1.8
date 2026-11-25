@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, Sun, Moon, Info, Route, LogOut } from 'lucide-react';
 import { CategoryAuditRecord, Outlet, UserProfile } from '../../types';
 import { useTheme } from '../../ThemeContext';
@@ -88,7 +88,6 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     DEFAULT_EXECUTIVE_LOCATION
   );
   const [centerRequestNonce, setCenterRequestNonce] = useState<number>(0);
-  const hasAutoCenteredLiveGpsRef = useRef<boolean>(false);
 
   const applyLiveCoords = useCallback(
     (pos: GeolocationPosition, recenterMap: boolean) => {
@@ -104,11 +103,8 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         accuracyMeters: Number.isFinite(accuracy) ? Math.round(accuracy) : undefined
       });
 
-      if (recenterMap || (!hasAutoCenteredLiveGpsRef.current && typeof window !== 'undefined' && window.innerWidth < 768)) {
-        hasAutoCenteredLiveGpsRef.current = true;
+      if (recenterMap) {
         setCenterRequestNonce((n) => n + 1);
-      } else if (!hasAutoCenteredLiveGpsRef.current) {
-        hasAutoCenteredLiveGpsRef.current = true;
       }
     },
     []
@@ -231,33 +227,56 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     }
   }, [outlets, selectedOutletId]);
 
-  // Fetch real Doha street-following driving route across today's scheduled stops
-  useEffect(() => {
-    const plannedStops = outlets
-      .filter((o) => o.scheduledForToday && o.visitOrder !== null)
-      .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))
-      .map((o): [number, number] => [o.latitude, o.longitude]);
+  const plannedStops = useMemo(
+    () =>
+      outlets
+        .filter((o) => o.scheduledForToday && o.visitOrder !== null)
+        .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))
+        .map((o): [number, number] => [o.latitude, o.longitude]),
+    [outlets]
+  );
 
-    if (plannedStops.length < 2) {
-      setRoadRouteCoords(plannedStops);
+  const plannedStopsKey = useMemo(
+    () => plannedStops.map(([lat, lng]) => `${lat.toFixed(5)},${lng.toFixed(5)}`).join('|'),
+    [plannedStops]
+  );
+
+  // Quantize GPS jitter (~110m) so stationary GPS drift does not re-fetch /api/map/route continuously
+  const liveOriginBucketKey = executiveLocation.isLiveGps
+    ? `${executiveLocation.latitude.toFixed(3)},${executiveLocation.longitude.toFixed(3)}`
+    : '';
+
+  // Fetch driving route starting at live GPS location (when available) and ending at the last scheduled stop
+  useEffect(() => {
+    const waypoints: [number, number][] =
+      executiveLocation.isLiveGps && plannedStops.length > 0
+        ? [[executiveLocation.latitude, executiveLocation.longitude], ...plannedStops]
+        : plannedStops;
+
+    if (waypoints.length < 2) {
+      setRoadRouteCoords(waypoints);
       return;
     }
 
     let active = true;
-    fetchDrivingRoadRoute(plannedStops).then((result) => {
+    fetchDrivingRoadRoute(waypoints).then((result) => {
       if (!active) return;
       if (result.source === 'osrm' && result.coordinates.length >= 2) {
-        setRoadRouteCoords(result.coordinates);
+        const coords =
+          executiveLocation.isLiveGps
+            ? ([[executiveLocation.latitude, executiveLocation.longitude], ...result.coordinates] as [number, number][])
+            : result.coordinates;
+        setRoadRouteCoords(coords);
         setRouteSource('osrm');
       } else {
-        setRoadRouteCoords(plannedStops);
+        setRoadRouteCoords(waypoints);
         setRouteSource('arterial_fallback');
       }
     });
     return () => {
       active = false;
     };
-  }, [outlets]);
+  }, [plannedStopsKey, liveOriginBucketKey]);
 
   // Derive Journey HUD totals & Outlet Health breakdown directly from outlet records
   const journeyMetrics = useMemo(() => deriveJourneyMetrics(outlets), [outlets]);

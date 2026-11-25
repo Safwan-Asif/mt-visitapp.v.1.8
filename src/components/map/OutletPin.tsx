@@ -191,25 +191,21 @@ export function createOutletPinIcon(
   isSelected: boolean
 ): L.DivIcon {
   const spec = resolveOutletPinVisual(outlet, activeLayer);
-  const scale = isSelected ? 1.15 : 1;
+  const scale = isSelected ? 1.14 : 1;
   const gradId = `pin3d-${outlet.id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-
-  const haloHtml = isSelected
-    ? `<span class="marviz-selected-halo" style="position:absolute;left:50%;top:43%;width:58px;height:58px;border-radius:9999px;border:2.5px solid #38BDF8;background:rgba(56,189,248,0.25);box-shadow:0 0 24px rgba(56,189,248,0.95);pointer-events:none;"></span>`
-    : '';
 
   const orderBadgeHtml =
     outlet.scheduledForToday && outlet.visitOrder !== null
-      ? `<span style="position:absolute;top:0px;left:0px;min-width:17px;height:17px;padding:0 3px;border-radius:9999px;background:#071421;border:1.5px solid #38BDF8;color:#E0F2FE;font-size:10px;font-weight:800;font-family:'Barlow Condensed',sans-serif;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 2px 6px rgba(0,0,0,0.75);">${outlet.visitOrder}</span>`
+      ? `<span style="position:absolute;top:-3px;left:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:9999px;background:#071421;border:1.5px solid #38BDF8;color:#E0F2FE;font-size:9.5px;font-weight:800;font-family:'Barlow Condensed',sans-serif;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 2px 5px rgba(0,0,0,0.7);">${outlet.visitOrder}</span>`
       : '';
 
   const secondaryDotHtml = spec.secondaryAlertHex
-    ? `<span style="position:absolute;top:1px;right:1px;width:12px;height:12px;border-radius:9999px;background:${spec.secondaryAlertHex};border:2px solid #071421;box-shadow:0 2px 6px rgba(0,0,0,0.75);"></span>`
+    ? `<span style="position:absolute;top:-1px;right:-2px;width:11px;height:11px;border-radius:9999px;background:${spec.secondaryAlertHex};border:2px solid #071421;box-shadow:0 2px 5px rgba(0,0,0,0.7);"></span>`
     : '';
 
-  const storeSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M3 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0"/><path d="M5 12v8h14v-8"/></svg>`;
-  const checkSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-  const alertHtml = `<span style="font-size:15px;font-weight:900;color:#FFFFFF;line-height:1;font-family:'Inter',sans-serif;">!</span>`;
+  const storeSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M3 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0"/><path d="M5 12v8h14v-8"/></svg>`;
+  const checkSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+  const alertHtml = `<span style="font-size:14px;font-weight:900;color:#FFFFFF;line-height:1;font-family:'Inter',sans-serif;">!</span>`;
 
   const innerSymbolHtml =
     spec.centerMode === 'check'
@@ -221,47 +217,42 @@ export function createOutletPinIcon(
       : storeSvg;
 
   const html = `
-    <div style="position:relative;width:52px;height:58px;display:flex;align-items:center;justify-content:center;cursor:pointer;">
-      ${haloHtml}
-      <div style="position:relative;width:40px;height:48px;transform:scale(${scale});transition:transform 160ms ease;filter:drop-shadow(0 6px 12px ${spec.primaryGlow}) drop-shadow(0 2px 4px rgba(0,0,0,0.65));">
-        <svg width="40" height="48" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="${gradId}" x1="8" y1="2" x2="32" y2="44" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="${spec.highlightHex}" />
-              <stop offset="52%" stop-color="${spec.primaryHex}" />
-              <stop offset="100%" stop-color="${spec.shadeHex}" />
-            </linearGradient>
-          </defs>
-          <path d="M20 2C10.0589 2 2 10.0589 2 20C2 32.6 20 46 20 46C20 46 38 32.6 38 20C38 10.0589 29.9411 2 20 2Z" fill="url(#${gradId})" stroke="${isSelected ? '#E0F2FE' : '#061221'}" stroke-width="${isSelected ? '2.5' : '2'}"/>
-          <path d="M10 11C12.8 6.8 16.5 5 20 5C23.5 5 27.2 6.8 30 11" stroke="rgba(255,255,255,0.45)" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-        <div style="position:absolute;top:7px;left:50%;transform:translateX(-50%);width:24px;height:24px;border-radius:9999px;background:rgba(6,16,30,0.34);border:1px solid rgba(255,255,255,0.22);display:flex;align-items:center;justify-content:center;">
-          ${innerSymbolHtml}
-        </div>
-        ${orderBadgeHtml}
-        ${secondaryDotHtml}
+    <div style="position:relative;width:40px;height:48px;cursor:pointer;transform:scale(${scale});transform-origin:20px 46px;transition:transform 150ms ease;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.58));">
+      <svg width="40" height="48" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="${gradId}" x1="8" y1="2" x2="32" y2="44" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="${spec.highlightHex}" />
+            <stop offset="52%" stop-color="${spec.primaryHex}" />
+            <stop offset="100%" stop-color="${spec.shadeHex}" />
+          </linearGradient>
+        </defs>
+        <path d="M20 2C10.0589 2 2 10.0589 2 20C2 32.6 20 46 20 46C20 46 38 32.6 38 20C38 10.0589 29.9411 2 20 2Z" fill="url(#${gradId})" stroke="${isSelected ? '#FFFFFF' : '#061221'}" stroke-width="${isSelected ? '2.8' : '2'}"/>
+        <path d="M10 11C12.8 6.8 16.5 5 20 5C23.5 5 27.2 6.8 30 11" stroke="rgba(255,255,255,0.42)" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <div style="position:absolute;top:7px;left:50%;transform:translateX(-50%);width:22px;height:22px;border-radius:9999px;background:rgba(6,16,30,0.34);border:1px solid rgba(255,255,255,0.22);display:flex;align-items:center;justify-content:center;">
+        ${innerSymbolHtml}
       </div>
+      ${orderBadgeHtml}
+      ${secondaryDotHtml}
     </div>
   `;
 
   return L.divIcon({
     className: 'marviz-pin-icon',
     html,
-    iconSize: [52, 58],
-    iconAnchor: [26, 50]
+    iconSize: [40, 48],
+    iconAnchor: [20, 46]
   });
 }
 
 /**
- * Pulsing cyan-blue executive directional navigation arrowhead beacon.
+ * Clean, compact executive live-position indicator without oversized light-blue halos.
  */
 export function createExecutiveBeaconIcon(): L.DivIcon {
   const html = `
-    <div style="position:relative;width:58px;height:58px;pointer-events:none;">
-      <span class="marviz-beacon-ring" style="position:absolute;left:50%;top:50%;width:34px;height:34px;border-radius:9999px;background:rgba(56,189,248,0.34);border:1.5px solid rgba(56,189,248,0.85);"></span>
-      <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:40px;height:40px;border-radius:9999px;background:rgba(22,133,255,0.24);border:1px solid rgba(125,211,252,0.5);box-shadow:0 0 20px rgba(56,189,248,0.7);"></span>
-      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:9999px;background:rgba(8,26,48,0.94);border:2px solid #7DD3FC;display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px rgba(56,189,248,0.95);">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="#38BDF8" stroke="#FFFFFF" stroke-width="1.8" stroke-linejoin="round">
+    <div style="position:relative;width:28px;height:28px;pointer-events:none;display:flex;align-items:center;justify-content:center;">
+      <div style="width:24px;height:24px;border-radius:9999px;background:#0284C7;border:2.5px solid #FFFFFF;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.55);">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round">
           <polygon points="12 3 20 20 12 16 4 20 12 3"/>
         </svg>
       </div>
@@ -271,8 +262,8 @@ export function createExecutiveBeaconIcon(): L.DivIcon {
   return L.divIcon({
     className: 'marviz-pin-icon',
     html,
-    iconSize: [58, 58],
-    iconAnchor: [29, 29]
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
   });
 }
 

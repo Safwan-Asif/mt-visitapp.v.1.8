@@ -4,7 +4,6 @@ import {
   TileLayer,
   Polyline,
   Marker,
-  Circle,
   useMap,
   useMapEvents
 } from 'react-leaflet';
@@ -114,14 +113,17 @@ const MapController: React.FC<MapControllerProps> = ({
     );
   }, [selectedOutlet?.id, sheetState, map]);
 
-  // Explicit or initial live GPS re-centre on executive location
+  const executiveLocationRef = useRef(executiveLocation);
+  useEffect(() => {
+    executiveLocationRef.current = executiveLocation;
+  }, [executiveLocation]);
+
+  // Only move camera when the user explicitly taps re-centre, preserving their zoom level
   useEffect(() => {
     if (centerRequestNonce === 0) return;
-    const targetZoom = executiveLocation.isLiveGps ? 15 : 13;
-    map.flyTo([executiveLocation.latitude, executiveLocation.longitude], targetZoom, {
-      duration: 0.55
-    });
-  }, [centerRequestNonce, executiveLocation.latitude, executiveLocation.longitude, executiveLocation.isLiveGps, map]);
+    const loc = executiveLocationRef.current;
+    map.panTo([loc.latitude, loc.longitude], { animate: true, duration: 0.45 });
+  }, [centerRequestNonce, map]);
 
   return null;
 };
@@ -189,7 +191,7 @@ export const MapView: React.FC<MapViewProps> = ({
       <MapContainer
         center={DOHA_CENTER}
         zoom={12}
-        minZoom={10}
+        minZoom={3}
         maxZoom={18}
         zoomControl={false}
         attributionControl={true}
@@ -250,21 +252,7 @@ export const MapView: React.FC<MapViewProps> = ({
           />
         ))}
 
-        {/* Executive Pulsing Live Location Indicator + Accuracy Ring */}
-        {executiveLocation.isLiveGps && (
-          <Circle
-            center={[executiveLocation.latitude, executiveLocation.longitude]}
-            radius={Math.min(Math.max(executiveLocation.accuracyMeters || 60, 25), 500)}
-            pathOptions={{
-              color: '#38BDF8',
-              weight: 1.5,
-              opacity: 0.45,
-              fillColor: '#0EA5E9',
-              fillOpacity: 0.12
-            }}
-            interactive={false}
-          />
-        )}
+        {/* Executive Live Location Indicator */}
         <Marker
           position={[executiveLocation.latitude, executiveLocation.longitude]}
           icon={executiveBeaconIcon}
