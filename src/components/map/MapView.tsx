@@ -4,6 +4,7 @@ import {
   TileLayer,
   Polyline,
   Marker,
+  Circle,
   useMap,
   useMapEvents
 } from 'react-leaflet';
@@ -113,13 +114,14 @@ const MapController: React.FC<MapControllerProps> = ({
     );
   }, [selectedOutlet?.id, sheetState, map]);
 
-  // Explicit user re-centre on executive location
+  // Explicit or initial live GPS re-centre on executive location
   useEffect(() => {
     if (centerRequestNonce === 0) return;
-    map.flyTo([executiveLocation.latitude, executiveLocation.longitude], 13, {
-      duration: 0.5
+    const targetZoom = executiveLocation.isLiveGps ? 15 : 13;
+    map.flyTo([executiveLocation.latitude, executiveLocation.longitude], targetZoom, {
+      duration: 0.55
     });
-  }, [centerRequestNonce, executiveLocation.latitude, executiveLocation.longitude, map]);
+  }, [centerRequestNonce, executiveLocation.latitude, executiveLocation.longitude, executiveLocation.isLiveGps, map]);
 
   return null;
 };
@@ -248,7 +250,21 @@ export const MapView: React.FC<MapViewProps> = ({
           />
         ))}
 
-        {/* Executive Pulsing Location Indicator */}
+        {/* Executive Pulsing Live Location Indicator + Accuracy Ring */}
+        {executiveLocation.isLiveGps && (
+          <Circle
+            center={[executiveLocation.latitude, executiveLocation.longitude]}
+            radius={Math.min(Math.max(executiveLocation.accuracyMeters || 60, 25), 500)}
+            pathOptions={{
+              color: '#38BDF8',
+              weight: 1.5,
+              opacity: 0.45,
+              fillColor: '#0EA5E9',
+              fillOpacity: 0.12
+            }}
+            interactive={false}
+          />
+        )}
         <Marker
           position={[executiveLocation.latitude, executiveLocation.longitude]}
           icon={executiveBeaconIcon}

@@ -254,16 +254,16 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           className="min-h-[38px] px-2.5 rounded-xl bg-slate-900/70 hover:bg-slate-800/85 border border-sky-400/30 flex items-center gap-2 cursor-pointer transition-colors"
         >
           <div className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
-            <span className="w-[3px] h-1.5 rounded-xs bg-emerald-400" />
-            <span className="w-[3px] h-2.5 rounded-xs bg-emerald-400" />
-            <span className="w-[3px] h-3.5 rounded-xs bg-emerald-400" />
+            <span className={`w-[3px] h-1.5 rounded-xs ${isLiveGps ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className={`w-[3px] h-2.5 rounded-xs ${isLiveGps ? 'bg-emerald-400' : 'bg-amber-400/70'}`} />
+            <span className={`w-[3px] h-3.5 rounded-xs ${isLiveGps ? 'bg-emerald-400' : 'bg-slate-600'}`} />
           </div>
           <div className="text-left leading-none">
             <div className="text-[10px] font-bold text-white uppercase tracking-wide">
               GPS
             </div>
-            <div className="text-[9px] font-semibold text-emerald-400 mt-0.5">
-              {isLiveGps ? 'Live' : 'Active'}
+            <div className={`text-[9px] font-semibold mt-0.5 ${isLiveGps ? 'text-emerald-400' : 'text-amber-300'}`}>
+              {isLiveGps ? 'Live' : 'Demo'}
             </div>
           </div>
           <Navigation size={14} className="text-sky-400 fill-sky-400 ml-0.5" />

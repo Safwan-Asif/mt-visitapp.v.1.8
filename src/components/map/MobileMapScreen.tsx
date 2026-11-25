@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Sun, Moon, Info, Route, LogOut } from 'lucide-react';
 import { CategoryAuditRecord, Outlet, UserProfile } from '../../types';
 import { useTheme } from '../../ThemeContext';
@@ -88,6 +88,95 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     DEFAULT_EXECUTIVE_LOCATION
   );
   const [centerRequestNonce, setCenterRequestNonce] = useState<number>(0);
+  const hasAutoCenteredLiveGpsRef = useRef<boolean>(false);
+
+  const applyLiveCoords = useCallback(
+    (pos: GeolocationPosition, recenterMap: boolean) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+      if (latitude === 0 && longitude === 0) return;
+
+      setExecutiveLocation({
+        latitude,
+        longitude,
+        label: 'Live GPS Position',
+        isLiveGps: true,
+        accuracyMeters: Number.isFinite(accuracy) ? Math.round(accuracy) : undefined
+      });
+
+      if (recenterMap || (!hasAutoCenteredLiveGpsRef.current && typeof window !== 'undefined' && window.innerWidth < 768)) {
+        hasAutoCenteredLiveGpsRef.current = true;
+        setCenterRequestNonce((n) => n + 1);
+      } else if (!hasAutoCenteredLiveGpsRef.current) {
+        hasAutoCenteredLiveGpsRef.current = true;
+      }
+    },
+    []
+  );
+
+  // Automatically track the device's live GPS location after login / map mount
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    let active = true;
+    let watchId: number | null = null;
+
+    const handlePos = (pos: GeolocationPosition) => {
+      if (!active) return;
+      applyLiveCoords(pos, false);
+    };
+
+    const startWatch = (highAccuracy: boolean) => {
+      if (!active || watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(
+        handlePos,
+        (err) => {
+          // If high-accuracy watch fails/times out indoors, downgrade once to network/Wi-Fi location
+          if (active && highAccuracy && err.code !== err.PERMISSION_DENIED && watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+            startWatch(false);
+          }
+        },
+        {
+          enableHighAccuracy: highAccuracy,
+          maximumAge: highAccuracy ? 15000 : 60000,
+          timeout: 12000
+        }
+      );
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (!active) return;
+        applyLiveCoords(pos, false);
+        startWatch(true);
+      },
+      (err) => {
+        if (!active) return;
+        if (err.code !== err.PERMISSION_DENIED) {
+          navigator.geolocation.getCurrentPosition(
+            (fallbackPos) => {
+              if (!active) return;
+              applyLiveCoords(fallbackPos, false);
+              startWatch(false);
+            },
+            () => {
+              startWatch(false);
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+          );
+        }
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 }
+    );
+
+    return () => {
+      active = false;
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [applyLiveCoords]);
 
   // Sync external livePjpDataset updates cleanly
   useEffect(() => {
@@ -283,23 +372,24 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          const { latitude, longitude } = pos.coords;
-          const insideDohaBounds =
-            latitude >= 24.4 && latitude <= 26.3 && longitude >= 50.6 && longitude <= 51.8;
-          if (insideDohaBounds) {
-            setExecutiveLocation({
-              latitude,
-              longitude,
-              label: 'Live GPS Position',
-              isLiveGps: true
-            });
+          applyLiveCoords(pos, true);
+        },
+        (err) => {
+          if (err.code !== err.PERMISSION_DENIED) {
+            navigator.geolocation.getCurrentPosition(
+              (fallbackPos) => {
+                applyLiveCoords(fallbackPos, true);
+              },
+              () => {
+                setCenterRequestNonce((n) => n + 1);
+              },
+              { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+            );
+          } else {
+            setCenterRequestNonce((n) => n + 1);
           }
-          setCenterRequestNonce((n) => n + 1);
         },
-        () => {
-          setCenterRequestNonce((n) => n + 1);
-        },
-        { enableHighAccuracy: true, timeout: 3500 }
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 10000 }
       );
     } else {
       setCenterRequestNonce((n) => n + 1);
@@ -489,7 +579,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 p-2.5 flex items-start gap-2 text-[11px] text-slate-300 leading-snug">
                 <Info size={14} className="text-sky-400 shrink-0 mt-0.5" />
                 <span>
-                  Demonstration Doha outlet positions and illustrative route line shown until live GPS sync is connected. Satellite imagery &copy; Esri.
+                  Live PJP outlet positions from Customer Master paired with browser GPS location tracking. Satellite imagery &copy; Esri.
                 </span>
               </div>
 

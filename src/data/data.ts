@@ -123,6 +123,7 @@ export interface ExecutiveLocation {
   longitude: number;
   label: string;
   isLiveGps: boolean;
+  accuracyMeters?: number;
 }
 
 export const SOS_TARGET_PCT = 50;
