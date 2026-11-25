@@ -100,8 +100,8 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
       {/* 1. Wordmark + Compact Date */}
       <div className="flex items-center gap-3.5 min-w-0 shrink-0">
         <div className="leading-none select-none">
-          <div className="font-heading text-[23px] font-extrabold italic tracking-tight text-white leading-none">
-            MAP
+          <div className="font-heading text-[21px] font-extrabold italic tracking-tight text-white leading-none">
+            GEOINTEL
           </div>
           <div className="text-[8.5px] font-bold tracking-[0.16em] text-slate-300 uppercase mt-0.5">
             HEADS UP DISPLAY

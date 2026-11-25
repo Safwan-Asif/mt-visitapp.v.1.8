@@ -51,6 +51,9 @@ function getHealthBadge(outlet: MapOutlet): {
   label: string;
   classes: string;
 } | null {
+  if (outlet.hasAuditHistory === false) {
+    return null;
+  }
   if (outlet.healthStatus === 'critical') {
     return {
       label: 'CRITICAL',
@@ -188,7 +191,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
         {isExpanded && (
           <div className="px-4 pb-3.5 pt-0.5 space-y-2.5 animate-fade-in">
             {/* Dedicated Last Visit Recency & Baseline Banner Card */}
-            {lastVisitRecency && (
+            {lastVisitRecency ? (
               <div className="rounded-xl bg-slate-900/80 border border-slate-700/65 px-3 py-2 flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="w-7 h-7 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
@@ -220,6 +223,20 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
                   </div>
                 </div>
               </div>
+            ) : (
+              <div className="rounded-xl bg-slate-900/70 border border-slate-700/65 px-3 py-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Calendar size={14} className="text-slate-400 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-300 truncate">
+                    No prior Sheet 2 audit synced yet
+                  </span>
+                </div>
+                {outlet.sapCode && (
+                  <span className="text-[10px] font-mono text-sky-300 tabular-nums shrink-0">
+                    SAP {outlet.sapCode}
+                  </span>
+                )}
+              </div>
             )}
 
             <OutletKPIRow outlet={outlet} compact />
@@ -229,7 +246,9 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
               <AlertCircle
                 size={14}
                 className={
-                  outlet.healthStatus === 'critical'
+                  outlet.hasAuditHistory === false
+                    ? 'text-sky-400 shrink-0'
+                    : outlet.healthStatus === 'critical'
                     ? 'text-red-400 shrink-0'
                     : outlet.healthStatus === 'attention'
                     ? 'text-amber-400 shrink-0'

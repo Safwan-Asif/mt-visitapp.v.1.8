@@ -246,7 +246,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
             </div>
 
             {/* Dedicated Last Visit Recency & Baseline Banner Card */}
-            {lastVisitRecency && (
+            {lastVisitRecency ? (
               <div className="rounded-xl bg-slate-900/85 border border-slate-700/70 p-2.5 flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="w-8 h-8 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
@@ -277,6 +277,20 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
                     SOS {selectedOutlet.previousSosScore.toFixed(1)} · PG {selectedOutlet.previousPlanogramPercentage}%
                   </div>
                 </div>
+              </div>
+            ) : (
+              <div className="rounded-xl bg-slate-900/75 border border-slate-700/65 p-2.5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Calendar size={14} className="text-slate-400 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-300 truncate">
+                    No prior Sheet 2 audit synced yet
+                  </span>
+                </div>
+                {selectedOutlet.sapCode && (
+                  <span className="text-[10px] font-mono text-sky-300 tabular-nums shrink-0">
+                    SAP {selectedOutlet.sapCode}
+                  </span>
+                )}
               </div>
             )}
 

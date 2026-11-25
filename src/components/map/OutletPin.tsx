@@ -60,12 +60,14 @@ export function resolveOutletPinVisual(
   outlet: MapOutlet,
   activeLayer: PerformanceLayerId
 ): PinVisualSpec {
-  const healthBadge =
-    outlet.healthStatus === 'critical'
-      ? PIN_PALETTE.red.hex
-      : outlet.healthStatus === 'attention'
-      ? PIN_PALETTE.orange.hex
-      : null;
+  const hasAudit = outlet.hasAuditHistory !== false;
+  const healthBadge = !hasAudit
+    ? null
+    : outlet.healthStatus === 'critical'
+    ? PIN_PALETTE.red.hex
+    : outlet.healthStatus === 'attention'
+    ? PIN_PALETTE.orange.hex
+    : null;
 
   const visitBadge =
     outlet.visitStatus === 'completed'
@@ -81,7 +83,7 @@ export function resolveOutletPinVisual(
   let primaryTone = PIN_PALETTE.blue;
   let secondaryAlertHex: string | null = healthBadge;
   let secondaryLabel: string | null =
-    outlet.healthStatus !== 'healthy' ? outlet.healthStatus : null;
+    hasAudit && outlet.healthStatus !== 'healthy' ? outlet.healthStatus : null;
 
   if (activeLayer === 'visit_status') {
     primaryTone =
@@ -90,6 +92,11 @@ export function resolveOutletPinVisual(
         : outlet.visitStatus === 'planned'
         ? PIN_PALETTE.blue
         : PIN_PALETTE.grey;
+    centerMode = isCompleted ? 'check' : 'store';
+  } else if (!hasAudit) {
+    primaryTone = PIN_PALETTE.grey;
+    secondaryAlertHex = visitBadge;
+    secondaryLabel = outlet.visitStatus;
     centerMode = isCompleted ? 'check' : 'store';
   } else if (activeLayer === 'sos_performance') {
     primaryTone =
@@ -148,7 +155,9 @@ export function resolveOutletPinVisual(
   } else {
     const days = getDaysSinceLastVisit(outlet.lastVisitDate);
     primaryTone =
-      days >= 8
+      days < 0
+        ? PIN_PALETTE.grey
+        : days >= 8
         ? PIN_PALETTE.red
         : days >= 4
         ? PIN_PALETTE.orange

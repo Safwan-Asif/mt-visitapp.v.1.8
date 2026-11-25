@@ -39,8 +39,8 @@ interface PjpGoogleMapProps {
 
 const DOHA_DEFAULT_CENTER = { lat: 25.2854, lng: 51.531 };
 
-let cachedMapsApiKey: string | null = null;
-let inflightKeyPromise: Promise<string> | null = null;
+let cachedMapsConfig: { apiKey: string; mapId: string } | null = null;
+let inflightConfigPromise: Promise<{ apiKey: string; mapId: string }> | null = null;
 
 function formatDistanceCompact(meters?: number): string {
   if (!meters || meters <= 0) return '';
@@ -267,8 +267,10 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
   className = ''
 }) => {
   const envKey = ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '').trim();
-  const [apiKey, setApiKey] = useState<string>(cachedMapsApiKey || envKey || '');
-  const [keyLoading, setKeyLoading] = useState<boolean>(!(cachedMapsApiKey || envKey));
+  const envMapId = ((import.meta as any).env?.VITE_GOOGLE_MAPS_MAP_ID || '').trim();
+  const [apiKey, setApiKey] = useState<string>(cachedMapsConfig?.apiKey || envKey || '');
+  const [mapId, setMapId] = useState<string>(cachedMapsConfig?.mapId || envMapId || 'DEMO_MAP_ID');
+  const [keyLoading, setKeyLoading] = useState<boolean>(!(cachedMapsConfig?.apiKey || envKey));
   const [infoOutletId, setInfoOutletId] = useState<string | null>(null);
 
   const decodedPath = useMemo(
@@ -277,35 +279,41 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
   );
 
   useEffect(() => {
-    if (apiKey) {
-      cachedMapsApiKey = apiKey;
+    if (apiKey && (cachedMapsConfig?.mapId || envMapId)) {
+      cachedMapsConfig = { apiKey, mapId: cachedMapsConfig?.mapId || envMapId || 'DEMO_MAP_ID' };
       setKeyLoading(false);
       return;
     }
 
     let cancelled = false;
-    if (!inflightKeyPromise) {
-      inflightKeyPromise = fetch('/api/maps/config')
+    if (!inflightConfigPromise) {
+      inflightConfigPromise = fetch('/api/maps/config')
         .then(async (r) => {
           const ct = r.headers.get('content-type') || '';
-          if (!r.ok || !ct.includes('application/json')) return '';
+          if (!r.ok || !ct.includes('application/json')) {
+            return { apiKey: envKey, mapId: envMapId || 'DEMO_MAP_ID' };
+          }
           const d = await r.json();
-          return String(d?.apiKey || '').trim();
+          return {
+            apiKey: String(d?.apiKey || envKey || '').trim(),
+            mapId: String(d?.mapId || envMapId || 'DEMO_MAP_ID').trim() || 'DEMO_MAP_ID'
+          };
         })
-        .catch(() => '');
+        .catch(() => ({ apiKey: envKey, mapId: envMapId || 'DEMO_MAP_ID' }));
     }
 
-    inflightKeyPromise.then((resolved) => {
+    inflightConfigPromise.then((resolved) => {
       if (cancelled) return;
-      cachedMapsApiKey = resolved;
-      setApiKey(resolved);
+      cachedMapsConfig = resolved;
+      if (!apiKey) setApiKey(resolved.apiKey);
+      if (!envMapId && resolved.mapId) setMapId(resolved.mapId);
       setKeyLoading(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [apiKey]);
+  }, [apiKey, envKey, envMapId]);
 
   const handleMarkerSelect = useCallback(
     (id: string) => {
@@ -355,10 +363,11 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
       <APIProvider apiKey={apiKey} language="en" region="QA" libraries={['marker', 'geometry']}>
         <MapQuotaMonitor />
         <GoogleMap
-          mapId="DEMO_MAP_ID"
+          mapId={mapId}
           defaultCenter={initialCenter}
           defaultZoom={12}
           gestureHandling="greedy"
+          clickableIcons={false}
           disableDefaultUI
           zoomControl
           colorScheme={isDark ? ColorScheme.DARK : ColorScheme.LIGHT}

@@ -11,7 +11,7 @@ const TAB_COPY: Record<
   { title: string; subtitle: string; icon: React.ReactNode }
 > = {
   map: {
-    title: 'Map',
+    title: 'GeoIntel',
     subtitle: 'Territory routing view reserved for upcoming release.',
     icon: <MapIcon size={22} strokeWidth={1.75} />
   },

@@ -152,16 +152,21 @@ export function parseFlexiblePjpDate(
 export function buildExecutivePjpScheduleMeta(
   executiveName: string,
   pjpVisits: PjpVisitRow[],
-  execOutlets: MasterOutletMetrics[]
+  execOutlets: MasterOutletMetrics[],
+  execRepId?: string
 ): ExecutivePjpCalendarMeta {
   const cleanExec = (executiveName || '').trim().toLowerCase();
-  const matchingVisits = (pjpVisits || []).filter(
-    (v) => (v.executive || '').trim().toLowerCase() === cleanExec
-  );
+  const normRep = String(execRepId || '').trim().replace(/^#/, '').toLowerCase();
+  const matchingVisits = (pjpVisits || []).filter((v) => {
+    const vName = (v.executive || '').trim().toLowerCase();
+    const vRep = String(v.repId || '').trim().replace(/^#/, '').toLowerCase();
+    return (cleanExec && vName === cleanExec) || (normRep && vRep === normRep);
+  });
 
-  // Determine calendar year & month from executive's real PJP visits, defaulting to Oct 2026
-  let year = 2026;
-  let month = 10;
+  // Determine calendar year & month from executive's real PJP visits, defaulting to current year/month
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = now.getMonth() + 1;
   for (const v of matchingVisits) {
     const parsed = parseFlexiblePjpDate(v.date);
     if (parsed) {
@@ -213,7 +218,12 @@ export function buildExecutivePjpScheduleMeta(
     const sortedDays = Object.keys(scheduleByDay)
       .map(Number)
       .sort((a, b) => a - b);
-    const cutoffDay = Math.min(daysInMonth, 17);
+    const isCurrentCalendarMonth =
+      year === now.getFullYear() && month === now.getMonth() + 1;
+    const cutoffDay = Math.min(
+      daysInMonth,
+      isCurrentCalendarMonth ? now.getDate() : sortedDays[sortedDays.length - 1] || 17
+    );
 
     sortedDays.forEach((d) => {
       const entry = scheduleByDay[d];
@@ -297,7 +307,17 @@ export function buildExecutivePjpAnalytics(
   routeOutlets: Outlet[],
   pjpVisits: PjpVisitRow[],
   audits: Record<string, CategoryAuditRecord>,
-  periodScale: number
+  periodScale: number,
+  execRepId?: string,
+  assignedMasterOutlets: Array<{
+    id: string;
+    name: string;
+    branch: string;
+    account?: string;
+    code?: string;
+    executive: string;
+    repId?: string;
+  }> = []
 ): {
   accounts: ExecutiveAccountGroup[];
   allOutlets: MasterOutletMetrics[];
@@ -305,6 +325,7 @@ export function buildExecutivePjpAnalytics(
   scheduleMeta: ExecutivePjpCalendarMeta;
 } {
   const cleanExec = (executiveName || '').trim().toLowerCase();
+  const normRep = String(execRepId || '').trim().replace(/^#/, '').toLowerCase();
   const byAccountMap = new Map<string, Map<string, MasterOutletMetrics>>();
 
   const addOrMergeOutlet = (
@@ -492,16 +513,29 @@ export function buildExecutivePjpAnalytics(
     });
   };
 
-  // 1. Populate accounts & outlets strictly from executive's assigned PJP schedule (unsynced from MT Customer Master)
-  const execPjpVisits = cleanExec
-    ? (pjpVisits || []).filter(
-        (v) => (v.executive || '').trim().toLowerCase() === cleanExec
-      )
-    : [];
+  // 1. Populate accounts & outlets from assigned master outlets + PJP schedule rows
+  assignedMasterOutlets
+    .filter((m) => {
+      const mName = (m.executive || '').trim().toLowerCase();
+      const mRep = String(m.repId || '').trim().replace(/^#/, '').toLowerCase();
+      return (cleanExec && mName === cleanExec) || (normRep && mRep === normRep);
+    })
+    .forEach((m) => {
+      addOrMergeOutlet(m.account, m.id, m.name, m.branch, m.code, false);
+    });
+
+  const execPjpVisits =
+    cleanExec || normRep
+      ? (pjpVisits || []).filter((v) => {
+          const vName = (v.executive || '').trim().toLowerCase();
+          const vRep = String(v.repId || '').trim().replace(/^#/, '').toLowerCase();
+          return (cleanExec && vName === cleanExec) || (normRep && vRep === normRep);
+        })
+      : [];
   execPjpVisits.forEach((v, idx) => {
     addOrMergeOutlet(
       v.account,
-      v.code ? `pjp-${v.code}` : `pjp-idx-${idx}`,
+      v.code ? `sap-${v.code}` : `pjp-idx-${idx}`,
       v.outlet,
       v.area || v.outlet,
       v.code,
@@ -533,7 +567,7 @@ export function buildExecutivePjpAnalytics(
     });
 
   const allOutlets = accounts.flatMap((g) => g.outlets);
-  const scheduleMeta = buildExecutivePjpScheduleMeta(executiveName, pjpVisits, allOutlets);
+  const scheduleMeta = buildExecutivePjpScheduleMeta(executiveName, pjpVisits, allOutlets, execRepId);
 
   // Build Competitor Promos scoped to this executive's accounts/outlets + live session records
   const promoSpots: CompetitorPromoSpot[] = [];

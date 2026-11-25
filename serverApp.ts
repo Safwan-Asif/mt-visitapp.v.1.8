@@ -14,9 +14,16 @@ const PLANOGRAMS_WEB_APP_URL =
   process.env.PLANOGRAMS_WEB_APP_URL ||
   'https://script.google.com/macros/s/AKfycbxK37aAtr99B6ulD2FxRklFYfO587iHceiJtE00OcDhxdfbdJqx3-b0UifjRcMf8RHQAQ/exec';
 
-const PJP_LIVE_CSV_URL =
-  process.env.PJP_LIVE_CSV_URL ||
-  'https://docs.google.com/spreadsheets/d/1OU38-cb5c4TUndDKRHhjKm76pjYRU1sjMC1Xp7xqXbU/export?format=csv&gid=856705612';
+const PJP_MASTER_SHEET_ID =
+  process.env.PJP_MASTER_SHEET_ID || '1utP_XvGTmAmduJOujPZO31BWVnd9kRV1lez-8Wh5FTI';
+const PJP_TAB_GIDS = {
+  customerMaster: process.env.PJP_GID_CUSTOMER_MASTER || '0',
+  executiveAssignments: process.env.PJP_GID_ASSIGNMENTS || '1612685523',
+  pjpSchedule: process.env.PJP_GID_SCHEDULE || '1710652195',
+  executives: process.env.PJP_GID_EXECUTIVES || '1561394590'
+};
+const AUDIT_RESULTS_SHEET_ID =
+  process.env.AUDIT_RESULTS_SHEET_ID || '1gSM9eXFiPhikN65MnQqt9PbdojyLVw8Inp_IsKEacWo';
 
 interface PjpRouteStopInput {
   id: string;
@@ -168,7 +175,17 @@ export function createApiApp(): express.Express {
     cachedPlanogramsPayload = null;
   }
 
-  let cachedPjpPayload: { visits: any[]; masterOutlets: any[]; fetchedAt: number } | null = null;
+  let cachedPjpPayload: {
+    visits: any[];
+    masterOutlets: any[];
+    customerMaster?: any[];
+    assignments?: any[];
+    scheduleRows?: any[];
+    executives?: any[];
+    sheet2Visits?: any[];
+    sheet2Audits?: any[];
+    fetchedAt: number;
+  } | null = null;
   try {
     if (fs.existsSync(PJP_CACHE_FILE)) {
       cachedPjpPayload = JSON.parse(fs.readFileSync(PJP_CACHE_FILE, 'utf-8'));
@@ -732,118 +749,392 @@ export function createApiApp(): express.Express {
     });
   });
 
-  // Live MT PJP Google Sheet Proxy & Short-TTL Cache
+  // Live 4-Tab MT PJP & GeoIntel Google Sheet Proxy + Optional Sheet 2 Sync
   app.get('/api/pjp/live', async (req, res) => {
     const forceRefresh = req.query.force === '1' || req.query.force === 'true';
     const cacheAgeMs = cachedPjpPayload ? Date.now() - cachedPjpPayload.fetchedAt : Infinity;
 
-    if (!forceRefresh && cachedPjpPayload && cacheAgeMs < 5 * 60 * 1000) {
+    if (
+      !forceRefresh &&
+      cachedPjpPayload &&
+      Array.isArray(cachedPjpPayload.customerMaster) &&
+      cachedPjpPayload.customerMaster.length > 0 &&
+      cacheAgeMs < 5 * 60 * 1000
+    ) {
       return res.json({
         ok: true,
         source: 'server_cache',
         fetchedAt: cachedPjpPayload.fetchedAt,
-        visits: cachedPjpPayload.visits,
-        masterOutlets: cachedPjpPayload.masterOutlets
+        customerMaster: cachedPjpPayload.customerMaster || [],
+        assignments: cachedPjpPayload.assignments || [],
+        scheduleRows: cachedPjpPayload.scheduleRows || [],
+        executives: cachedPjpPayload.executives || [],
+        visits: cachedPjpPayload.visits || [],
+        masterOutlets: cachedPjpPayload.masterOutlets || [],
+        sheet2Visits: cachedPjpPayload.sheet2Visits || [],
+        sheet2Audits: cachedPjpPayload.sheet2Audits || []
       });
     }
 
+    const fetchSheetCsv = async (url: string): Promise<string | null> => {
+      try {
+        const r = await fetch(url, {
+          redirect: 'follow',
+          signal: AbortSignal.timeout(12000)
+        });
+        if (!r.ok) return null;
+        const text = await r.text();
+        if (!text || text.trim().startsWith('<')) return null;
+        return text;
+      } catch {
+        return null;
+      }
+    };
+
+    const parseCsvTable = (csvText: string | null): { headers: string[]; rows: string[][] } => {
+      if (!csvText) return { headers: [], rows: [] };
+      const lines = csvText.trim().split(/\r?\n/);
+      if (lines.length < 2) return { headers: [], rows: [] };
+      const headers = parseCsvLineSafe(lines[0]).map((h) => h.toLowerCase().trim());
+      const rows: string[][] = [];
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i] || !lines[i].trim()) continue;
+        rows.push(parseCsvLineSafe(lines[i]));
+      }
+      return { headers, rows };
+    };
+
+    const colFinder = (headers: string[]) => (candidates: string[], fallbackIdx: number) => {
+      const exactIdx = headers.findIndex((h) => candidates.some((c) => h === c));
+      if (exactIdx >= 0) return exactIdx;
+      const idx = headers.findIndex((h) => candidates.some((c) => h.includes(c)));
+      return idx >= 0 ? idx : fallbackIdx;
+    };
+
+    const normalizeChannel = (raw: string): 'Hypermarket' | 'Supermarket' | 'Express' => {
+      const clean = raw.trim().toLowerCase();
+      if (clean.includes('express') || clean.includes('mini') || clean.includes('conv')) return 'Express';
+      if (clean.includes('super')) return 'Supermarket';
+      return 'Hypermarket';
+    };
+
+    const normalizeRepDisplay = (raw: string): string => {
+      const cleaned = String(raw || '').trim();
+      if (!cleaned) return '';
+      return cleaned.startsWith('#') ? cleaned : `#${cleaned}`;
+    };
+
     try {
-      const csvRes = await fetch(PJP_LIVE_CSV_URL, {
-        signal: AbortSignal.timeout(15000)
-      });
+      const s1Base = `https://docs.google.com/spreadsheets/d/${PJP_MASTER_SHEET_ID}/export?format=csv&gid=`;
+      const s2Base = `https://docs.google.com/spreadsheets/d/${AUDIT_RESULTS_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=`;
 
-      if (csvRes.ok) {
-        const csvText = await csvRes.text();
-        const lines = csvText.trim().split(/\r?\n/);
-        if (lines.length > 1) {
-          const headers = parseCsvLineSafe(lines[0]).map((h) => h.toLowerCase().trim());
-          const findCol = (candidates: string[], fallbackIdx: number) => {
-            const idx = headers.findIndex((h) => candidates.some((c) => h.includes(c)));
-            return idx >= 0 ? idx : fallbackIdx;
-          };
+      const [cmCsv, assignCsv, schedCsv, execCsv, s2VisitsCsv, s2AuditsCsv] = await Promise.all([
+        fetchSheetCsv(`${s1Base}${PJP_TAB_GIDS.customerMaster}`),
+        fetchSheetCsv(`${s1Base}${PJP_TAB_GIDS.executiveAssignments}`),
+        fetchSheetCsv(`${s1Base}${PJP_TAB_GIDS.pjpSchedule}`),
+        fetchSheetCsv(`${s1Base}${PJP_TAB_GIDS.executives}`),
+        fetchSheetCsv(`${s2Base}visits`),
+        fetchSheetCsv(`${s2Base}category_audits`)
+      ]);
 
-          const dateIdx = findCol(['date'], 0);
-          const dayIdx = findCol(['day'], 1);
-          const execIdx = findCol(['executive'], 2);
-          const acctIdx = findCol(['account'], 3);
-          const outletIdx = findCol(['outlet name', 'outlet'], 4);
-          const sapIdx = findCol(['sap code', 'sap', 'outlet code', 'code'], 5);
-          const areaIdx = findCol(['area', 'zone'], 6);
+      // 1. Parse Customer_Master
+      const cmTable = parseCsvTable(cmCsv);
+      const findCmCol = colFinder(cmTable.headers);
+      const cmSapIdx = findCmCol(['sap_code', 'sap code', 'sap'], 0);
+      const cmNameIdx = findCmCol(['cust_name', 'customer name', 'outlet name', 'name'], 1);
+      const cmAcctIdx = findCmCol(['account'], 2);
+      const cmBranchIdx = findCmCol(['branch'], 3);
+      const cmAreaIdx = findCmCol(['area', 'zone'], 4);
+      const cmChanIdx = findCmCol(['channel'], 5);
+      const cmLatIdx = findCmCol(['latitude', 'lat'], 6);
+      const cmLngIdx = findCmCol(['longitude', 'lng', 'lon'], 7);
+      const cmStatusIdx = findCmCol(['status'], 8);
 
-          const visits: any[] = [];
-          const masterMap = new Map<string, any>();
+      const customerMaster: any[] = [];
+      const masterBySap = new Map<string, any>();
 
-          for (let i = 1; i < lines.length; i++) {
-            const rawLine = lines[i];
-            if (!rawLine || !rawLine.trim()) continue;
-            const cols = parseCsvLineSafe(rawLine);
-            const executive = (cols[execIdx] || '').trim();
-            const account = (cols[acctIdx] || '').trim();
-            const outlet = (cols[outletIdx] || '').trim();
-            const sapCode = cleanSapString(cols[sapIdx] || '');
-            const area = (cols[areaIdx] || '').trim();
-            const date = (cols[dateIdx] || '').trim();
-            const day = (cols[dayIdx] || '').trim();
+      for (const cols of cmTable.rows) {
+        const sapCode = cleanSapString(cols[cmSapIdx] || '');
+        const custName = (cols[cmNameIdx] || '').trim();
+        if (!sapCode && !custName) continue;
+        const status = (cols[cmStatusIdx] || 'Active').trim() || 'Active';
+        if (status.toLowerCase() === 'inactive') continue;
 
-            if (!outlet && !sapCode) continue;
+        const lat = Number(cols[cmLatIdx]);
+        const lng = Number(cols[cmLngIdx]);
+        const record = {
+          sapCode,
+          custName: custName || `Outlet ${sapCode}`,
+          account: (cols[cmAcctIdx] || '').trim() || 'QFI MT',
+          branch: (cols[cmBranchIdx] || '').trim() || (cols[cmAreaIdx] || '').trim() || 'Doha',
+          area: (cols[cmAreaIdx] || '').trim() || (cols[cmBranchIdx] || '').trim() || 'Doha',
+          channel: normalizeChannel(cols[cmChanIdx] || 'Hypermarket'),
+          latitude: Number.isFinite(lat) ? lat : null,
+          longitude: Number.isFinite(lng) ? lng : null,
+          status
+        };
+        customerMaster.push(record);
+        if (sapCode) {
+          masterBySap.set(sapCode, record);
+        }
+      }
 
-            visits.push({
-              date,
-              day,
-              executive,
-              account,
-              outlet,
-              code: sapCode,
-              sapCode,
-              area
-            });
+      // 2. Parse Executives
+      const execTable = parseCsvTable(execCsv);
+      const findExCol = colFinder(execTable.headers);
+      const exRosterIdx = findExCol(['rep_roster', 'roster'], 0);
+      const exRepIdIdx = findExCol(['rep_id', 'repid'], 1);
+      const exUserIdx = findExCol(['username', 'name', 'executive'], 2);
+      const exPinIdx = findExCol(['pin'], 3);
+      const exTerrIdx = findExCol(['territory', 'area', 'account'], 4);
 
-            const masterKey = `${executive.toLowerCase()}|${sapCode || outlet.toLowerCase()}`;
-            if (!masterMap.has(masterKey)) {
-              masterMap.set(masterKey, {
-                id: sapCode ? `sap-${sapCode}-${masterMap.size + 1}` : `pjp-m-${masterMap.size + 1}`,
-                name: account && !outlet.toLowerCase().startsWith(account.toLowerCase()) ? `${account} — ${outlet}` : outlet,
-                rawName: outlet,
-                branch: area || outlet,
-                address: `${area ? area + ', ' : ''}${account ? account + ', ' : ''}Qatar`,
-                executive,
-                code: sapCode || undefined,
-                account: account || undefined
-              });
-            }
-          }
+      const executives: any[] = [];
+      for (const cols of execTable.rows) {
+        const displayName = (cols[exUserIdx] || '').trim();
+        const rawRepId = cleanSapString(cols[exRepIdIdx] || '');
+        if (!displayName && !rawRepId) continue;
+        const safeName = displayName || `Executive ${rawRepId}`;
+        const slug = safeName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '');
+        executives.push({
+          repRoster: (cols[exRosterIdx] || '').trim(),
+          repId: normalizeRepDisplay(rawRepId) || '#19',
+          rawRepId: rawRepId.replace(/^#/, ''),
+          name: safeName,
+          username: slug || `rep_${rawRepId}`,
+          pin: String(cols[exPinIdx] || '2026').trim() || '2026',
+          territory: (cols[exTerrIdx] || 'Qatar Modern Trade').trim() || 'Qatar Modern Trade',
+          role: 'Modern Trade Executive'
+        });
+      }
 
-          const masterOutlets = Array.from(masterMap.values());
-          cachedPjpPayload = {
-            visits,
-            masterOutlets,
-            fetchedAt: Date.now()
-          };
-          try {
-            fs.writeFileSync(PJP_CACHE_FILE, JSON.stringify(cachedPjpPayload));
-          } catch {
-            // Non-fatal disk cache write failure
-          }
+      // 3. Parse Executive_Assignments
+      const assignTable = parseCsvTable(assignCsv);
+      const findAsCol = colFinder(assignTable.headers);
+      const asMonthIdx = findAsCol(['month'], 0);
+      const asRepIdIdx = findAsCol(['rep_id', 'repid'], 1);
+      const asExecIdx = findAsCol(['executive', 'username'], 2);
+      const asSapIdx = findAsCol(['sap_code', 'sap'], 3);
+      const asActiveIdx = findAsCol(['is_active', 'active'], 4);
 
-          return res.json({
-            ok: true,
-            source: 'live_sheet',
-            fetchedAt: cachedPjpPayload.fetchedAt,
-            visits,
-            masterOutlets
+      const assignments: any[] = [];
+      for (const cols of assignTable.rows) {
+        const activeStr = String(cols[asActiveIdx] ?? 'TRUE').trim().toLowerCase();
+        if (activeStr === 'false' || activeStr === '0' || activeStr === 'no') continue;
+        const sapCode = cleanSapString(cols[asSapIdx] || '');
+        const executive = (cols[asExecIdx] || '').trim();
+        const rawRepId = cleanSapString(cols[asRepIdIdx] || '').replace(/^#/, '');
+        if (!sapCode) continue;
+        assignments.push({
+          month: (cols[asMonthIdx] || '').trim(),
+          repId: rawRepId,
+          executive,
+          sapCode,
+          isActive: true
+        });
+      }
+
+      // 4. Parse PJP_Schedule
+      const schedTable = parseCsvTable(schedCsv);
+      const findScCol = colFinder(schedTable.headers);
+      const scDateIdx = findScCol(['date'], 0);
+      const scDayIdx = findScCol(['day'], 1);
+      const scRepIdIdx = findScCol(['rep_id', 'repid'], 2);
+      const scExecIdx = findScCol(['executive'], 3);
+      const scSapIdx = findScCol(['sap_code', 'sap'], 4);
+      const scOrderIdx = findScCol(['visit_order', 'order'], 5);
+      const scCatsIdx = findScCol(['planned_categories', 'categories'], 6);
+
+      const scheduleRows: any[] = [];
+      const visits: any[] = [];
+      for (const cols of schedTable.rows) {
+        const date = (cols[scDateIdx] || '').trim();
+        const day = (cols[scDayIdx] || '').trim();
+        const rawRepId = cleanSapString(cols[scRepIdIdx] || '').replace(/^#/, '');
+        const executive = (cols[scExecIdx] || '').trim();
+        const sapCode = cleanSapString(cols[scSapIdx] || '');
+        const visitOrder = Number(cols[scOrderIdx]) || scheduleRows.length + 1;
+        const rawCats = (cols[scCatsIdx] || '').trim();
+        const plannedCategories = rawCats
+          ? rawCats.split(',').map((c) => c.trim()).filter(Boolean)
+          : ['Flour', 'Edible Oil', 'Pasta'];
+
+        if (!sapCode && !executive) continue;
+
+        const cm = masterBySap.get(sapCode);
+        const outletLabel = cm?.custName || `Outlet ${sapCode}`;
+        const accountLabel = cm?.account || '';
+        const areaLabel = cm?.area || cm?.branch || 'Doha';
+
+        scheduleRows.push({
+          date,
+          day,
+          repId: rawRepId,
+          executive,
+          sapCode,
+          visitOrder,
+          plannedCategories
+        });
+
+        visits.push({
+          date,
+          day,
+          repId: rawRepId,
+          executive,
+          account: accountLabel,
+          outlet: outletLabel,
+          code: sapCode,
+          sapCode,
+          area: areaLabel,
+          visitOrder,
+          plannedCategories,
+          latitude: cm?.latitude ?? undefined,
+          longitude: cm?.longitude ?? undefined
+        });
+      }
+
+      // 5. Build masterOutlets (assigned tagged + full Customer_Master for AddOutletModal)
+      const masterOutlets: any[] = [];
+      const seenAssignKeys = new Set<string>();
+      for (const a of assignments) {
+        const cm = masterBySap.get(a.sapCode);
+        if (!cm) continue;
+        const key = `${a.executive.toLowerCase()}|${a.sapCode}`;
+        if (seenAssignKeys.has(key)) continue;
+        seenAssignKeys.add(key);
+        masterOutlets.push({
+          id: `sap-${a.sapCode}`,
+          name: cm.custName,
+          rawName: cm.custName,
+          branch: cm.branch || cm.area,
+          address: `${cm.area}, ${cm.account}, Qatar`,
+          executive: a.executive,
+          repId: a.repId,
+          code: a.sapCode,
+          account: cm.account,
+          channel: cm.channel,
+          latitude: cm.latitude ?? undefined,
+          longitude: cm.longitude ?? undefined
+        });
+      }
+
+      const assignedSaps = new Set(assignments.map((a) => a.sapCode));
+      for (const cm of customerMaster) {
+        if (!cm.sapCode || assignedSaps.has(cm.sapCode)) continue;
+        masterOutlets.push({
+          id: `sap-${cm.sapCode}`,
+          name: cm.custName,
+          rawName: cm.custName,
+          branch: cm.branch || cm.area,
+          address: `${cm.area}, ${cm.account}, Qatar`,
+          executive: '',
+          code: cm.sapCode,
+          account: cm.account,
+          channel: cm.channel,
+          latitude: cm.latitude ?? undefined,
+          longitude: cm.longitude ?? undefined
+        });
+      }
+
+      // 6. Optional non-blocking parse of Sheet 2 if readable (CSV public or future V2 GET)
+      const sheet2Visits: any[] = [];
+      const s2vTable = parseCsvTable(s2VisitsCsv);
+      if (s2vTable.rows.length > 0) {
+        const f = colFinder(s2vTable.headers);
+        const dIdx = f(['date'], 1);
+        const sIdx = f(['sap_code', 'sap'], 6);
+        const stIdx = f(['visit_status', 'status'], 8);
+        const repIdx = f(['rep_id', 'rep'], 4);
+        for (const cols of s2vTable.rows) {
+          const sapCode = cleanSapString(cols[sIdx] || '');
+          if (!sapCode) continue;
+          sheet2Visits.push({
+            date: (cols[dIdx] || '').trim(),
+            sapCode,
+            repId: cleanSapString(cols[repIdx] || '').replace(/^#/, ''),
+            visitStatus: (cols[stIdx] || 'completed').trim().toLowerCase()
           });
         }
       }
+
+      const sheet2Audits: any[] = [];
+      const s2aTable = parseCsvTable(s2AuditsCsv);
+      if (s2aTable.rows.length > 0) {
+        const f = colFinder(s2aTable.headers);
+        const dIdx = f(['date'], 2);
+        const sIdx = f(['sap_code', 'sap'], 4);
+        const catIdx = f(['category'], 5);
+        const sosIdx = f(['share_of_shelf_pct', 'sos'], 8);
+        const pgIdx = f(['planogram_compliance_pct', 'planogram'], 9);
+        const oosIdx = f(['oos_sku_count', 'oos'], 10);
+        const revIdx = f(['needs_review'], 14);
+        const issIdx = f(['issues_summary', 'issues'], 15);
+        for (const cols of s2aTable.rows) {
+          const sapCode = cleanSapString(cols[sIdx] || '');
+          if (!sapCode) continue;
+          sheet2Audits.push({
+            date: (cols[dIdx] || '').trim(),
+            sapCode,
+            category: (cols[catIdx] || '').trim(),
+            shareOfShelfPct: Number(cols[sosIdx]) || 0,
+            planogramCompliancePct: Number(cols[pgIdx]),
+            oosSkuCount: Number(cols[oosIdx]) || 0,
+            needsReview: String(cols[revIdx] || '').toLowerCase() === 'true',
+            issuesSummary: (cols[issIdx] || '').trim()
+          });
+        }
+      }
+
+      if (customerMaster.length > 0 || scheduleRows.length > 0 || executives.length > 0) {
+        cachedPjpPayload = {
+          customerMaster,
+          assignments,
+          scheduleRows,
+          executives,
+          visits,
+          masterOutlets,
+          sheet2Visits,
+          sheet2Audits,
+          fetchedAt: Date.now()
+        };
+        try {
+          fs.writeFileSync(PJP_CACHE_FILE, JSON.stringify(cachedPjpPayload));
+        } catch {
+          // Non-fatal disk cache write failure
+        }
+
+        return res.json({
+          ok: true,
+          source: 'live_sheet',
+          fetchedAt: cachedPjpPayload.fetchedAt,
+          customerMaster,
+          assignments,
+          scheduleRows,
+          executives,
+          visits,
+          masterOutlets,
+          sheet2Visits,
+          sheet2Audits
+        });
+      }
     } catch (err: any) {
-      console.warn('[PJP Live Proxy] Live CSV fetch warning:', err?.message);
+      console.warn('[PJP Live Proxy] Live 4-tab CSV fetch warning:', err?.message);
     }
 
     return res.json({
       ok: Boolean(cachedPjpPayload),
       source: cachedPjpPayload ? 'stale_cache' : 'empty_fallback',
       fetchedAt: cachedPjpPayload?.fetchedAt || Date.now(),
+      customerMaster: cachedPjpPayload?.customerMaster || [],
+      assignments: cachedPjpPayload?.assignments || [],
+      scheduleRows: cachedPjpPayload?.scheduleRows || [],
+      executives: cachedPjpPayload?.executives || [],
       visits: cachedPjpPayload?.visits || [],
-      masterOutlets: cachedPjpPayload?.masterOutlets || []
+      masterOutlets: cachedPjpPayload?.masterOutlets || [],
+      sheet2Visits: cachedPjpPayload?.sheet2Visits || [],
+      sheet2Audits: cachedPjpPayload?.sheet2Audits || []
     });
   });
 
@@ -1018,7 +1309,7 @@ export function createApiApp(): express.Express {
     }
   });
 
-  // Google Maps Platform Client Key Config
+  // Google Maps Platform Client Key & Map Style ID Config
   app.get('/api/maps/config', (_req, res) => {
     const apiKey = (
       process.env.VITE_GOOGLE_MAPS_API_KEY ||
@@ -1026,9 +1317,15 @@ export function createApiApp(): express.Express {
       process.env.MAPS_API_KEY ||
       ''
     ).trim();
+    const mapId = (
+      process.env.VITE_GOOGLE_MAPS_MAP_ID ||
+      process.env.GOOGLE_MAPS_MAP_ID ||
+      'DEMO_MAP_ID'
+    ).trim();
     return res.json({
       ok: Boolean(apiKey),
-      apiKey
+      apiKey,
+      mapId
     });
   });
 

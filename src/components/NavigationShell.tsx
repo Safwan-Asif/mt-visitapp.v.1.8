@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Home,
+  LayoutGrid,
   Map as MapIcon,
   Plus,
   CalendarCheck,
@@ -33,7 +33,7 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
   const { isDark } = useTheme();
 
   const itemClass = (isActive: boolean) =>
-    `min-h-[48px] w-full flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer active:scale-95 ${
+    `min-h-[48px] w-full flex items-center justify-center rounded-xl transition-colors cursor-pointer active:scale-95 ${
       isActive
         ? isDark
           ? 'text-[#34D399]'
@@ -52,47 +52,38 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
           : 'shadow-[0_-8px_28px_-10px_rgba(8,40,32,0.12)]'
       }`}
     >
-      <div className="grid grid-cols-5 items-end max-w-lg mx-auto px-2 pt-1.5 pb-[max(0.45rem,env(safe-area-inset-bottom))]">
-        {/* 1. Home */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('home')}
-          className={itemClass(activeTab === 'home')}
-          aria-current={activeTab === 'home' ? 'page' : undefined}
-        >
-          <Home size={21} strokeWidth={activeTab === 'home' ? 2.2 : 1.75} />
-          <span
-            className={`text-[11px] leading-none whitespace-nowrap ${
-              activeTab === 'home' ? 'font-semibold' : 'font-medium'
-            }`}
-          >
-            Home
-          </span>
-        </button>
-
-        {/* 2. Map */}
+      <div className="grid grid-cols-5 items-center max-w-lg mx-auto px-2 pt-1.5 pb-[max(0.45rem,env(safe-area-inset-bottom))]">
+        {/* 1. GeoIntel */}
         <button
           type="button"
           onClick={() => onSelectTab('map')}
           className={itemClass(activeTab === 'map')}
+          aria-label="GeoIntel"
+          title="GeoIntel"
           aria-current={activeTab === 'map' ? 'page' : undefined}
         >
-          <MapIcon size={21} strokeWidth={activeTab === 'map' ? 2.2 : 1.75} />
-          <span
-            className={`text-[11px] leading-none whitespace-nowrap ${
-              activeTab === 'map' ? 'font-semibold' : 'font-medium'
-            }`}
-          >
-            Map
-          </span>
+          <MapIcon size={22} strokeWidth={activeTab === 'map' ? 2.25 : 1.8} />
+        </button>
+
+        {/* 2. Overview */}
+        <button
+          type="button"
+          onClick={() => onSelectTab('home')}
+          className={itemClass(activeTab === 'home')}
+          aria-label="Overview"
+          title="Overview"
+          aria-current={activeTab === 'home' ? 'page' : undefined}
+        >
+          <LayoutGrid size={22} strokeWidth={activeTab === 'home' ? 2.25 : 1.8} />
         </button>
 
         {/* 3. Center Elevated "+" (PJP Outlets) */}
-        <div className="flex items-center justify-center pb-1">
+        <div className="flex items-center justify-center pb-0.5">
           <button
             type="button"
             onClick={() => onSelectTab('pjp')}
-            aria-label="Open PJP Route Outlets"
+            aria-label="PJP Route Outlets"
+            title="PJP Route"
             aria-current={activeTab === 'pjp' ? 'page' : undefined}
             className={`w-[54px] h-[54px] -mt-7 rounded-[18px] flex items-center justify-center transition-all cursor-pointer active:scale-95 ring-4 ${
               isDark
@@ -104,21 +95,16 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
           </button>
         </div>
 
-        {/* 4. Today (Existing Dashboard) */}
+        {/* 4. Today */}
         <button
           type="button"
           onClick={() => onSelectTab('today')}
           className={itemClass(activeTab === 'today')}
+          aria-label="Today"
+          title="Today"
           aria-current={activeTab === 'today' ? 'page' : undefined}
         >
-          <CalendarCheck size={21} strokeWidth={activeTab === 'today' ? 2.2 : 1.75} />
-          <span
-            className={`text-[11px] leading-none whitespace-nowrap ${
-              activeTab === 'today' ? 'font-semibold' : 'font-medium'
-            }`}
-          >
-            Today
-          </span>
+          <CalendarCheck size={22} strokeWidth={activeTab === 'today' ? 2.25 : 1.8} />
         </button>
 
         {/* 5. Requests */}
@@ -126,10 +112,12 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
           type="button"
           onClick={() => onSelectTab('requests')}
           className={itemClass(activeTab === 'requests')}
+          aria-label="Requests"
+          title="Requests"
           aria-current={activeTab === 'requests' ? 'page' : undefined}
         >
           <div className="relative flex items-center justify-center">
-            <Inbox size={21} strokeWidth={activeTab === 'requests' ? 2.2 : 1.75} />
+            <Inbox size={22} strokeWidth={activeTab === 'requests' ? 2.25 : 1.8} />
             {requestsCount > 0 && (
               <span
                 className={`absolute -top-1.5 -right-2 min-w-[16px] h-[16px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center tabular-nums shadow-sm ${
@@ -140,13 +128,6 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
               </span>
             )}
           </div>
-          <span
-            className={`text-[11px] leading-none whitespace-nowrap ${
-              activeTab === 'requests' ? 'font-semibold' : 'font-medium'
-            }`}
-          >
-            Requests
-          </span>
         </button>
       </div>
     </nav>
@@ -170,14 +151,14 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
     isPrimary?: boolean;
   }> = [
     {
-      id: 'home',
-      label: 'Home',
-      icon: <Home size={18} strokeWidth={activeTab === 'home' ? 2.2 : 1.8} />
+      id: 'map',
+      label: 'GeoIntel',
+      icon: <MapIcon size={18} strokeWidth={activeTab === 'map' ? 2.2 : 1.8} />
     },
     {
-      id: 'map',
-      label: 'Map',
-      icon: <MapIcon size={18} strokeWidth={activeTab === 'map' ? 2.2 : 1.8} />
+      id: 'home',
+      label: 'Overview',
+      icon: <LayoutGrid size={18} strokeWidth={activeTab === 'home' ? 2.2 : 1.8} />
     },
     {
       id: 'pjp',

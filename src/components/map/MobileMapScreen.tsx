@@ -1,24 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Sun, Moon, Info, Route, LogOut } from 'lucide-react';
-import { UserProfile } from '../../types';
+import { CategoryAuditRecord, Outlet, UserProfile } from '../../types';
 import { useTheme } from '../../ThemeContext';
 import {
   DEFAULT_EXECUTIVE_LOCATION,
-  DOHA_ARTERIAL_ROUTE_FALLBACK,
   ExecutiveLocation,
   MAP_BASE_STYLES,
   MapBaseStyle,
   MapFilterChipId,
   MapOutlet,
-  MOCK_DOHA_OUTLETS,
   PerformanceLayerId,
   QuickFilterId,
   deriveHealthBreakdown,
   deriveJourneyMetrics,
   fetchDrivingRoadRoute,
-  getNextStopDemoEstimate,
-  mockOutletDataSource
+  getNextStopDemoEstimate
 } from '../../data/data';
+import {
+  LivePjpDataset,
+  buildGeoIntelMapOutlets,
+  fetchLivePjpData,
+  getCachedLivePjpData
+} from '../../services/pjpService';
 import { MobileHeader } from './MobileHeader';
 import { JourneyProgressHUD } from './JourneyProgressHUD';
 import { MapFilterChips } from './MapFilterChips';
@@ -32,6 +35,10 @@ import { DesktopBottomBar } from './DesktopBottomBar';
 
 interface MobileMapScreenProps {
   executive: UserProfile | null;
+  appOutlets?: Outlet[];
+  audits?: Record<string, CategoryAuditRecord>;
+  livePjpDataset?: LivePjpDataset;
+  isSyncingPjp?: boolean;
   onStartOutletVisit: (outlet: MapOutlet) => void;
   onMoreDetails: (outletId: string, outlet: MapOutlet) => void;
   onNavigateTab: (tab: 'home' | 'pjp') => void;
@@ -40,37 +47,35 @@ interface MobileMapScreenProps {
 
 export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   executive,
+  appOutlets = [],
+  audits = {},
+  livePjpDataset,
+  isSyncingPjp = false,
   onStartOutletVisit,
   onMoreDetails,
-  onNavigateTab,
+  onNavigateTab: _onNavigateTab,
   onLogout
 }) => {
   const { isDark, toggleTheme } = useTheme();
 
-  const [outlets, setOutlets] = useState<MapOutlet[]>(MOCK_DOHA_OUTLETS);
-  const [isLoadingOutlets, setIsLoadingOutlets] = useState<boolean>(true);
+  const [dataset, setDataset] = useState<LivePjpDataset>(
+    () => livePjpDataset || getCachedLivePjpData()
+  );
+  const [isLoadingOutlets, setIsLoadingOutlets] = useState<boolean>(
+    () => !livePjpDataset?.customerMaster?.length && !getCachedLivePjpData().customerMaster?.length
+  );
   const [mapBaseStyle, setMapBaseStyle] = useState<MapBaseStyle>('satellite');
   const [activeLayer, setActiveLayer] = useState<PerformanceLayerId>('visit_status');
   const [showJourneyPlan, setShowJourneyPlan] = useState<boolean>(true);
   const [isLayersOpen, setIsLayersOpen] = useState<boolean>(false);
-  const [roadRouteCoords, setRoadRouteCoords] = useState<[number, number][]>(
-    DOHA_ARTERIAL_ROUTE_FALLBACK
-  );
-  const [routeSource, setRouteSource] = useState<'osrm' | 'arterial_fallback'>(
-    'arterial_fallback'
-  );
+  const [roadRouteCoords, setRoadRouteCoords] = useState<[number, number][]>([]);
+  const [routeSource, setRouteSource] = useState<'osrm' | 'arterial_fallback'>('osrm');
 
   // Mobile segmented chip filter & Desktop 2x2 Quick Filters
   const [activeFilter, setActiveFilter] = useState<MapFilterChipId>('all');
   const [activeQuickFilters, setActiveQuickFilters] = useState<QuickFilterId[]>([]);
 
-  // On wide desktop screens default-select Lulu Hypermarket (MT-QA-106) so the tactical card is immediately visible; on mobile keep sheet closed until pin tap
-  const [selectedOutletId, setSelectedOutletId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
-      return 'MT-QA-106';
-    }
-    return null;
-  });
+  const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
   const [sheetState, setSheetState] = useState<BottomSheetState>(() => {
     if (typeof window !== 'undefined' && window.innerWidth >= 768) {
       return 'peek';
@@ -84,14 +89,21 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   );
   const [centerRequestNonce, setCenterRequestNonce] = useState<number>(0);
 
-  // Load typed outlet records via replaceable data-source interface
+  // Sync external livePjpDataset updates cleanly
+  useEffect(() => {
+    if (livePjpDataset && (livePjpDataset.customerMaster?.length || livePjpDataset.visits?.length)) {
+      setDataset(livePjpDataset);
+      setIsLoadingOutlets(false);
+    }
+  }, [livePjpDataset]);
+
+  // Fetch live 4-tab dataset if not already populated in cache
   useEffect(() => {
     let active = true;
-    mockOutletDataSource
-      .loadOutlets()
-      .then((records) => {
+    fetchLivePjpData(false)
+      .then((res) => {
         if (!active) return;
-        setOutlets(records);
+        setDataset(res);
       })
       .finally(() => {
         if (active) setIsLoadingOutlets(false);
@@ -101,21 +113,56 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     };
   }, []);
 
-  // Fetch real Doha street-following driving route across today's 8 scheduled stops
+  // Build live executive MapOutlets joined from Customer_Master + Executive_Assignments + PJP_Schedule + live audits + optional Sheet 2
+  const outlets = useMemo<MapOutlet[]>(
+    () =>
+      buildGeoIntelMapOutlets({
+        executive,
+        dataset,
+        appOutlets,
+        audits
+      }),
+    [executive, dataset, appOutlets, audits]
+  );
+
+  // Default-select Stop #1 on desktop screens so the right detail card opens on a live outlet
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.innerWidth < 768) return;
+    if (outlets.length === 0) return;
+    if (selectedOutletId && outlets.some((o) => o.id === selectedOutletId)) return;
+
+    const firstScheduled =
+      outlets
+        .filter((o) => o.scheduledForToday && o.visitOrder !== null)
+        .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))[0] || outlets[0];
+
+    if (firstScheduled) {
+      setSelectedOutletId(firstScheduled.id);
+      setSheetState('peek');
+    }
+  }, [outlets, selectedOutletId]);
+
+  // Fetch real Doha street-following driving route across today's scheduled stops
   useEffect(() => {
     const plannedStops = outlets
       .filter((o) => o.scheduledForToday && o.visitOrder !== null)
-      .sort((a, b) => (a.visitOrder ?? 99) - (b.visitOrder ?? 99))
+      .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))
       .map((o): [number, number] => [o.latitude, o.longitude]);
 
-    if (plannedStops.length < 2) return;
+    if (plannedStops.length < 2) {
+      setRoadRouteCoords(plannedStops);
+      return;
+    }
 
     let active = true;
     fetchDrivingRoadRoute(plannedStops).then((result) => {
       if (!active) return;
-      if (result.coordinates.length >= 2) {
+      if (result.source === 'osrm' && result.coordinates.length >= 2) {
         setRoadRouteCoords(result.coordinates);
-        setRouteSource(result.source);
+        setRouteSource('osrm');
+      } else {
+        setRoadRouteCoords(plannedStops);
+        setRouteSource('arterial_fallback');
       }
     });
     return () => {
@@ -303,10 +350,10 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         />
 
         {/* Loading Banner */}
-        {isLoadingOutlets && (
+        {(isLoadingOutlets || isSyncingPjp) && outlets.length === 0 && (
           <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-[440] flex justify-center pointer-events-none">
             <div className="marviz-glass px-4 py-2 rounded-xl text-xs font-semibold text-sky-200">
-              Loading Doha territory pins…
+              Syncing live territory pins…
             </div>
           </div>
         )}
@@ -395,12 +442,12 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         {isSettingsOpen && (
           <div
             role="dialog"
-            aria-label="Map Settings"
+            aria-label="GeoIntel Settings"
             className="md:hidden fixed inset-x-3 bottom-[calc(74px+env(safe-area-inset-bottom,0px))] z-[475] max-w-sm mx-auto marviz-glass-strong rounded-2xl p-4 text-white animate-fade-in"
           >
             <div className="flex items-center justify-between pb-2.5 border-b border-slate-700/70">
               <span className="font-heading text-sm font-bold uppercase tracking-wider">
-                Map Settings
+                GeoIntel Settings
               </span>
               <button
                 type="button"

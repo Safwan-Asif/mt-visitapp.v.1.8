@@ -24,6 +24,7 @@ import {
   PlanogramRecord,
   UserProfile
 } from '../types';
+import { MasterOutletOption } from '../constants';
 import { CATEGORIES } from '../constants';
 import { PjpVisitRow } from '../data/pjpMasterData';
 import { useTheme } from '../ThemeContext';
@@ -45,6 +46,7 @@ interface HomeAnalyticsScreenProps {
   executive: UserProfile | null;
   outlets: Outlet[];
   pjpVisits: PjpVisitRow[];
+  masterOutlets?: MasterOutletOption[];
   audits: Record<string, CategoryAuditRecord>;
   planograms: PlanogramRecord[];
   isSyncingPjp?: boolean;
@@ -135,6 +137,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   executive,
   outlets,
   pjpVisits,
+  masterOutlets = [],
   audits,
   planograms,
   isSyncingPjp = false,
@@ -177,7 +180,6 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
   const [selectedPromoId, setSelectedPromoId] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(17);
 
-  // Build PJP Schedule + Account Analytics scoped to signed-in Executive (unsynced from MT Customer Master)
   const basePjpData = useMemo(
     () =>
       buildExecutivePjpAnalytics(
@@ -185,9 +187,11 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
         outlets,
         pjpVisits,
         audits,
-        1
+        1,
+        executive?.repId,
+        masterOutlets
       ),
-    [executive?.name, outlets, pjpVisits, audits]
+    [executive?.name, executive?.repId, outlets, pjpVisits, audits, masterOutlets]
   );
 
   const scheduleMeta = basePjpData.scheduleMeta;
@@ -1071,7 +1075,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
           <div className="glass-panel rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 border border-sky-500/35">
             <div className="min-w-0">
               <span className="text-[10px] font-bold uppercase tracking-wider text-sky-500">
-                Selected from Map · {selectedMapOutlet.id}
+                Selected from GeoIntel · {selectedMapOutlet.id}
               </span>
               <p className="text-xs font-bold text-[var(--text-primary)] truncate">
                 {selectedMapOutlet.name} · {selectedMapOutlet.area}

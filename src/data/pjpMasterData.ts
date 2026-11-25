@@ -8,6 +8,9 @@ export interface ExecutiveProfile {
   name: string;
   username: string;
   repId: string;
+  rawRepId?: string;
+  repRoster?: string;
+  pin?: string;
   territory: string;
   role: string;
 }
@@ -19,22 +22,32 @@ export interface MasterOutletRecord {
   branch: string;
   address: string;
   executive: string;
+  repId?: string;
   code?: string;
   account?: string;
+  channel?: 'Hypermarket' | 'Supermarket' | 'Express';
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface PjpVisitRow {
   date: string;
   day: string;
+  repId?: string;
   executive: string;
   account: string;
   outlet: string;
   code: string;
+  sapCode?: string;
   area: string;
+  visitOrder?: number;
+  plannedCategories?: string[];
+  latitude?: number;
+  longitude?: number;
 }
 
-export const PJP_GOOGLE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/19kxrCdBsXZ07-66o971p1dC5hAbXnucpHr-jQZZYC94/edit?usp=sharing';
-export const PJP_GOOGLE_SHEET_ID = '19kxrCdBsXZ07-66o971p1dC5hAbXnucpHr-jQZZYC94';
+export const PJP_GOOGLE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1utP_XvGTmAmduJOujPZO31BWVnd9kRV1lez-8Wh5FTI/edit?usp=sharing';
+export const PJP_GOOGLE_SHEET_ID = '1utP_XvGTmAmduJOujPZO31BWVnd9kRV1lez-8Wh5FTI';
 export const PJP_DEFAULT_SECURITY_PIN = '2026';
 
 export const ALL_EXECUTIVE_PROFILES: ExecutiveProfile[] = [

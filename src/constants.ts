@@ -271,8 +271,12 @@ export interface MasterOutletOption {
   branch: string;
   address: string;
   executive: string;
+  repId?: string;
   code?: string;
   account?: string;
+  channel?: 'Hypermarket' | 'Supermarket' | 'Express';
+  latitude?: number;
+  longitude?: number;
 }
 
 export const UNMAPPED_MASTER_OUTLETS: MasterOutletOption[] = MASTER_PJP_OUTLETS;

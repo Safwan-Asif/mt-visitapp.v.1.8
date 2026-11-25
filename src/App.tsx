@@ -21,10 +21,11 @@ import { MobileMapScreen } from './components/map/MobileMapScreen';
 import { sendAuditToAppsScriptProxy, autoSaveAuditToGoogleSheet } from './services/googleSheetsService';
 import { fetchActivePlanograms, getCachedActivePlanograms } from './services/planogramService';
 import {
+  LivePjpDataset,
   fetchLivePjpData,
   getCachedLivePjpData,
   buildExecutiveOutletsFromLivePjp,
-  enrichOutletsWithLivePjpSapCodes
+  reconcileOutletsWithLivePjp
 } from './services/pjpService';
 import { PjpVisitRow } from './data/pjpMasterData';
 
@@ -100,7 +101,8 @@ export default function App() {
   const [outlets, setOutlets] = useState<Outlet[]>(INITIAL_OUTLETS);
   const [audits, setAudits] = useState<Record<string, CategoryAuditRecord>>({});
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('LOGIN');
-  const [activeTab, setActiveTab] = useState<AppTab>('home');
+  const [activeTab, setActiveTab] = useState<AppTab>('map');
+  const [outletOriginTab, setOutletOriginTab] = useState<'map' | 'pjp'>('map');
   const [isFinishingOutlet, setIsFinishingOutlet] = useState<boolean>(false);
   const [isMapsQuotaExceeded, setIsMapsQuotaExceeded] = useState<boolean>(false);
 
@@ -139,6 +141,7 @@ export default function App() {
     nonce: number;
   } | null>(null);
   const [planograms, setPlanograms] = useState<PlanogramRecord[]>(() => getCachedActivePlanograms());
+  const [livePjpDataset, setLivePjpDataset] = useState<LivePjpDataset>(() => getCachedLivePjpData());
   const [liveMasterOutlets, setLiveMasterOutlets] = useState<MasterOutletOption[]>(
     () => getCachedLivePjpData().masterOutlets
   );
@@ -147,7 +150,11 @@ export default function App() {
   );
   const [isSyncingMatch, setIsSyncingMatch] = useState<boolean>(false);
 
-  const syncPjpAndPlanograms = async (execName?: string, hasSavedRoute: boolean = true) => {
+  const syncPjpAndPlanograms = async (
+    execName?: string,
+    execRepId?: string,
+    auditsSnapshot?: Record<string, CategoryAuditRecord>
+  ) => {
     setIsSyncingMatch(true);
     try {
       const [livePlans, livePjp] = await Promise.all([
@@ -155,13 +162,15 @@ export default function App() {
         fetchLivePjpData(true)
       ]);
       if (livePlans.length > 0) setPlanograms(livePlans);
+      setLivePjpDataset(livePjp);
       if (livePjp.masterOutlets.length > 0) setLiveMasterOutlets(livePjp.masterOutlets);
       if (livePjp.visits.length > 0) setLivePjpVisits(livePjp.visits);
 
-      if (!hasSavedRoute && execName) {
-        setOutlets(buildExecutiveOutletsFromLivePjp(execName, livePjp));
-      } else {
-        setOutlets((prev) => enrichOutletsWithLivePjpSapCodes(prev, livePjp));
+      if (execName) {
+        const activeAudits = auditsSnapshot || audits;
+        setOutlets((prev) =>
+          reconcileOutletsWithLivePjp(prev, execName, livePjp, execRepId, activeAudits)
+        );
       }
     } catch {
       // Non-fatal offline cache fallback
@@ -212,19 +221,40 @@ export default function App() {
 
     const userOutletsKey = `mta_outlets_${userProfile.username}`;
     const userAuditsKey = `mta_audits_${userProfile.username}`;
-    let hasSavedOutlets = false;
+    let parsedAudits: Record<string, CategoryAuditRecord> = {};
     try {
-      const savedUserOutlets = localStorage.getItem(userOutletsKey);
-      if (savedUserOutlets) {
-        hasSavedOutlets = true;
-        setOutlets(enrichOutletsWithLivePjpSapCodes(JSON.parse(savedUserOutlets), getCachedLivePjpData()));
-      } else {
-        const initialExecOutlets = getInitialOutletsForExecutive(userProfile.name);
-        setOutlets(initialExecOutlets);
-        safeSetLocalStorage(userOutletsKey, JSON.stringify(initialExecOutlets));
-      }
       const savedUserAudits = localStorage.getItem(userAuditsKey);
-      setAudits(savedUserAudits ? JSON.parse(savedUserAudits) : {});
+      parsedAudits = savedUserAudits ? JSON.parse(savedUserAudits) : {};
+    } catch {
+      parsedAudits = {};
+    }
+    setAudits(parsedAudits);
+
+    try {
+      const cachedPjp = getCachedLivePjpData();
+      const savedUserOutlets = localStorage.getItem(userOutletsKey);
+      const parsedSaved: Outlet[] = savedUserOutlets ? JSON.parse(savedUserOutlets) : [];
+      const hasLiveCache =
+        (cachedPjp.scheduleRows?.length || 0) > 0 || (cachedPjp.visits?.length || 0) > 0;
+
+      if (hasLiveCache) {
+        const reconciled = reconcileOutletsWithLivePjp(
+          Array.isArray(parsedSaved) ? parsedSaved : [],
+          userProfile.name,
+          cachedPjp,
+          userProfile.repId,
+          parsedAudits
+        );
+        setOutlets(reconciled);
+        safeSetLocalStorage(userOutletsKey, JSON.stringify(reconciled));
+      } else if (
+        Array.isArray(parsedSaved) &&
+        parsedSaved.some((o) => o.id.startsWith('out-sap-') || o.isUnmapped)
+      ) {
+        setOutlets(parsedSaved);
+      } else {
+        setOutlets(getInitialOutletsForExecutive(userProfile.name));
+      }
     } catch {
       setOutlets(getInitialOutletsForExecutive(userProfile.name));
     }
@@ -232,10 +262,11 @@ export default function App() {
     setSelectedOutlet(null);
     setSelectedCategory(null);
     setIsFinishingOutlet(false);
-    setActiveTab('home');
-    setCurrentScreen('DASHBOARD');
+    setOutletOriginTab('map');
+    setActiveTab('map');
+    setCurrentScreen('PJP');
 
-    syncPjpAndPlanograms(userProfile.name, hasSavedOutlets);
+    syncPjpAndPlanograms(userProfile.name, userProfile.repId, parsedAudits);
   };
 
   const handleLogout = () => {
@@ -287,24 +318,22 @@ export default function App() {
       [auditKey]: record
     }));
 
+    const updatedSelectedProgress = {
+      ...selectedOutlet.progress,
+      [selectedCategory]: 'Completed' as const
+    };
+    const allSelectedCompleted = Object.values(updatedSelectedProgress).every(
+      (st) => st === 'Completed'
+    );
+    const nextSelectedOutlet: Outlet = {
+      ...selectedOutlet,
+      progress: updatedSelectedProgress,
+      status: allSelectedCompleted ? 'Completed' : 'In Progress'
+    };
+    setSelectedOutlet(nextSelectedOutlet);
+
     setOutlets((prev) =>
-      prev.map((o) => {
-        if (o.id === selectedOutlet.id) {
-          const updatedProgress = {
-            ...o.progress,
-            [selectedCategory]: 'Completed' as const
-          };
-          const allCompleted = Object.values(updatedProgress).every((st) => st === 'Completed');
-          const updatedOutlet: Outlet = {
-            ...o,
-            progress: updatedProgress,
-            status: allCompleted ? 'Completed' : 'In Progress'
-          };
-          setSelectedOutlet(updatedOutlet);
-          return updatedOutlet;
-        }
-        return o;
-      })
+      prev.map((o) => (o.id === selectedOutlet.id ? nextSelectedOutlet : o))
     );
 
     const counts = record.counts || record.aiCounts || {};
@@ -376,7 +405,9 @@ export default function App() {
   };
 
   const handleResetData = () => {
-    const defaultOutlets = user ? getInitialOutletsForExecutive(user.name) : INITIAL_OUTLETS;
+    const defaultOutlets = user
+      ? buildExecutiveOutletsFromLivePjp(user.name, livePjpDataset, user.repId)
+      : INITIAL_OUTLETS;
     setOutlets(defaultOutlets);
     setAudits({});
     if (user?.username) {
@@ -510,7 +541,7 @@ export default function App() {
               onBack={() => {
                 setIsFinishingOutlet(false);
                 setSelectedOutlet(null);
-                setActiveTab('pjp');
+                setActiveTab(outletOriginTab);
                 setCurrentScreen('PJP');
               }}
               onSelectCategory={(category) => {
@@ -562,10 +593,11 @@ export default function App() {
                   executive={user}
                   outlets={outlets}
                   pjpVisits={livePjpVisits}
+                  masterOutlets={liveMasterOutlets}
                   audits={audits}
                   planograms={planograms}
                   isSyncingPjp={isSyncingMatch}
-                  onSyncPjp={() => syncPjpAndPlanograms(user?.name, true)}
+                  onSyncPjp={() => syncPjpAndPlanograms(user?.name, user?.repId, audits)}
                   onNavigateToPendingPjp={navigateToPendingPjp}
                   selectedMapOutlet={mapAnalyticsTarget}
                   onClearMapOutlet={() => setMapAnalyticsTarget(null)}
@@ -575,9 +607,17 @@ export default function App() {
               {activeTab === 'map' && (
                 <MobileMapScreen
                   executive={user}
+                  appOutlets={outlets}
+                  audits={audits}
+                  livePjpDataset={livePjpDataset}
+                  isSyncingPjp={isSyncingMatch}
                   onStartOutletVisit={(mapOutlet) => {
                     const lowerName = mapOutlet.name.toLowerCase();
+                    const mapSap = (mapOutlet.sapCode || '').trim();
                     const existing =
+                      (mapSap
+                        ? outlets.find((o) => String(o.code || '').trim() === mapSap)
+                        : undefined) ||
                       outlets.find((o) => o.id === mapOutlet.id) ||
                       outlets.find(
                         (o) =>
@@ -585,37 +625,53 @@ export default function App() {
                           lowerName.includes(o.name.toLowerCase().split(' - ')[0])
                       );
 
-                    const catStatus =
-                      mapOutlet.visitStatus === 'completed' ? 'Completed' : 'Not Started';
+                    const fallbackId = mapSap ? `out-sap-${mapSap}` : mapOutlet.id;
+                    const flourDone =
+                      mapOutlet.visitStatus === 'completed' ||
+                      Boolean(audits[`${fallbackId}_Flour`] || (mapSap && audits[`${mapSap}_Flour`]));
+                    const oilDone =
+                      mapOutlet.visitStatus === 'completed' ||
+                      Boolean(audits[`${fallbackId}_Edible Oil`] || (mapSap && audits[`${mapSap}_Edible Oil`]));
+                    const pastaDone =
+                      mapOutlet.visitStatus === 'completed' ||
+                      Boolean(audits[`${fallbackId}_Pasta`] || (mapSap && audits[`${mapSap}_Pasta`]));
+
+                    const progress = {
+                      Flour: (flourDone ? 'Completed' : 'Not Started') as 'Completed' | 'Not Started',
+                      'Edible Oil': (oilDone ? 'Completed' : 'Not Started') as 'Completed' | 'Not Started',
+                      Pasta: (pastaDone ? 'Completed' : 'Not Started') as 'Completed' | 'Not Started'
+                    };
+                    const doneCount = [flourDone, oilDone, pastaDone].filter(Boolean).length;
 
                     const targetOutlet: Outlet = existing || {
-                      id: mapOutlet.id,
-                      code: mapOutlet.id,
-                      name: `${mapOutlet.name} - ${mapOutlet.area.split(',')[0]}`,
-                      account: mapOutlet.name.split(' ')[0],
+                      id: fallbackId,
+                      code: mapSap || mapOutlet.id,
+                      name: mapOutlet.name,
+                      account: mapOutlet.name.split(' - ')[0].split(' ')[0],
                       branch: mapOutlet.area.split(',')[0].trim(),
-                      sequence: String(mapOutlet.visitOrder ?? 99),
+                      sequence:
+                        mapOutlet.visitOrder !== null
+                          ? String(mapOutlet.visitOrder)
+                          : 'GeoIntel',
                       address: mapOutlet.area,
                       latitude: mapOutlet.latitude,
                       longitude: mapOutlet.longitude,
                       status:
-                        mapOutlet.visitStatus === 'completed' ? 'Completed' : 'Not Started',
-                      progress: {
-                        Flour: catStatus,
-                        'Edible Oil': catStatus,
-                        Pasta: catStatus
-                      }
+                        doneCount === 3
+                          ? 'Completed'
+                          : doneCount > 0
+                          ? 'In Progress'
+                          : 'Not Started',
+                      progress
                     };
 
-                    if (!existing) {
-                      setOutlets((prev) => [targetOutlet, ...prev]);
-                    }
+                    setOutletOriginTab('map');
                     setSelectedOutlet(targetOutlet);
                     setCurrentScreen('OUTLET_OVERVIEW');
                   }}
                   onMoreDetails={(outletId, mapOutlet) => {
                     setMapAnalyticsTarget({
-                      id: outletId,
+                      id: mapOutlet.sapCode ? `sap-${mapOutlet.sapCode}` : outletId,
                       name: mapOutlet.name,
                       area: mapOutlet.area,
                       nonce: Date.now()
@@ -638,9 +694,10 @@ export default function App() {
                   executive={user}
                   planograms={planograms}
                   isSyncingMatch={isSyncingMatch}
-                  onRefreshMatch={() => syncPjpAndPlanograms(user?.name, true)}
+                  onRefreshMatch={() => syncPjpAndPlanograms(user?.name, user?.repId, audits)}
                   requestedFilter={pjpRequestedFilter}
                   onSelectOutlet={(outlet) => {
+                    setOutletOriginTab('pjp');
                     setSelectedOutlet(outlet);
                     setCurrentScreen('OUTLET_OVERVIEW');
                     fetchActivePlanograms(true)

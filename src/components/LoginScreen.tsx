@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Lock, User, Delete, CheckCircle, Sun, Moon, ChevronDown } from 'lucide-react';
 import { UserProfile } from '../types';
 import { useTheme } from '../ThemeContext';
-import { EXECUTIVE_PROFILES } from '../constants';
+import {
+  fetchLivePjpData,
+  getCachedExecutives,
+  SyncedExecutiveProfile
+} from '../services/pjpService';
 
 interface LoginScreenProps {
   onLogin: (user: UserProfile) => void;
@@ -10,15 +14,36 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const { isDark, toggleTheme } = useTheme();
+  const [executives, setExecutives] = useState<SyncedExecutiveProfile[]>(() =>
+    getCachedExecutives()
+  );
   const [selectedExecutiveUsername, setSelectedExecutiveUsername] = useState<string>(
-    EXECUTIVE_PROFILES[0].username
+    () => getCachedExecutives()[0]?.username || 'safwan_asif'
   );
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    fetchLivePjpData(false)
+      .then((dataset) => {
+        if (!active) return;
+        const liveExecs = getCachedExecutives(dataset);
+        if (liveExecs.length > 0) {
+          setExecutives(liveExecs);
+          setSelectedExecutiveUsername((prev) =>
+            liveExecs.some((e) => e.username === prev) ? prev : liveExecs[0].username
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const activeExecutive =
-    EXECUTIVE_PROFILES.find((p) => p.username === selectedExecutiveUsername) ||
-    EXECUTIVE_PROFILES[0];
+    executives.find((p) => p.username === selectedExecutiveUsername) || executives[0];
 
   const handleKeyPress = (num: string) => {
     if (pin.length < 4) {
@@ -41,12 +66,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       setError('PIN must be 4 digits');
       return;
     }
-    if (pinStr !== '2026') {
-      setError('Invalid PIN. All executives use PIN 2026');
+    const exec = executives.find((p) => p.username === userStr) || executives[0];
+    const expectedPin = String(exec?.pin || '2026').trim();
+    if (pinStr !== expectedPin) {
+      setError(`Invalid PIN for ${exec?.name || 'Executive'}`);
       return;
     }
-    const exec =
-      EXECUTIVE_PROFILES.find((p) => p.username === userStr) || EXECUTIVE_PROFILES[0];
     const profile: UserProfile = {
       name: exec.name,
       username: exec.username,
@@ -58,8 +83,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   };
 
   const handleQuickDemo = () => {
-    setPin('2026');
-    attemptLogin(selectedExecutiveUsername, '2026');
+    const demoPin = String(activeExecutive?.pin || '2026').trim();
+    setPin(demoPin);
+    attemptLogin(selectedExecutiveUsername, demoPin);
   };
 
   return (
@@ -150,11 +176,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 <div className="relative mt-0.5 flex items-center">
                   <select
                     value={selectedExecutiveUsername}
-                    onChange={(e) => setSelectedExecutiveUsername(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedExecutiveUsername(e.target.value);
+                      setError(null);
+                    }}
                     aria-label="Executive Name"
                     className="w-full appearance-none bg-transparent text-sm font-bold pr-6 focus:outline-none cursor-pointer text-[var(--text-primary)]"
                   >
-                    {EXECUTIVE_PROFILES.map((exec) => (
+                    {executives.map((exec) => (
                       <option
                         key={exec.username}
                         value={exec.username}
@@ -239,9 +268,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                     ? 'bg-[#10B981]/15 hover:bg-[#10B981]/25 border-emerald-500/30 text-[#34D399]'
                     : 'bg-[#084C41]/10 hover:bg-[#084C41]/15 border-[#084C41]/20 text-[#084C41]'
                 }`}
-                title="Auto-fill Demo PIN"
+                title="Auto-fill Executive Demo PIN"
               >
-                Demo (2026)
+                Demo ({activeExecutive?.pin || '2026'})
               </button>
 
               <button

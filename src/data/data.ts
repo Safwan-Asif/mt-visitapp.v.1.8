@@ -67,6 +67,7 @@ export interface HealthBreakdown {
   healthy: number;
   attention: number;
   critical: number;
+  pending?: number;
   total: number;
 }
 
@@ -86,6 +87,8 @@ export interface RoadRouteResult {
 
 export interface MapOutlet {
   id: string;
+  sapCode?: string;
+  hasAuditHistory?: boolean;
   name: string;
   area: string;
   channel: 'Hypermarket' | 'Supermarket' | 'Express';
@@ -103,7 +106,7 @@ export interface MapOutlet {
   planogramPercentage: number; // 0 - 100
   previousPlanogramPercentage: number;
   oosSkuCount: number;
-  lastVisitDate: string; // ISO YYYY-MM-DD
+  lastVisitDate: string; // ISO YYYY-MM-DD or '' if unaudited
   issues: string[];
 }
 
@@ -682,10 +685,11 @@ export function deriveJourneyMetrics(outlets: MapOutlet[]): JourneyMetrics {
  */
 export function getDaysSinceLastVisit(
   lastVisitDate: string,
-  referenceDate: Date = new Date('2026-11-18T12:00:00Z')
+  referenceDate: Date = new Date()
 ): number {
-  const parsed = new Date(`${lastVisitDate}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return 0;
+  if (!lastVisitDate || !lastVisitDate.trim()) return -1;
+  const parsed = new Date(`${lastVisitDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return -1;
   const diffMs = referenceDate.getTime() - parsed.getTime();
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 }
@@ -703,10 +707,12 @@ export interface LastVisitRecency {
  */
 export function formatLastVisitRecency(
   lastVisitDate: string,
-  referenceDate: Date = new Date('2026-11-18T12:00:00Z')
-): LastVisitRecency {
+  referenceDate: Date = new Date()
+): LastVisitRecency | null {
+  if (!lastVisitDate || !lastVisitDate.trim()) return null;
   const days = getDaysSinceLastVisit(lastVisitDate, referenceDate);
-  const parsed = new Date(`${lastVisitDate}T00:00:00Z`);
+  if (days < 0) return null;
+  const parsed = new Date(`${lastVisitDate.slice(0, 10)}T00:00:00Z`);
   const formattedDate = !Number.isNaN(parsed.getTime())
     ? parsed.toLocaleDateString('en-GB', {
         day: 'numeric',
@@ -755,6 +761,7 @@ export function formatLastVisitRecency(
  * Count how many categories are currently below the > 50% SOS target.
  */
 export function getBelowTargetSosCategories(outlet: MapOutlet): string[] {
+  if (outlet.hasAuditHistory === false) return [];
   const lagging: string[] = [];
   if (outlet.flourSosPct <= SOS_TARGET_PCT) lagging.push('Flour');
   if (outlet.edibleOilSosPct <= SOS_TARGET_PCT) lagging.push('Edible Oil');
@@ -767,6 +774,12 @@ export function getBelowTargetSosCategories(outlet: MapOutlet): string[] {
  * Never randomized; strictly computed from outlet KPI thresholds.
  */
 export function getDeterministicOutletInsight(outlet: MapOutlet): string {
+  if (outlet.hasAuditHistory === false) {
+    return outlet.scheduledForToday
+      ? `Scheduled stop${outlet.visitOrder ? ` #${outlet.visitOrder}` : ''} today · Complete shelf audit to record KPIs`
+      : 'Assigned territory outlet · Awaiting first audit record';
+  }
+
   const laggingCats = getBelowTargetSosCategories(outlet);
   const lowPlanogram = outlet.planogramPercentage < 70;
   const warnPlanogram = outlet.planogramPercentage >= 70 && outlet.planogramPercentage < 82;
@@ -801,14 +814,19 @@ export function getDeterministicOutletInsight(outlet: MapOutlet): string {
 }
 
 /**
- * Derive Outlet Health breakdown counts directly from the outlet records.
+ * Derive Outlet Health breakdown counts directly from the audited outlet records.
  */
 export function deriveHealthBreakdown(outlets: MapOutlet[]): HealthBreakdown {
   let healthy = 0;
   let attention = 0;
   let critical = 0;
+  let pending = 0;
 
   for (const outlet of outlets) {
+    if (outlet.hasAuditHistory === false) {
+      pending += 1;
+      continue;
+    }
     if (outlet.healthStatus === 'critical') critical += 1;
     else if (outlet.healthStatus === 'attention') attention += 1;
     else healthy += 1;
@@ -818,6 +836,7 @@ export function deriveHealthBreakdown(outlets: MapOutlet[]): HealthBreakdown {
     healthy,
     attention,
     critical,
+    pending,
     total: outlets.length
   };
 }
@@ -826,6 +845,9 @@ export function deriveHealthBreakdown(outlets: MapOutlet[]): HealthBreakdown {
  * Deterministic list of active issues for the Issues Requiring Attention panel.
  */
 export function getDeterministicOutletIssues(outlet: MapOutlet): string[] {
+  if (outlet.hasAuditHistory === false) {
+    return [];
+  }
   const result: string[] = [];
   if (outlet.oosSkuCount > 0) {
     result.push(
@@ -849,6 +871,13 @@ export function getDeterministicOutletIssues(outlet: MapOutlet): string[] {
  * Deterministic recommended actions derived from outlet thresholds.
  */
 export function getDeterministicRecommendedActions(outlet: MapOutlet): string[] {
+  if (outlet.hasAuditHistory === false) {
+    return [
+      'Capture shelf photos across categories',
+      'Verify promotional price tags & POSM',
+      'Log OOS and competitor visibility'
+    ];
+  }
   const actions: string[] = [];
   if (outlet.oosSkuCount > 0) {
     actions.push('Check missing SKUs');

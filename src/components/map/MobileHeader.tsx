@@ -81,12 +81,12 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   return (
     <div ref={containerRef} className="relative">
       <header
-        aria-label="Map View Header"
+        aria-label="GeoIntel Header"
         className="marviz-glass rounded-xl px-2.5 py-1 flex items-center justify-between gap-2 text-white border border-slate-700/40 bg-slate-900/60 backdrop-blur-md"
       >
         {/* Subtle Single-Line Title */}
         <span className="font-heading text-[11px] font-bold tracking-[0.08em] uppercase leading-none text-slate-300/90 pl-0.5">
-          MAP VIEW
+          GEOINTEL
         </span>
 
         {/* Subtle Search Trigger Button */}

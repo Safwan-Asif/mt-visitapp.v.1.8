@@ -131,8 +131,8 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
         'Flour': 'Not Started',
         'Pasta': 'Not Started'
       },
-      latitude: 25.2854,
-      longitude: 51.531
+      latitude: selectedMasterStore.latitude ?? 25.2854,
+      longitude: selectedMasterStore.longitude ?? 51.531
     };
 
     onAdd(newOutlet);
