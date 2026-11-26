@@ -12,10 +12,10 @@ const FILTER_OPTIONS: Array<{
   label: string;
   dotColor?: string;
 }> = [
-  { id: 'all', label: 'All' },
-  { id: 'planned', label: 'Planned', dotColor: '#1D8EFF' },
+  { id: 'planned', label: 'Today Plan', dotColor: '#1D8EFF' },
   { id: 'completed', label: 'Completed', dotColor: '#22C55E' },
-  { id: 'issues', label: 'Issues', dotColor: '#EF4444' }
+  { id: 'issues', label: 'Issues', dotColor: '#EF4444' },
+  { id: 'all', label: 'All' }
 ];
 
 export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
@@ -38,7 +38,7 @@ export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
             type="button"
             aria-selected={isActive}
             onClick={() => onChangeFilter(opt.id)}
-            className={`min-h-[34px] px-1.5 rounded-xl text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95 border backdrop-blur-md whitespace-nowrap ${
+            className={`min-h-[34px] px-1 rounded-xl text-[10px] sm:text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95 border backdrop-blur-md whitespace-nowrap ${
               isActive
                 ? 'btn-electric-blue border-[#008DFF]/80 shadow-[0_4px_16px_rgba(0,102,255,0.48)]'
                 : 'bg-[#061C35]/85 text-[#A5B8D5] border-[#104878] hover:text-[#F1F5FF] hover:border-[#008DFF]/70'

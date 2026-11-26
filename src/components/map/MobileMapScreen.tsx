@@ -26,6 +26,7 @@ import { MobileHeader } from './MobileHeader';
 import { JourneyProgressHUD } from './JourneyProgressHUD';
 import { MapFilterChips } from './MapFilterChips';
 import { MapLayerSelector } from './MapLayerSelector';
+import { MobilePinLayerFooter } from './MobilePinLayerFooter';
 import { MapView } from './MapView';
 import { BottomSheetState, OutletBottomSheet } from './OutletBottomSheet';
 import { DesktopTopBar } from './DesktopTopBar';
@@ -73,9 +74,25 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   const [roadRouteCoords, setRoadRouteCoords] = useState<[number, number][]>([]);
   const [routeSource, setRouteSource] = useState<'osrm' | 'arterial_fallback'>('osrm');
 
-  // Mobile segmented chip filter & Desktop 2x2 Quick Filters
-  const [activeFilter, setActiveFilter] = useState<MapFilterChipId>('all');
+  // Mobile segmented chip filter (defaults to Today Plan / pending only) & Desktop 2x2 Quick Filters
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' && window.matchMedia
+      ? !window.matchMedia('(min-width: 768px)').matches
+      : typeof window !== 'undefined'
+      ? window.innerWidth < 768
+      : true
+  );
+  const [activeFilter, setActiveFilter] = useState<MapFilterChipId>('planned');
   const [activeQuickFilters, setActiveQuickFilters] = useState<QuickFilterId[]>([]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const desktopMq = window.matchMedia('(min-width: 768px)');
+    const handleChange = () => setIsMobileViewport(!desktopMq.matches);
+    handleChange();
+    desktopMq.addEventListener('change', handleChange);
+    return () => desktopMq.removeEventListener('change', handleChange);
+  }, []);
 
   const [selectedOutletId, setSelectedOutletId] = useState<string | null>(null);
   const [sheetState, setSheetState] = useState<BottomSheetState>(() => {
@@ -303,26 +320,29 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
 
   // Visible outlets after applying either desktop Quick Filters or mobile filter chips
   const filteredOutlets = useMemo(() => {
-    if (activeQuickFilters.length > 0) {
-      return outlets.filter((o) => {
-        if (
-          activeQuickFilters.includes('planned') &&
-          o.scheduledForToday &&
-          o.visitStatus === 'planned'
-        ) {
-          return true;
-        }
-        if (activeQuickFilters.includes('completed') && o.visitStatus === 'completed') {
-          return true;
-        }
-        if (activeQuickFilters.includes('attention') && o.healthStatus === 'attention') {
-          return true;
-        }
-        if (activeQuickFilters.includes('critical') && o.healthStatus === 'critical') {
-          return true;
-        }
-        return false;
-      });
+    if (!isMobileViewport) {
+      if (activeQuickFilters.length > 0) {
+        return outlets.filter((o) => {
+          if (
+            activeQuickFilters.includes('planned') &&
+            o.scheduledForToday &&
+            o.visitStatus === 'planned'
+          ) {
+            return true;
+          }
+          if (activeQuickFilters.includes('completed') && o.visitStatus === 'completed') {
+            return true;
+          }
+          if (activeQuickFilters.includes('attention') && o.healthStatus === 'attention') {
+            return true;
+          }
+          if (activeQuickFilters.includes('critical') && o.healthStatus === 'critical') {
+            return true;
+          }
+          return false;
+        });
+      }
+      return outlets;
     }
 
     if (activeFilter === 'planned') {
@@ -337,7 +357,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
       );
     }
     return outlets;
-  }, [outlets, activeFilter, activeQuickFilters]);
+  }, [outlets, activeFilter, activeQuickFilters, isMobileViewport]);
 
   const selectedOutlet = useMemo(
     () => outlets.find((o) => o.id === selectedOutletId) || null,
@@ -418,13 +438,16 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     }
   };
 
-  // Lift mobile lower-left Layers button cleanly above the bottom sheet and MobileBottomNav; hide on expanded sheet
+  // Show mobile Pin Colour footer strip when bottom sheet, layers drawer, and settings drawer are closed
+  const showMobilePinFooter = sheetState === 'closed' && !isLayersOpen && !isSettingsOpen;
+
+  // Lift mobile lower-left Layers button and lower-right controls cleanly above the Pin Colour footer strip and MobileBottomNav; hide on expanded sheet
   const layersBottomOffsetClass =
     sheetState === 'expanded'
       ? 'hidden md:flex'
       : sheetState === 'peek'
       ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))]'
-      : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))]';
+      : 'bottom-[calc(142px+env(safe-area-inset-bottom,0px))]';
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#020D1F] select-none">
@@ -455,6 +478,12 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           onMapBackgroundTap={handleMapBackgroundTap}
           onRecenterExecutive={handleRecenterExecutive}
           onCycleBaseStyle={handleCycleBaseStyle}
+          mobileControlsClosedBottomClass="bottom-[calc(142px+env(safe-area-inset-bottom,0px))]"
+          isMobileLayersOpen={isLayersOpen}
+          onToggleMobileLayersMenu={() => {
+            setIsSettingsOpen(false);
+            setIsLayersOpen((prev) => !prev);
+          }}
           onResetFilter={() => {
             setActiveQuickFilters([]);
             setActiveFilter('all');
@@ -511,7 +540,10 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
             <MobileHeader
               outlets={outlets}
               onSelectOutletFromSearch={handleSelectOutletFromSearch}
-              onOpenSettings={() => setIsSettingsOpen((v) => !v)}
+              onOpenSettings={() => {
+                setIsLayersOpen(false);
+                setIsSettingsOpen((v) => !v);
+              }}
             />
             <JourneyProgressHUD metrics={journeyMetrics} />
             <MapFilterChips
@@ -522,7 +554,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           </div>
         </div>
 
-        {/* MOBILE LOWER-LEFT FLOATING LAYERS CONTROL (< md) */}
+        {/* MOBILE MAP LAYOUT & JOURNEY PLAN POPOVER (triggered by right-side Satellite button < md) */}
         <div className="md:hidden">
           <MapLayerSelector
             isOpen={isLayersOpen}
@@ -533,9 +565,19 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
             onToggleJourneyPlan={() => setShowJourneyPlan((prev) => !prev)}
             activeLayer={activeLayer}
             onSelectLayer={(layer) => setActiveLayer(layer)}
-            bottomOffsetClass={layersBottomOffsetClass}
+            hidePinLayers={true}
+            hideTrigger={true}
+            containerClassName={`absolute right-[64px] z-[455] flex flex-col items-end transition-all duration-200 ${layersBottomOffsetClass}`}
           />
         </div>
+
+        {/* MOBILE PIN COLOUR LAYER FOOTER STRIP (< md) */}
+        {showMobilePinFooter && (
+          <MobilePinLayerFooter
+            activeLayer={activeLayer}
+            onSelectLayer={(layer) => setActiveLayer(layer)}
+          />
+        )}
 
         {/* MOBILE TOUCH-DRAGGABLE BOTTOM SHEET (< md) */}
         <OutletBottomSheet

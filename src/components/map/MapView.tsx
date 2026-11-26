@@ -9,7 +9,7 @@ import {
 } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Plus, Minus, Crosshair, Map as MapIcon, Mountain, Globe } from 'lucide-react';
+import { Plus, Minus, Crosshair, Map as MapIcon, Mountain, Globe, Layers } from 'lucide-react';
 import {
   DOHA_CENTER,
   DOHA_LANDMARKS,
@@ -70,6 +70,9 @@ interface MapViewProps {
   onRecenterExecutive: () => void;
   onCycleBaseStyle?: () => void;
   onResetFilter?: () => void;
+  mobileControlsClosedBottomClass?: string;
+  isMobileLayersOpen?: boolean;
+  onToggleMobileLayersMenu?: () => void;
 }
 
 interface MapControllerProps {
@@ -143,7 +146,10 @@ export const MapView: React.FC<MapViewProps> = ({
   onMapBackgroundTap,
   onRecenterExecutive,
   onCycleBaseStyle,
-  onResetFilter
+  onResetFilter,
+  mobileControlsClosedBottomClass = 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))]',
+  isMobileLayersOpen = false,
+  onToggleMobileLayersMenu
 }) => {
   const mapRef = useRef<L.Map | null>(null);
 
@@ -184,7 +190,7 @@ export const MapView: React.FC<MapViewProps> = ({
       ? 'hidden md:flex md:bottom-3 md:flex-row'
       : sheetState === 'peek'
       ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row'
-      : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row';
+      : `${mobileControlsClosedBottomClass} md:bottom-3 flex-col md:flex-row`;
 
   return (
     <div className="relative w-full h-full">
@@ -194,7 +200,7 @@ export const MapView: React.FC<MapViewProps> = ({
         minZoom={3}
         maxZoom={18}
         zoomControl={false}
-        attributionControl={true}
+        attributionControl={false}
         className={`marviz-leaflet-container ${tileThemeClass}`}
       >
         <TileLayer
@@ -313,14 +319,35 @@ export const MapView: React.FC<MapViewProps> = ({
       <div
         className={`absolute right-3 z-[450] flex gap-2 transition-all duration-200 ${controlsBottomClass}`}
       >
-        {onCycleBaseStyle && (
+        {(onCycleBaseStyle || onToggleMobileLayersMenu) && (
           <button
             type="button"
-            onClick={onCycleBaseStyle}
-            aria-label={`Switch map layout (current: ${activeStyleConfig.label})`}
-            title={`Map Mode: ${activeStyleConfig.label} — Tap to switch`}
-            className="w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center text-[#00C8FF] hover:text-white hover:border-[#008DFF] active:scale-95 transition-all cursor-pointer"
+            onClick={() => {
+              if (
+                onToggleMobileLayersMenu &&
+                typeof window !== 'undefined' &&
+                !window.matchMedia('(min-width: 768px)').matches
+              ) {
+                onToggleMobileLayersMenu();
+              } else {
+                onCycleBaseStyle?.();
+              }
+            }}
+            aria-expanded={onToggleMobileLayersMenu ? isMobileLayersOpen : undefined}
+            aria-label={`Map layout and journey layers (current: ${activeStyleConfig.label})`}
+            title={`Map Mode: ${activeStyleConfig.label}`}
+            className={`relative w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer ${
+              isMobileLayersOpen
+                ? 'border-sky-400/80 bg-[#0066FF]/28 text-white shadow-[0_0_16px_rgba(0,141,255,0.45)]'
+                : 'text-[#00C8FF] hover:text-white hover:border-[#008DFF]'
+            }`}
           >
+            <span
+              aria-hidden="true"
+              className="md:hidden absolute top-1 right-1 text-[#00C8FF]/90"
+            >
+              <Layers size={8} strokeWidth={2.5} />
+            </span>
             {mapBaseStyle === 'tactical_terrain' ? (
               <Mountain size={15} />
             ) : mapBaseStyle === 'tactical_dark' ? (

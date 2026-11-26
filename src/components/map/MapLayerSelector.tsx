@@ -16,6 +16,9 @@ interface MapLayerSelectorProps {
   activeLayer: PerformanceLayerId;
   onSelectLayer: (layer: PerformanceLayerId) => void;
   bottomOffsetClass?: string;
+  hidePinLayers?: boolean;
+  hideTrigger?: boolean;
+  containerClassName?: string;
 }
 
 const PERFORMANCE_LAYERS: Array<{
@@ -40,13 +43,24 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
   onToggleJourneyPlan,
   activeLayer,
   onSelectLayer,
-  bottomOffsetClass = 'bottom-[calc(76px+env(safe-area-inset-bottom,0px))] md:bottom-5'
+  bottomOffsetClass = 'bottom-[calc(76px+env(safe-area-inset-bottom,0px))] md:bottom-5',
+  hidePinLayers = false,
+  hideTrigger = false,
+  containerClassName
 }) => {
   const activeMeta = PERFORMANCE_LAYERS.find((l) => l.id === activeLayer);
+  const activeStyleMeta = MAP_BASE_STYLES.find((s) => s.id === mapBaseStyle);
+
+  if (hideTrigger && !isOpen) {
+    return null;
+  }
 
   return (
     <div
-      className={`absolute left-3 z-[450] flex flex-col items-start gap-2 transition-all duration-200 ${bottomOffsetClass}`}
+      className={
+        containerClassName ||
+        `absolute left-3 z-[450] flex flex-col items-start gap-2 transition-all duration-200 ${bottomOffsetClass}`
+      }
     >
       {/* Collapsible Layer Control Panel */}
       {isOpen && (
@@ -142,65 +156,71 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
           </div>
 
           {/* Single-Active Performance Colouring Layer */}
-          <div className="pt-2 space-y-0.5" role="radiogroup" aria-label="Pin Color Layer">
-            <div className="px-1 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
-              Pin Colour Layer (Single)
+          {!hidePinLayers && (
+            <div className="pt-2 space-y-0.5" role="radiogroup" aria-label="Pin Color Layer">
+              <div className="px-1 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                Pin Colour Layer (Single)
+              </div>
+              {PERFORMANCE_LAYERS.map((layer) => {
+                const selected = activeLayer === layer.id;
+                return (
+                  <button
+                    key={layer.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => onSelectLayer(layer.id)}
+                    className={`w-full min-h-[38px] px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left transition-colors cursor-pointer ${
+                      selected
+                        ? 'bg-[#0066FF]/22 border border-sky-400/50 text-white'
+                        : 'border border-transparent text-slate-300 hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold leading-tight truncate">
+                        {layer.label}
+                      </div>
+                      <div className="text-[9px] text-slate-400 leading-tight truncate">
+                        {layer.hint}
+                      </div>
+                    </div>
+                    {selected && (
+                      <span className="w-4 h-4 rounded-full bg-[#0066FF] flex items-center justify-center shrink-0">
+                        <Check size={10} strokeWidth={3} className="text-white" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-            {PERFORMANCE_LAYERS.map((layer) => {
-              const selected = activeLayer === layer.id;
-              return (
-                <button
-                  key={layer.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => onSelectLayer(layer.id)}
-                  className={`w-full min-h-[38px] px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left transition-colors cursor-pointer ${
-                    selected
-                      ? 'bg-[#0066FF]/22 border border-sky-400/50 text-white'
-                      : 'border border-transparent text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold leading-tight truncate">
-                      {layer.label}
-                    </div>
-                    <div className="text-[9px] text-slate-400 leading-tight truncate">
-                      {layer.hint}
-                    </div>
-                  </div>
-                  {selected && (
-                    <span className="w-4 h-4 rounded-full bg-[#0066FF] flex items-center justify-center shrink-0">
-                      <Check size={10} strokeWidth={3} className="text-white" />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          )}
         </div>
       )}
 
       {/* Floating Layers Trigger Button */}
-      <button
-        type="button"
-        onClick={onToggleOpen}
-        aria-expanded={isOpen}
-        aria-label="Toggle map layers"
-        className={`min-h-[44px] px-3.5 rounded-2xl marviz-glass flex items-center gap-2 text-white transition-all cursor-pointer active:scale-95 ${
-          isOpen
-            ? 'border-sky-400/70 bg-[#0066FF]/25'
-            : 'hover:border-sky-400/50'
-        }`}
-      >
-        <Layers size={16} className="text-sky-400 shrink-0" />
-        <div className="text-left">
-          <div className="text-[11px] font-bold leading-none">Layers</div>
-          <div className="text-[9px] text-sky-300/90 leading-tight mt-0.5 max-w-[92px] truncate">
-            {activeMeta?.label || 'Visit Status'}
+      {!hideTrigger && (
+        <button
+          type="button"
+          onClick={onToggleOpen}
+          aria-expanded={isOpen}
+          aria-label="Toggle map layers"
+          className={`min-h-[44px] px-3.5 rounded-2xl marviz-glass flex items-center gap-2 text-white transition-all cursor-pointer active:scale-95 ${
+            isOpen
+              ? 'border-sky-400/70 bg-[#0066FF]/25'
+              : 'hover:border-sky-400/50'
+          }`}
+        >
+          <Layers size={16} className="text-sky-400 shrink-0" />
+          <div className="text-left">
+            <div className="text-[11px] font-bold leading-none">Layers</div>
+            <div className="text-[9px] text-sky-300/90 leading-tight mt-0.5 max-w-[92px] truncate">
+              {hidePinLayers
+                ? activeStyleMeta?.shortLabel || 'Satellite'
+                : activeMeta?.label || 'Visit Status'}
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+      )}
     </div>
   );
 };
