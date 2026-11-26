@@ -24,7 +24,6 @@ import {
   Sparkles,
   Zap,
   ZapOff,
-  Columns2,
   Square,
   RectangleHorizontal,
   RectangleVertical,
@@ -767,8 +766,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   >(existingAudit ? 'RESULTS' : 'SETUP');
 
   // Screen 06: Aisle & Orientation configuration
-  const [aisleMode, setAisleMode] = useState<'single' | 'double'>(() =>
-    Object.keys(buildInitialAisleSessions(existingAudit)).length > 1 ? 'double' : 'single'
+  const [aisleMode, setAisleMode] = useState<'single' | 'multi'>(() =>
+    Object.keys(buildInitialAisleSessions(existingAudit)).length > 1 ? 'multi' : 'single'
   );
   const [captureOrientation, setCaptureOrientation] = useState<'horizontal' | 'vertical'>(
     'horizontal'
@@ -797,7 +796,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  // Dynamic Bay Sessions (starts with Bay 1; expands to Bay 2+ if Double Aisle selected)
+  // Dynamic Bay Sessions (starts with Bay 1; expands to Bay 2, Bay 3, ... in Multiple Aisle mode)
   const [aisleSessions, setAisleSessions] = useState<Record<string, AisleSession>>(() =>
     buildInitialAisleSessions(existingAudit)
   );
@@ -1382,8 +1381,15 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   // Retake bay escape hatch tracking
   const [retakeBayKey, setRetakeBayKey] = useState<string | null>(null);
 
-  // Dynamic bay lists
-  const bayKeys = useMemo(() => Object.keys(aisleSessions), [aisleSessions]);
+  // Dynamic bay lists (sorted numerically: bay_1, bay_2, bay_3, ...)
+  const bayKeys = useMemo(() => {
+    return Object.keys(aisleSessions).sort((a, b) => {
+      const na = parseInt(a.replace('bay_', ''), 10);
+      const nb = parseInt(b.replace('bay_', ''), 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+  }, [aisleSessions]);
 
   // Captured bays list (bays with photos)
   const capturedAisles = useMemo(() => {
@@ -1433,9 +1439,26 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     return null;
   }, [bayKeys, aisleSessions]);
 
-  // Previous bay whose right edge is shown as a faded guide while shooting the current bay
+  // Previous bay whose right edge is shown as a faded guide while shooting the current bay (Bay 2, Bay 3, Bay 4, ...)
   const ghostGuideBayKey = step === 'CAPTURE' && !pendingCapture ? previousCapturedBayKey(currentAisle) : null;
   const ghostGuideUrl = ghostGuideBayKey ? aisleSessions[ghostGuideBayKey]?.capturedPhotoUrl || null : null;
+
+  const [prevBayGhostStripUrl, setPrevBayGhostStripUrl] = useState<string>('');
+
+  useEffect(() => {
+    if (!ghostGuideUrl) {
+      setPrevBayGhostStripUrl('');
+      return;
+    }
+    let active = true;
+    setPrevBayGhostStripUrl('');
+    extractRightOverlapStrip(ghostGuideUrl, GHOST_GUIDE_FRAC).then((strip) => {
+      if (active && strip) setPrevBayGhostStripUrl(strip);
+    });
+    return () => {
+      active = false;
+    };
+  }, [ghostGuideUrl]);
 
   useEffect(() => {
     captureBlockedRef.current = Boolean(pendingCapture) || Boolean(ghostGuideUrl);
@@ -1883,12 +1906,12 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setResultsAisleView('ALL');
   }, [standardBrands]);
 
-  // Apply Screen 06 Aisle Mode selection (1 Bay vs 2 Bays)
-  const handleSelectAisleMode = (mode: 'single' | 'double') => {
+  // Apply Screen 06 Aisle Mode selection (Single Aisle vs Multiple Aisle)
+  const handleSelectAisleMode = (mode: 'single' | 'multi') => {
     setAisleMode(mode);
     setAisleSessions((prev) => {
       const next = { ...prev };
-      if (mode === 'double') {
+      if (mode === 'multi') {
         if (!next.bay_2) {
           next.bay_2 = {
             key: 'bay_2',
@@ -1911,9 +1934,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           };
         }
       } else {
-        if (next.bay_2 && !next.bay_2.capturedPhotoUrl && !next.bay_2.annotatedPhotoUrl) {
-          delete next.bay_2;
-          if (currentAisle === 'bay_2') setCurrentAisle('bay_1');
+        Object.keys(next).forEach((k) => {
+          if (k !== 'bay_1' && !next[k]?.capturedPhotoUrl && !next[k]?.annotatedPhotoUrl) {
+            delete next[k];
+          }
+        });
+        if (currentAisle !== 'bay_1' && !next[currentAisle]) {
+          setCurrentAisle('bay_1');
         }
       }
       return next;
@@ -2032,8 +2059,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     [retakeBayKey, previousCapturedBayKey, aisleSessions]
   );
 
-  /** Rep tapped Confirm: store seam, send photo for background AI analysis, advance to Bay 2 or directly to Questionnaire. */
-  const handleConfirmUpload = () => {
+  /** Rep tapped Confirm: store seam, send photo for background AI analysis, then advance to the next bay or finish to Questionnaire. */
+  const handleConfirmUpload = (proceedToNextBay: boolean = false) => {
     if (!pendingCapture) return;
     const { bayKey, file, dataUrl, width, height, shotWithGuide, isRetake } = pendingCapture;
     const captureDims = width && height ? { width, height } : undefined;
@@ -2064,20 +2091,56 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       return;
     }
 
-    // If Double Aisle selected and Bay 2 still needs a photo, switch immediately to Bay 2 with ghost guide
-    if (
-      aisleMode === 'double' &&
-      bayKey === 'bay_1' &&
-      !aisleSessions.bay_2?.capturedPhotoUrl &&
-      !aisleSessions.bay_2?.annotatedPhotoUrl
-    ) {
-      setCurrentAisle('bay_2');
+    // Multiple Aisle flow: advance to the next uncaptured bay or dynamically allocate Bay 3, Bay 4, ...
+    if (aisleMode === 'multi' && proceedToNextBay) {
+      const curIdx = bayKeys.indexOf(bayKey);
+      const existingNextEmpty = bayKeys.find(
+        (k, idx) =>
+          idx > curIdx &&
+          !aisleSessions[k]?.capturedPhotoUrl &&
+          !aisleSessions[k]?.annotatedPhotoUrl
+      );
+
+      let targetNextKey = existingNextEmpty;
+      if (!targetNextKey) {
+        const maxNum = Math.max(
+          bayKeys.length,
+          ...bayKeys.map((k) => parseInt(k.replace('bay_', ''), 10) || 0)
+        );
+        const nextNum = maxNum + 1;
+        targetNextKey = `bay_${nextNum}`;
+        const newSession: AisleSession = {
+          key: targetNextKey,
+          label: `Bay ${nextNum}`,
+          status: 'idle',
+          capturedFile: null,
+          capturedPhotoUrl: null,
+          capturedFileName: null,
+          naturalDimensions: { width: 800, height: 800 },
+          annotatedPhotoUrl: null,
+          rawCounts: {},
+          counts: {},
+          originalAiCounts: {},
+          totalFacings: null,
+          boxes: [],
+          rawBoxes: [],
+          n8nStatus: null,
+          analysisStartTime: null,
+          analysisDurationSeconds: 0
+        };
+        setAisleSessions((prev) => ({
+          ...prev,
+          [targetNextKey!]: newSession
+        }));
+      }
+
+      setCurrentAisle(targetNextKey);
       autoCaptureTriggeredRef.current = false;
       levelHoldStartTimeRef.current = null;
       return;
     }
 
-    // All required bays captured -> immediately launch Section 1 Questionnaire while AI runs concurrently!
+    // Rep chose to finish capturing -> immediately launch Section 1 Questionnaire while AI runs concurrently
     setCameraStreamActive(false);
     setCurrentAisle(bayKey);
     setPosmActiveBayKey(bayKey);
@@ -2086,6 +2149,22 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
   /** Rep rejected the photo: discard it and return to the camera for the same bay. */
   const handleDiscardPending = () => {
+    const discarded = pendingCapture;
+    if (discarded) {
+      setAisleSessions((prev) => {
+        const cur = prev[discarded.bayKey];
+        if (!cur || cur.capturedPhotoUrl !== discarded.dataUrl) return prev;
+        return {
+          ...prev,
+          [discarded.bayKey]: {
+            ...cur,
+            capturedFile: null,
+            capturedPhotoUrl: null,
+            capturedFileName: null
+          }
+        };
+      });
+    }
     pendingDataUrlRef.current = null;
     setPendingCapture(null);
     setPendingSeam(null);
@@ -2213,8 +2292,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     beginBayPreview(currentAisle, null, fallbackShelfPhoto, null);
   };
 
-  // Flexible Dynamic Bay Addition (Transmits confirmed bay to n8n, then adds next bay)
+  // Flexible Dynamic Bay Addition (Transmits confirmed bay to n8n if still idle, then adds next bay)
   const handleAddNewBay = () => {
+    setAisleMode('multi');
     setShowPostCapturePrompt(false);
     autoCaptureTriggeredRef.current = false;
     levelHoldStartTimeRef.current = null;
@@ -2229,55 +2309,54 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       startCameraStream();
     }
 
-    // Transmit the confirmed bay to n8n workflow only now
+    // Transmit the confirmed bay to n8n workflow if not yet started
     const confirmedBayKey = lastCapturedAisle || currentAisle;
     const confirmedSession = aisleSessions[confirmedBayKey];
     if (confirmedSession && confirmedSession.capturedPhotoUrl && confirmedSession.status === 'idle') {
       startAsyncBayAnalysis(confirmedBayKey, confirmedSession.capturedFile, confirmedSession.capturedPhotoUrl);
     }
 
-    setAisleSessions((prev) => {
-      const keys = Object.keys(prev);
-      // Check if there is an existing empty bay
-      const existingEmpty = keys.find(
-        (k) => !prev[k].capturedPhotoUrl && !prev[k].annotatedPhotoUrl
-      );
-      if (existingEmpty) {
-        setCurrentAisle(existingEmpty);
-        setStep('CAPTURE');
-        return prev;
-      }
-
-      // Create next bay dynamically
-      const nextNum = keys.length + 1;
-      const nextKey = `bay_${nextNum}`;
-      const newSession: AisleSession = {
-        key: nextKey,
-        label: `Bay ${nextNum}`,
-        status: 'idle',
-        capturedFile: null,
-        capturedPhotoUrl: null,
-        capturedFileName: null,
-        naturalDimensions: { width: 800, height: 800 },
-        annotatedPhotoUrl: null,
-        rawCounts: {},
-        counts: {},
-        originalAiCounts: {},
-        totalFacings: null,
-        boxes: [],
-        rawBoxes: [],
-        n8nStatus: null,
-        analysisStartTime: null,
-        analysisDurationSeconds: 0
-      };
-
-      setCurrentAisle(nextKey);
+    const existingEmpty = bayKeys.find(
+      (k) => !aisleSessions[k]?.capturedPhotoUrl && !aisleSessions[k]?.annotatedPhotoUrl
+    );
+    if (existingEmpty) {
+      setCurrentAisle(existingEmpty);
       setStep('CAPTURE');
-      return {
-        ...prev,
-        [nextKey]: newSession
-      };
-    });
+      return;
+    }
+
+    const maxNum = Math.max(
+      bayKeys.length,
+      ...bayKeys.map((k) => parseInt(k.replace('bay_', ''), 10) || 0)
+    );
+    const nextNum = maxNum + 1;
+    const nextKey = `bay_${nextNum}`;
+    const newSession: AisleSession = {
+      key: nextKey,
+      label: `Bay ${nextNum}`,
+      status: 'idle',
+      capturedFile: null,
+      capturedPhotoUrl: null,
+      capturedFileName: null,
+      naturalDimensions: { width: 800, height: 800 },
+      annotatedPhotoUrl: null,
+      rawCounts: {},
+      counts: {},
+      originalAiCounts: {},
+      totalFacings: null,
+      boxes: [],
+      rawBoxes: [],
+      n8nStatus: null,
+      analysisStartTime: null,
+      analysisDurationSeconds: 0
+    };
+
+    setAisleSessions((prev) => ({
+      ...prev,
+      [nextKey]: newSession
+    }));
+    setCurrentAisle(nextKey);
+    setStep('CAPTURE');
   };
 
   // 1. Tapping "Proceed to POSM Form" confirms all captured photos and transmits them to n8n
@@ -2627,6 +2706,54 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
   // Save Path with duplicate click guard
   const isSaveEnabled = completedAisles.length >= 1 && !isSavingAudit;
+
+  const handleProceedToScorecard = async () => {
+    if (!isSaveEnabled) return;
+    try {
+      let latestPlanograms: PlanogramRecord[] = [];
+      try {
+        latestPlanograms = await fetchActivePlanograms(false);
+      } catch {
+        latestPlanograms = [];
+      }
+      const activePlanogram = findActivePlanogramForOutlet(outlet, category, latestPlanograms);
+
+      const bayDiagnosticInputs = completedAisles.map((k, idx) => {
+        const s = aisleSessions[k];
+        return {
+          key: s?.key || k,
+          label: s?.label || `Bay ${idx + 1}`,
+          boundingBoxes: s?.boxes || [],
+          boxes: s?.boxes || [],
+          planRows: s?.planRows,
+          unmappedBrands: s?.unmappedBrands
+        };
+      });
+
+      const collectedUnmapped = Array.from(
+        new Set(completedAisles.flatMap((k) => aisleSessions[k]?.unmappedBrands || []))
+      );
+
+      const complianceResult = evaluatePlanogramCompliance({
+        outlet,
+        category,
+        planogram: activePlanogram,
+        confirmedCounts: combinedCounts,
+        initialAiCounts: combinedOrigCounts,
+        actualTotalFacings: combinedTotalFacings,
+        actualPrimarySharePct: primarySharePct,
+        baySessions: bayDiagnosticInputs,
+        excludedBoxIds: removedDuplicateBoxIds,
+        unmappedBrands: collectedUnmapped
+      });
+
+      setScorecardResult(complianceResult);
+      setStep('SCORECARD');
+    } catch (err) {
+      console.warn('Scorecard transition note, falling back to direct save:', err);
+      handleFinalSave();
+    }
+  };
 
   const handleFinalSave = async () => {
     if (!isSaveEnabled || isSavingAudit) return;
@@ -3220,28 +3347,28 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => handleSelectAisleMode('double')}
+                  onClick={() => handleSelectAisleMode('multi')}
                   className={`rounded-3xl p-4 flex flex-col items-center justify-center text-center gap-2.5 min-h-[126px] transition-all cursor-pointer active:scale-[0.98] ${
-                    aisleMode === 'double'
+                    aisleMode === 'multi'
                       ? 'glass-panel border-[#00C8FF] ring-2 ring-[#008DFF]/35 shadow-[0_0_24px_-6px_rgba(0,141,255,0.45)]'
                       : 'glass-subtle hover:border-[#008DFF]/45'
                   }`}
                 >
                   <div
                     className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${
-                      aisleMode === 'double'
+                      aisleMode === 'multi'
                         ? 'bg-[#0066FF]/20 border-[#00C8FF]/55 text-[#00C8FF]'
                         : 'glass-panel text-[var(--text-secondary)]'
                     }`}
                   >
-                    <Columns2 size={22} />
+                    <Layers size={22} />
                   </div>
                   <div>
                     <span className="text-sm font-extrabold text-[var(--text-primary)] block">
-                      Double Aisle
+                      Multiple Aisle
                     </span>
                     <span className="text-[11px] text-[var(--text-secondary)]">
-                      2 bays + seam stitch
+                      2+ bays · add as many as needed
                     </span>
                   </div>
                 </button>
@@ -3409,30 +3536,49 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               {/* Subtle Edge Vignette */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/55 pointer-events-none" />
 
-              {/* Previous-Bay Ghost Guide (Bay 2+) */}
-              {ghostGuideUrl && (() => {
-                const baseW = cameraStreamActive && videoDims.w && viewfinderSize.w ? viewfinderSize.w : 320;
-                const baseH = cameraStreamActive && videoDims.h && viewfinderSize.h ? viewfinderSize.h : 480;
+              {/* Previous-Bay 15% Ghost Alignment Overlay (Bay 2, Bay 3, Bay 4, ...) */}
+              {ghostGuideUrl && prevBayGhostStripUrl && (() => {
+                const containerW = viewfinderSize.w || 320;
+                const containerH = viewfinderSize.h || 480;
                 const frame =
-                  cameraStreamActive && videoDims.w && viewfinderSize.w
+                  cameraStreamActive && videoDims.w && videoDims.h && viewfinderSize.w && viewfinderSize.h
                     ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
-                    : { left: 0, top: 0, width: baseW, height: baseH };
-                const overlayWidth = Math.max(80, Math.round((frame.width || baseW) * GHOST_GUIDE_FRAC));
+                    : { left: 0, top: 0, width: containerW, height: containerH };
+                const overlayWidth = Math.max(24, Math.round(frame.width * GHOST_GUIDE_FRAC));
+                const prevLabel = (ghostGuideBayKey && aisleSessions[ghostGuideBayKey]?.label) || 'previous bay';
 
                 return (
                   <div
-                    className="absolute top-0 bottom-0 left-0 overflow-hidden pointer-events-none z-[15] border-r-2 border-dashed border-amber-400 bg-amber-500/10"
-                    style={{ width: `${overlayWidth}px` }}
+                    className="absolute pointer-events-none z-[15] overflow-hidden"
+                    style={{
+                      left: `${frame.left}px`,
+                      top: `${frame.top}px`,
+                      width: `${frame.width}px`,
+                      height: `${frame.height}px`
+                    }}
                   >
-                    <img
-                      src={ghostGuideUrl}
-                      alt="Previous bay overlay guide"
-                      className="absolute top-0 right-0 h-full max-w-none opacity-65"
-                      style={{ width: `${Math.max(300, frame.width || baseW)}px`, objectFit: 'fill' }}
-                    />
-                    <div className="absolute top-14 left-1 right-1 bg-black/85 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/80 text-center">
-                      <span className="text-[9px] font-bold uppercase tracking-tight text-amber-300">
-                        Align with {aisleSessions[ghostGuideBayKey!]?.label || 'Bay 1'}
+                    <motion.div
+                      key={ghostGuideBayKey || 'ghost'}
+                      initial={shouldReduceMotion ? { opacity: 0.4 } : { opacity: 0 }}
+                      animate={{ opacity: 0.4 }}
+                      transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
+                      className="absolute top-0 bottom-0 left-0 overflow-hidden pointer-events-none border-r border-dashed border-cyan-400"
+                      style={{ width: `${overlayWidth}px` }}
+                    >
+                      <img
+                        src={prevBayGhostStripUrl}
+                        alt={`${prevLabel} ghost alignment strip`}
+                        className="w-full h-full object-fill block select-none"
+                        draggable={false}
+                      />
+                    </motion.div>
+
+                    <div className="absolute top-14 left-2 max-w-[175px] bg-black/80 backdrop-blur-md px-2 py-1 rounded-lg border border-cyan-400/60 pointer-events-none shadow-lg">
+                      <span className="text-[9px] font-bold tracking-tight text-cyan-300 block leading-tight">
+                        Align the shelf with the ghost guide.
+                      </span>
+                      <span className="text-[8px] font-mono text-cyan-200 block mt-0.5">
+                        15% Overlap &bull; {prevLabel}
                       </span>
                     </div>
                   </div>
@@ -3514,15 +3660,29 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                         const curIdx = bayKeys.indexOf(currentAisle);
                         setCurrentAisle(bayKeys[(curIdx + 1) % bayKeys.length]);
                       } else {
-                        handleSelectAisleMode('double');
-                        setCurrentAisle('bay_2');
+                        handleSelectAisleMode('multi');
+                        if (aisleSessions.bay_1?.capturedPhotoUrl) {
+                          setCurrentAisle('bay_2');
+                        }
                       }
                     }}
                     className="w-10 h-10 rounded-full bg-[#020D1F]/80 backdrop-blur-md border border-white/20 text-[10px] font-extrabold text-white flex items-center justify-center cursor-pointer active:scale-95"
-                    title="Toggle Single / Double Bay"
+                    title={bayKeys.length > 1 ? 'Switch Bay' : 'Switch to Multiple Aisle'}
                   >
                     {bayKeys.length > 1 ? `${bayKeys.indexOf(currentAisle) + 1}/${bayKeys.length}` : '1B'}
                   </button>
+
+                  {aisleMode === 'multi' && (
+                    <button
+                      type="button"
+                      onClick={handleAddNewBay}
+                      className="w-10 h-10 rounded-full bg-[#008DFF]/25 backdrop-blur-md border border-[#00C8FF]/55 text-[#00C8FF] flex items-center justify-center cursor-pointer active:scale-95"
+                      title="Add another bay"
+                      aria-label="Add another bay"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -3710,7 +3870,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               <div>
                 <h2 className="font-heading font-extrabold text-xl text-white">Shelf Capture</h2>
                 <p className="text-xs text-[#9AB0D0]">
-                  {category} &middot; {aisleMode === 'double' ? 'Double Aisle (2 Bays)' : 'Single Aisle'}
+                  {category} &middot; {aisleMode === 'multi' ? `Multiple Aisle (${bayKeys.length} Bays)` : 'Single Aisle'}
                 </p>
               </div>
               <div className="space-y-2">
@@ -3739,99 +3899,120 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       </button>
                     );
                   })}
+                  {aisleMode === 'multi' && (
+                    <button
+                      type="button"
+                      onClick={handleAddNewBay}
+                      className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer bg-[#008DFF]/20 border border-[#00C8FF]/45 text-[#00C8FF] hover:bg-[#008DFF]/30"
+                    >
+                      <Plus size={12} />
+                      <span>Add Bay</span>
+                    </button>
+                  )}
                 </div>
               </div>
               <p className="text-xs text-[#9AB0D0] leading-relaxed">
                 {ghostGuideUrl
-                  ? 'Align the faded left strip with the edge of Bay 1, then tap the shutter.'
+                  ? `Align the faded left strip with ${(ghostGuideBayKey && aisleSessions[ghostGuideBayKey]?.label) || 'the previous bay'}, then tap the shutter.`
                   : 'Center the shelf horizontally, wait for the green level line, and tap the shutter.'}
               </p>
             </div>
 
             {/* Bottom Shutter Bar */}
             {pendingCapture ? (
-              <div className="flex items-center justify-between gap-4 max-w-md mx-auto w-full">
-                <button
-                  type="button"
-                  onClick={handleDiscardPending}
-                  className="h-12 px-5 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
-                >
-                  <RefreshCw size={14} />
-                  <span>Retake</span>
-                </button>
+              (() => {
+                const isMultiFlow = aisleMode === 'multi' && !pendingCapture.isRetake;
+                const curIdx = bayKeys.indexOf(pendingCapture.bayKey);
+                const existingNextEmpty = bayKeys.find(
+                  (k, idx) =>
+                    idx > curIdx &&
+                    !aisleSessions[k]?.capturedPhotoUrl &&
+                    !aisleSessions[k]?.annotatedPhotoUrl
+                );
+                const maxNum = Math.max(
+                  bayKeys.length,
+                  ...bayKeys.map((k) => parseInt(k.replace('bay_', ''), 10) || 0)
+                );
+                const nextBayLabel = existingNextEmpty
+                  ? aisleSessions[existingNextEmpty]?.label || `Bay ${curIdx + 2}`
+                  : `Bay ${maxNum + 1}`;
+                const needsMandatoryNext =
+                  isMultiFlow &&
+                  pendingCapture.bayKey === 'bay_1' &&
+                  !aisleSessions.bay_2?.capturedPhotoUrl &&
+                  !aisleSessions.bay_2?.annotatedPhotoUrl;
 
-                <button
-                  type="button"
-                  onClick={handleConfirmUpload}
-                  disabled={isMeasuringSeam}
-                  aria-label="Confirm Photo & Start Analysis"
-                  className="h-14 flex-1 rounded-full btn-electric-blue text-white font-bold text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
-                >
-                  <Check size={18} strokeWidth={2.8} />
-                  <span>
-                    {aisleMode === 'double' &&
-                    pendingCapture.bayKey === 'bay_1' &&
-                    !pendingCapture.isRetake &&
-                    !aisleSessions.bay_2?.capturedPhotoUrl
-                      ? 'Save & Next Bay'
-                      : 'Use Photo'}
-                  </span>
-                </button>
-              </div>
+                return (
+                  <div className="flex items-center justify-between gap-2 max-w-md mx-auto w-full">
+                    <button
+                      type="button"
+                      onClick={handleDiscardPending}
+                      className="h-12 px-4 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 shrink-0"
+                    >
+                      <RefreshCw size={14} />
+                      <span>Retake</span>
+                    </button>
+
+                    {isMultiFlow && !needsMandatoryNext && (
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmUpload(true)}
+                        disabled={isMeasuringSeam}
+                        className="h-12 px-3.5 flex-1 rounded-full bg-[#008DFF]/20 border border-[#00C8FF]/60 text-[#00C8FF] font-bold text-xs flex items-center justify-center gap-1 cursor-pointer active:scale-95 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        <Plus size={15} strokeWidth={2.6} />
+                        <span>{nextBayLabel}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmUpload(needsMandatoryNext)}
+                      disabled={isMeasuringSeam}
+                      aria-label={needsMandatoryNext ? `Save & Capture ${nextBayLabel}` : 'Confirm Photo & Start Analysis'}
+                      className="h-13 flex-1 rounded-full btn-electric-blue text-white font-bold text-sm flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      <Check size={17} strokeWidth={2.8} />
+                      <span>
+                        {needsMandatoryNext
+                          ? `Save & ${nextBayLabel}`
+                          : isMultiFlow
+                          ? 'Finish'
+                          : 'Use Photo'}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })()
             ) : (
-              <div className="flex items-center justify-between max-w-md mx-auto w-full">
+              <div className="grid grid-cols-3 items-center max-w-md mx-auto w-full px-6">
                 {/* Left: Gallery */}
-                <button
-                  type="button"
-                  onClick={() => galleryInputRef.current?.click()}
-                  className="w-12 h-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95"
-                  aria-label="Choose from gallery"
-                  title="Choose from gallery"
-                >
-                  <ImageIcon size={20} />
-                </button>
+                <div className="flex justify-start">
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="w-12 h-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95"
+                    aria-label="Choose from gallery"
+                    title="Choose from gallery"
+                  >
+                    <ImageIcon size={20} />
+                  </button>
+                </div>
 
                 {/* Center: Native White Double-Ring Shutter */}
-                <button
-                  type="button"
-                  onClick={handleManualShutter}
-                  aria-label={`Capture ${currentSession?.label || 'Bay 1'}`}
-                  className="w-[74px] h-[74px] rounded-full border-[3.5px] border-white/85 p-1 flex items-center justify-center cursor-pointer active:scale-90 transition-transform shadow-[0_0_25px_rgba(0,141,255,0.45)]"
-                >
-                  <span className="w-full h-full rounded-full bg-white block" />
-                </button>
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={handleManualShutter}
+                    aria-label={`Capture ${currentSession?.label || 'Bay 1'}`}
+                    className="w-[74px] h-[74px] rounded-full border-[3.5px] border-white/85 p-1 flex items-center justify-center cursor-pointer active:scale-90 transition-transform shadow-[0_0_25px_rgba(0,141,255,0.45)]"
+                  >
+                    <span className="w-full h-full rounded-full bg-white block" />
+                  </button>
+                </div>
 
-                {/* Right: Continue if ≥1 captured, else Debug/Native Camera */}
-                {capturedAisles.length >= 1 ? (
-                  <button
-                    type="button"
-                    onClick={handleDoneShooting}
-                    aria-label="Continue to Audit"
-                    className="w-12 h-12 rounded-full btn-electric-blue flex items-center justify-center text-white cursor-pointer active:scale-95"
-                    title="Continue to Questionnaire"
-                  >
-                    <Check size={20} strokeWidth={2.8} />
-                  </button>
-                ) : isDebugMode ? (
-                  <button
-                    type="button"
-                    onClick={handleUseDemoSample}
-                    className="w-12 h-12 rounded-2xl bg-[#0066FF]/25 border border-[#00C8FF]/45 flex items-center justify-center text-[#00C8FF] text-[10px] font-extrabold cursor-pointer active:scale-95"
-                    title="Load sample shelf"
-                  >
-                    DEMO
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="w-12 h-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95"
-                    aria-label="Open native camera app"
-                    title="Native Camera"
-                  >
-                    <Camera size={19} />
-                  </button>
-                )}
+                {/* Right Spacer */}
+                <div />
               </div>
             )}
           </div>
@@ -4134,56 +4315,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               </div>
             </div>
 
-            {/* 3 Live KPI Summary Tiles (SOS, Planogram, OOS) */}
-            <div className="grid grid-cols-3 gap-2.5 shrink-0">
-              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
-                  SOS
-                </span>
-                <span className="font-heading font-extrabold text-xl tabular-nums text-[var(--text-primary)] block mt-0.5">
-                  {primarySharePct}%
-                </span>
-                <span className="text-[10px] text-[#008DFF] dark:text-[#00C8FF] font-semibold">
-                  {primaryLabel}
-                </span>
-              </div>
 
-              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
-                  Planogram
-                </span>
-                <span
-                  className={`font-heading font-extrabold text-xl tabular-nums block mt-0.5 ${
-                    livePlanogramMetrics.score === null
-                      ? 'text-[var(--text-primary)]'
-                      : livePlanogramMetrics.score >= 85
-                      ? 'text-[#22C55E]'
-                      : 'text-amber-400'
-                  }`}
-                >
-                  {livePlanogramMetrics.score !== null ? `${livePlanogramMetrics.score}%` : '—'}
-                </span>
-                <span className="text-[10px] text-[var(--text-secondary)]">
-                  {livePlanogramMetrics.hasPlanogram ? 'Active target' : 'No planogram'}
-                </span>
-              </div>
-
-              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
-                  OOS
-                </span>
-                <span
-                  className={`font-heading font-extrabold text-xl tabular-nums block mt-0.5 ${
-                    livePlanogramMetrics.oosCount && livePlanogramMetrics.oosCount > 0
-                      ? 'text-rose-500'
-                      : 'text-[var(--text-primary)]'
-                  }`}
-                >
-                  {livePlanogramMetrics.oosCount !== null ? livePlanogramMetrics.oosCount : '—'}
-                </span>
-                <span className="text-[10px] text-[var(--text-secondary)]">Zero-facing</span>
-              </div>
-            </div>
 
             {/* Bottom Dual Actions: Retake | Confirm & Save */}
             <div className="flex items-center gap-3 pt-0.5 shrink-0">
@@ -4201,18 +4333,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
               <button
                 type="button"
-                onClick={handleFinalSave}
+                onClick={handleProceedToScorecard}
                 disabled={!isSaveEnabled}
                 className="flex-1 min-h-[50px] rounded-full btn-electric-blue font-bold text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-[0.97] disabled:opacity-55"
               >
                 {isSavingAudit ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    <span>Saving…</span>
+                    <span>Loading Scorecard…</span>
                   </>
                 ) : (
                   <>
-                    <span>Confirm &amp; Save</span>
+                    <span>View Scorecard</span>
                     <ArrowRight size={17} />
                   </>
                 )}
@@ -4416,8 +4548,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               });
             } finally {
               setIsSubmittingAck(false);
-              onBack();
             }
+            await handleFinalSave();
           }}
         />
       )}

@@ -42,7 +42,7 @@ export interface SeamInfo {
 }
 
 /** Width of the faded previous-bay guide shown in the viewfinder (and the prior for the measurement). */
-export const GHOST_GUIDE_FRAC = 0.3;
+export const GHOST_GUIDE_FRAC = 0.15;
 
 /** Search limits for the overlap, as a fraction of the left photo's width. */
 export const MIN_OVERLAP_FRAC = 0.04;
