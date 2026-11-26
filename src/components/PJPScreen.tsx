@@ -46,6 +46,7 @@ interface PJPScreenProps {
   ) => void;
   onBackToGeoIntel?: () => void;
   onViewDailySummary?: () => void;
+  onOutletDetailOpenChange?: (isOpen: boolean) => void;
   executive?: UserProfile | null;
   planograms?: PlanogramRecord[];
   isSyncingMatch?: boolean;
@@ -205,6 +206,7 @@ export const PJPScreen: React.FC<PJPScreenProps> = ({
   onResetCustomRoute,
   onSaveCustomRoute,
   onViewDailySummary,
+  onOutletDetailOpenChange,
   executive,
   planograms = [],
   isSyncingMatch = false,
@@ -509,6 +511,18 @@ export const PJPScreen: React.FC<PJPScreenProps> = ({
     setActiveDetailOutletId(outlet.id);
     setStage('details');
   }, []);
+
+  const isDetailsStageOpen = stage === 'details' && Boolean(activeDetailOutlet);
+
+  useEffect(() => {
+    onOutletDetailOpenChange?.(isDetailsStageOpen);
+  }, [isDetailsStageOpen, onOutletDetailOpenChange]);
+
+  useEffect(() => {
+    return () => {
+      onOutletDetailOpenChange?.(false);
+    };
+  }, [onOutletDetailOpenChange]);
 
   const activeDoneCount = activeDetailOutlet
     ? Object.values(activeDetailOutlet.progress).filter((s) => s === 'Completed').length

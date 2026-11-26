@@ -189,7 +189,7 @@ export const MapView: React.FC<MapViewProps> = ({
     sheetState === 'expanded'
       ? 'hidden md:flex md:bottom-3 md:flex-row'
       : sheetState === 'peek'
-      ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row'
+      ? 'bottom-[calc(154px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row'
       : `${mobileControlsClosedBottomClass} md:bottom-3 flex-col md:flex-row`;
 
   return (
@@ -317,7 +317,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Floating Map Controls: Style Toggle, Zoom +/- and Re-centre GPS (Vertical on Mobile, Horizontal Dock on Desktop) */}
       <div
-        className={`absolute right-3 z-[450] flex gap-2 transition-all duration-200 ${controlsBottomClass}`}
+        className={`absolute right-3 z-[450] flex gap-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${controlsBottomClass}`}
       >
         {(onCycleBaseStyle || onToggleMobileLayersMenu) && (
           <button

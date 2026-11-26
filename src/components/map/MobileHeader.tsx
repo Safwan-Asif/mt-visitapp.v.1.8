@@ -84,12 +84,17 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
     <div ref={containerRef} className="relative">
       <header
         aria-label="GeoIntel Header"
-        className="marviz-glass rounded-xl px-3 py-1 flex items-center justify-between gap-2 text-[#F1F5FF] border border-[#104878] bg-[#061C35]/85 backdrop-blur-md"
+        className="marviz-glass-strong rounded-xl px-3 py-1.5 flex items-center justify-between gap-2 text-white border border-sky-400/20 backdrop-blur-md"
       >
-        {/* Subtle Single-Line Title */}
-        <span className="font-heading text-[11px] font-bold tracking-[0.1em] uppercase leading-none text-[#A5B8D5] pl-0.5">
-          GEOINTEL
-        </span>
+        {/* Wordmark matching Desktop HUD */}
+        <div className="leading-none select-none pl-0.5">
+          <div className="font-heading text-[18px] sm:text-[19px] font-extrabold italic tracking-tight text-white leading-none">
+            GEOINTEL
+          </div>
+          <div className="text-[7.5px] font-bold tracking-[0.16em] text-slate-300 uppercase mt-0.5">
+            HEADS UP DISPLAY
+          </div>
+        </div>
 
         {/* Compact Action Icons: Search & Map Settings */}
         <div className="flex items-center gap-1 shrink-0">

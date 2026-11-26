@@ -56,12 +56,19 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
     ? { duration: 0 }
     : { type: 'spring' as const, stiffness: 540, damping: 22, mass: 0.55 };
 
+  const dockTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { type: 'spring' as const, stiffness: 360, damping: 32, mass: 0.82 };
+
   return (
-    <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pointer-events-none px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      <motion.nav
-        initial={shouldReduceMotion ? false : { y: 18, opacity: 0, scale: 0.96 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
-        transition={capsuleSpring}
+    <motion.div
+      initial={shouldReduceMotion ? false : { y: 44, opacity: 0, scale: 0.96 }}
+      animate={{ y: 0, opacity: 1, scale: 1 }}
+      exit={shouldReduceMotion ? { opacity: 0 } : { y: 52, opacity: 0, scale: 0.95 }}
+      transition={dockTransition}
+      className="md:hidden fixed inset-x-0 bottom-0 z-40 pointer-events-none px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+    >
+      <nav
         aria-label="Primary Mobile Navigation"
         className="mobile-bottom-nav-container pointer-events-auto relative w-fit mx-auto rounded-full glass-capsule-dock px-2 py-1.5"
       >
@@ -157,8 +164,8 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
             })}
           </div>
         </LayoutGroup>
-      </motion.nav>
-    </div>
+      </nav>
+    </motion.div>
   );
 };
 
@@ -210,7 +217,15 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   ];
 
   return (
-    <aside
+    <motion.aside
+      initial={shouldReduceMotion ? false : { x: -24, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={shouldReduceMotion ? { opacity: 0 } : { x: -28, opacity: 0 }}
+      transition={
+        shouldReduceMotion
+          ? { duration: 0 }
+          : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
+      }
       aria-label="Desktop Navigation Rail"
       className={`hidden md:flex md:flex-col shrink-0 z-30 select-none relative my-3 ml-3 h-[calc(100%-1.5rem)] rounded-[28px] backdrop-blur-2xl transition-[width,padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] justify-between ${
         isCollapsed ? 'w-[68px] py-3.5 px-2' : 'w-56 lg:w-60 py-4 px-3.5'
@@ -538,6 +553,6 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
           </>
         )}
       </div>
-    </aside>
+    </motion.aside>
   );
 };

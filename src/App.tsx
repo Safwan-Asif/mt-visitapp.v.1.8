@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { LogOut, Sun, Moon } from 'lucide-react';
 import { UserProfile, ScreenType, Outlet, CategoryType, CategoryAuditRecord, PlanogramRecord } from './types';
 import { INITIAL_OUTLETS, getInitialOutletsForExecutive, MasterOutletOption } from './constants';
@@ -111,6 +112,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('map');
   const [outletOriginTab, setOutletOriginTab] = useState<'map' | 'pjp'>('map');
   const [isFinishingOutlet, setIsFinishingOutlet] = useState<boolean>(false);
+  const [isMobileMapSheetOpen, setIsMobileMapSheetOpen] = useState<boolean>(false);
+  const [isPjpOutletDetailOpen, setIsPjpOutletDetailOpen] = useState<boolean>(false);
   const [isMapsQuotaExceeded, setIsMapsQuotaExceeded] = useState<boolean>(false);
 
   useEffect(() => {
@@ -365,12 +368,16 @@ export default function App() {
     setSelectedOutlet(null);
     setSelectedCategory(null);
     setIsFinishingOutlet(false);
+    setIsMobileMapSheetOpen(false);
+    setIsPjpOutletDetailOpen(false);
     setCurrentScreen('LOGIN');
   };
 
   const handleSelectTab = (tab: AppTab) => {
     setActiveTab(tab);
     setIsFinishingOutlet(false);
+    setIsMobileMapSheetOpen(false);
+    setIsPjpOutletDetailOpen(false);
     setSelectedCategory(null);
     if (tab === 'pjp') {
       setPjpRequestedFilter(null);
@@ -392,6 +399,8 @@ export default function App() {
     setPjpRequestedFilter({ value: 'PENDING', nonce: Date.now() });
     setActiveTab('pjp');
     setIsFinishingOutlet(false);
+    setIsMobileMapSheetOpen(false);
+    setIsPjpOutletDetailOpen(false);
     setSelectedCategory(null);
     setSelectedOutlet(null);
     setCurrentScreen('PJP');
@@ -556,6 +565,8 @@ export default function App() {
     setSelectedOutlet(null);
     setSelectedCategory(null);
     setIsFinishingOutlet(false);
+    setIsMobileMapSheetOpen(false);
+    setIsPjpOutletDetailOpen(false);
     setActiveTab('pjp');
     setCurrentScreen('PJP');
   };
@@ -569,7 +580,13 @@ export default function App() {
   );
 
   const isAuthenticated = Boolean(user) && currentScreen !== 'LOGIN';
-  const isActiveAudit = currentScreen === 'CAMERA_WORKFLOW' || isFinishingOutlet;
+  const isOutletFocused =
+    currentScreen === 'OUTLET_OVERVIEW' ||
+    currentScreen === 'CAMERA_WORKFLOW' ||
+    isFinishingOutlet ||
+    isPjpOutletDetailOpen;
+  const hideDesktopSidebar = isOutletFocused;
+  const hideMobileBottomNav = isOutletFocused || (activeTab === 'map' && isMobileMapSheetOpen);
   const requestsCount = 0; // Hidden on bar until requests module ships
 
   return (
@@ -609,20 +626,23 @@ export default function App() {
       />
 
       {/* Desktop / Tablet Frosted Glass Left Sidebar Rail */}
-      {isAuthenticated && user && !isActiveAudit && (
-        <DesktopSidebar
-          activeTab={activeTab}
-          onSelectTab={handleSelectTab}
-          requestsCount={requestsCount}
-          executive={user}
-          onLogout={handleLogout}
-        />
-      )}
+      <AnimatePresence initial={false}>
+        {isAuthenticated && user && !hideDesktopSidebar && (
+          <DesktopSidebar
+            key="desktop-sidebar-rail"
+            activeTab={activeTab}
+            onSelectTab={handleSelectTab}
+            requestsCount={requestsCount}
+            executive={user}
+            onLogout={handleLogout}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Main Content Shell */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
-        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits, Map View, and dedicated PJP Route header) */}
-        {isAuthenticated && !isActiveAudit && activeTab !== 'map' && activeTab !== 'pjp' && (
+        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits/Outlet views, Map View, and dedicated PJP Route header) */}
+        {isAuthenticated && !isOutletFocused && activeTab !== 'map' && activeTab !== 'pjp' && (
           <header className="md:hidden h-12 px-4 glass-nav border-b flex items-center justify-between shrink-0 z-20">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-extrabold shrink-0 bg-[#0066FF] text-[#F1F5FF] shadow-[0_0_12px_rgba(0,102,255,0.45)]">
@@ -827,6 +847,7 @@ export default function App() {
                     setCurrentScreen('DASHBOARD');
                   }}
                   onNavigateTab={(tab) => handleSelectTab(tab)}
+                  onOutletSheetOpenChange={setIsMobileMapSheetOpen}
                   onLogout={handleLogout}
                 />
               )}
@@ -851,6 +872,7 @@ export default function App() {
                   onSaveCustomRoute={handleSaveCustomRoute}
                   onBackToGeoIntel={() => handleSelectTab('map')}
                   onViewDailySummary={() => handleSelectTab('today')}
+                  onOutletDetailOpenChange={setIsPjpOutletDetailOpen}
                   onSelectOutlet={(outlet) => {
                     setOutletOriginTab('pjp');
                     setSelectedOutlet(outlet);
@@ -880,14 +902,17 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation Bar (5 Tabs: Home, Map, +, Today, Requests — hidden only during active audits & login) */}
-      {isAuthenticated && !isActiveAudit && (
-        <MobileBottomNav
-          activeTab={activeTab}
-          onSelectTab={handleSelectTab}
-          requestsCount={requestsCount}
-        />
-      )}
+      {/* Mobile Bottom Navigation Bar (hidden smoothly when an outlet is opened, during active audits, & login) */}
+      <AnimatePresence initial={false}>
+        {isAuthenticated && !hideMobileBottomNav && (
+          <MobileBottomNav
+            key="mobile-bottom-nav"
+            activeTab={activeTab}
+            onSelectTab={handleSelectTab}
+            requestsCount={requestsCount}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Add Ad-Hoc Store Modal */}
       <AddOutletModal

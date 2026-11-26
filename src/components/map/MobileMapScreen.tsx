@@ -44,6 +44,7 @@ interface MobileMapScreenProps {
   onStartOutletVisit: (outlet: MapOutlet) => void;
   onMoreDetails: (outletId: string, outlet: MapOutlet) => void;
   onNavigateTab: (tab: 'home' | 'pjp') => void;
+  onOutletSheetOpenChange?: (isOpen: boolean) => void;
   onLogout?: () => void;
 }
 
@@ -57,6 +58,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   onStartOutletVisit,
   onMoreDetails,
   onNavigateTab: _onNavigateTab,
+  onOutletSheetOpenChange,
   onLogout
 }) => {
   const { isDark, toggleTheme } = useTheme();
@@ -364,6 +366,18 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     [outlets, selectedOutletId]
   );
 
+  const isMobileSheetOpen = isMobileViewport && sheetState !== 'closed' && selectedOutlet !== null;
+
+  useEffect(() => {
+    onOutletSheetOpenChange?.(isMobileSheetOpen);
+  }, [isMobileSheetOpen, onOutletSheetOpenChange]);
+
+  useEffect(() => {
+    return () => {
+      onOutletSheetOpenChange?.(false);
+    };
+  }, [onOutletSheetOpenChange]);
+
   const handleSelectOutlet = (outlet: MapOutlet) => {
     setSelectedOutletId(outlet.id);
     setSheetState((prev) => (prev === 'expanded' ? 'expanded' : 'peek'));
@@ -438,16 +452,13 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     }
   };
 
-  // Show mobile Pin Colour footer strip when bottom sheet, layers drawer, and settings drawer are closed
-  const showMobilePinFooter = sheetState === 'closed' && !isLayersOpen && !isSettingsOpen;
-
-  // Lift mobile lower-left Layers button and lower-right controls cleanly above the Pin Colour footer strip and MobileBottomNav; hide on expanded sheet
+  // Position lower-right mobile controls cleanly above MobileBottomNav; lift on peek and hide on expanded sheet
   const layersBottomOffsetClass =
     sheetState === 'expanded'
       ? 'hidden md:flex'
       : sheetState === 'peek'
-      ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))]'
-      : 'bottom-[calc(142px+env(safe-area-inset-bottom,0px))]';
+      ? 'bottom-[calc(154px+env(safe-area-inset-bottom,0px))]'
+      : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))]';
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#020D1F] select-none">
@@ -478,7 +489,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           onMapBackgroundTap={handleMapBackgroundTap}
           onRecenterExecutive={handleRecenterExecutive}
           onCycleBaseStyle={handleCycleBaseStyle}
-          mobileControlsClosedBottomClass="bottom-[calc(142px+env(safe-area-inset-bottom,0px))]"
+          mobileControlsClosedBottomClass="bottom-[calc(78px+env(safe-area-inset-bottom,0px))]"
           isMobileLayersOpen={isLayersOpen}
           onToggleMobileLayersMenu={() => {
             setIsSettingsOpen(false);
@@ -534,7 +545,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           />
         </div>
 
-        {/* MOBILE FLOATING TOP STACK (< md): Slim Header + Journey HUD + Filter Chips */}
+        {/* MOBILE FLOATING TOP STACK (< md): HUD Header + Journey Progress + Filter Chips + Slim Pin Colour Strip */}
         <div className="md:hidden absolute inset-x-0 top-0 z-[450] pt-[max(0.5rem,env(safe-area-inset-top))] px-2.5 sm:px-4 pointer-events-none">
           <div className="max-w-lg mx-auto space-y-1.5 pointer-events-auto">
             <MobileHeader
@@ -550,6 +561,10 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               activeFilter={activeFilter}
               onChangeFilter={handleMobileFilterChange}
               counts={filterCounts}
+            />
+            <MobilePinLayerFooter
+              activeLayer={activeLayer}
+              onSelectLayer={(layer) => setActiveLayer(layer)}
             />
           </div>
         </div>
@@ -567,17 +582,9 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
             onSelectLayer={(layer) => setActiveLayer(layer)}
             hidePinLayers={true}
             hideTrigger={true}
-            containerClassName={`absolute right-[64px] z-[455] flex flex-col items-end transition-all duration-200 ${layersBottomOffsetClass}`}
+            containerClassName={`absolute right-[64px] z-[455] flex flex-col items-end transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${layersBottomOffsetClass}`}
           />
         </div>
-
-        {/* MOBILE PIN COLOUR LAYER FOOTER STRIP (< md) */}
-        {showMobilePinFooter && (
-          <MobilePinLayerFooter
-            activeLayer={activeLayer}
-            onSelectLayer={(layer) => setActiveLayer(layer)}
-          />
-        )}
 
         {/* MOBILE TOUCH-DRAGGABLE BOTTOM SHEET (< md) */}
         <OutletBottomSheet

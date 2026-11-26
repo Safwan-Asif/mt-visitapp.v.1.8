@@ -84,7 +84,7 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
         initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22 }}
-        className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden px-4 pt-3 pb-[calc(86px+env(safe-area-inset-bottom,0px))] md:py-6"
+        className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden px-4 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] md:py-6"
       >
         {/* Top Store Audit Header */}
         <div className="space-y-4 shrink-0">

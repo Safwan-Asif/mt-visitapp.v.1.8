@@ -53,13 +53,15 @@ export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
               />
             )}
             <span className="truncate">{opt.label}</span>
-            <span
-              className={`text-[9.5px] tabular-nums px-1 rounded shrink-0 ${
-                isActive ? 'bg-white/20 text-white' : 'bg-[#0B2542] text-[#A5B8D5]'
-              }`}
-            >
-              {counts[opt.id]}
-            </span>
+            {opt.id === 'all' && (
+              <span
+                className={`text-[9.5px] tabular-nums px-1 rounded shrink-0 ${
+                  isActive ? 'bg-white/20 text-white' : 'bg-[#0B2542] text-[#A5B8D5]'
+                }`}
+              >
+                {counts[opt.id]}
+              </span>
+            )}
           </button>
         );
       })}

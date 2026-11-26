@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   BarChart3,
   ChevronDown,
@@ -76,18 +77,16 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
   onStartOutletVisit,
   onMoreDetails
 }) => {
+  const shouldReduceMotion = useReducedMotion();
   const dragStartY = useRef<number | null>(null);
   const [dragDeltaY, setDragDeltaY] = useState<number>(0);
 
-  if (!outlet || sheetState === 'closed') {
-    return null;
-  }
-
+  const isVisible = Boolean(outlet) && sheetState !== 'closed';
   const isExpanded = sheetState === 'expanded';
-  const visitBadge = getVisitStatusBadge(outlet);
-  const healthBadge = getHealthBadge(outlet);
-  const insightLine = getDeterministicOutletInsight(outlet);
-  const lastVisitRecency = formatLastVisitRecency(outlet.lastVisitDate);
+  const visitBadge = outlet ? getVisitStatusBadge(outlet) : null;
+  const healthBadge = outlet ? getHealthBadge(outlet) : null;
+  const insightLine = outlet ? getDeterministicOutletInsight(outlet) : '';
+  const lastVisitRecency = outlet ? formatLastVisitRecency(outlet.lastVisitDate) : null;
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     dragStartY.current = e.clientY;
@@ -122,16 +121,28 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
     onChangeState(isExpanded ? 'peek' : 'expanded');
   };
 
+  const sheetTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { type: 'spring' as const, stiffness: 360, damping: 32, mass: 0.85 };
+
   return (
-    <div
-      role="region"
-      aria-label={`Selected outlet: ${outlet.name}`}
-      style={{
-        transform: dragDeltaY !== 0 ? `translateY(${dragDeltaY}px)` : undefined
-      }}
-      className="md:hidden fixed inset-x-0 bottom-[calc(70px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none transition-transform duration-200 ease-out"
-    >
-      <div className="max-w-md mx-auto marviz-glass-strong rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white">
+    <AnimatePresence>
+      {isVisible && outlet && visitBadge && (
+        <motion.div
+          key="mobile-outlet-bottom-sheet"
+          role="region"
+          aria-label={`Selected outlet: ${outlet.name}`}
+          initial={shouldReduceMotion ? false : { y: 64, opacity: 0 }}
+          animate={{ y: dragDeltaY, opacity: 1 }}
+          exit={shouldReduceMotion ? { opacity: 0 } : { y: 72, opacity: 0 }}
+          transition={dragDeltaY !== 0 ? { duration: 0 } : sheetTransition}
+          className="md:hidden fixed inset-x-0 bottom-[calc(12px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none"
+        >
+          <motion.div
+            layout={!shouldReduceMotion}
+            transition={sheetTransition}
+            className="max-w-md mx-auto marviz-glass-strong rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white"
+          >
         {/* Touch-Draggable Header & Handle */}
         <div
           onPointerDown={handlePointerDown}
@@ -293,7 +304,9 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
             )}
           </div>
         )}
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

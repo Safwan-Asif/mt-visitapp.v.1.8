@@ -181,7 +181,7 @@ export const PreVisitOutletDetailsView: React.FC<PreVisitOutletDetailsViewProps>
       initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, x: 14 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.22 }}
-      className="flex-1 flex flex-col justify-between min-h-0 w-full max-w-md mx-auto md:max-w-none px-3.5 pt-2.5 pb-[calc(86px+env(safe-area-inset-bottom,0px))] md:p-0 overflow-y-auto no-scrollbar"
+      className="flex-1 flex flex-col justify-between min-h-0 w-full max-w-md mx-auto md:max-w-none px-3.5 pt-2.5 pb-[max(1.25rem,env(safe-area-inset-bottom))] md:p-0 overflow-y-auto no-scrollbar"
     >
       <div className="space-y-3">
         {/* Top Navigation Row */}
