@@ -171,25 +171,10 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
 }) => {
   const { isDark, toggleTheme } = useTheme();
   const shouldReduceMotion = useReducedMotion();
-  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('mta_desktop_rail_collapsed_v1');
-      return saved === null ? true : saved === 'true';
-    } catch {
-      return true;
-    }
-  });
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(true);
 
   const handleToggleCollapse = () => {
-    setIsCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('mta_desktop_rail_collapsed_v1', String(next));
-      } catch {
-        // Ignore storage errors
-      }
-      return next;
-    });
+    setIsCollapsed((prev) => !prev);
   };
 
   const initials = executive.name
@@ -245,49 +230,61 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         }`}
       />
 
-      {/* Top Brand Logo + Collapse Toggle */}
+      {/* Top Brand Logo (Acts as Collapse/Expand Toggle) */}
       <div className="flex flex-col gap-4">
         <div
           className={`flex items-center ${
-            isCollapsed ? 'flex-col gap-2.5' : 'justify-between gap-2.5 px-1'
+            isCollapsed ? 'justify-center' : 'justify-start gap-2.5 px-1'
           }`}
         >
-          <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-2.5 min-w-0'}`}>
-            <div
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-extrabold tracking-wider shrink-0 relative ${
-                isDark
-                  ? 'btn-electric-blue ring-1 ring-[#00C8FF]/45 shadow-[0_0_20px_-2px_rgba(0,183,255,0.6)]'
-                  : 'btn-electric-blue shadow-[0_8px_20px_-4px_rgba(0,102,255,0.45)]'
-              }`}
-              title="QFI MARVIZ AI"
-            >
-              QFI
-            </div>
-            {!isCollapsed && (
-              <div className="min-w-0">
-                <h1 className="text-sm font-extrabold tracking-tight truncate text-[var(--text-primary)]">
-                  MARVIZ AI
-                </h1>
-                <p className="text-[10px] font-medium truncate text-[var(--text-secondary)]">
-                  Dev. by SF1
-                </p>
-              </div>
-            )}
-          </div>
-
           <button
             type="button"
             onClick={handleToggleCollapse}
             aria-label={isCollapsed ? 'Expand navigation strip' : 'Collapse navigation strip'}
+            aria-expanded={!isCollapsed}
             title={isCollapsed ? 'Expand navigation' : 'Collapse to glass strip'}
-            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer active:scale-90 shrink-0 ${
+            className={`group relative w-11 h-11 rounded-2xl flex items-center justify-center text-[11px] font-extrabold tracking-wider shrink-0 transition-all cursor-pointer active:scale-95 ${
               isDark
-                ? 'bg-[#0B2542]/75 border border-[#00C8FF]/25 text-[#A5B8D5] hover:text-[#00C8FF] hover:border-[#00C8FF]/60 hover:shadow-[0_0_12px_rgba(0,200,255,0.35)]'
-                : 'bg-white/80 border border-[#0066FF]/20 text-[#475E7D] hover:text-[#0066FF] hover:border-[#0066FF]/45'
+                ? 'btn-electric-blue ring-1 ring-[#00C8FF]/45 shadow-[0_0_20px_-2px_rgba(0,183,255,0.6)] hover:ring-[#00C8FF]/80'
+                : 'btn-electric-blue shadow-[0_8px_20px_-4px_rgba(0,102,255,0.45)]'
             }`}
           >
-            {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            <span className="-translate-x-0.5 -translate-y-0.5 leading-none">QFI</span>
+            <span
+              aria-hidden="true"
+              className="absolute bottom-1 right-1 w-3.5 h-3.5 rounded-full bg-[#020D1F]/40 border border-white/30 flex items-center justify-center text-white/95 transition-transform duration-200 group-hover:scale-110 group-hover:bg-[#020D1F]/60"
+            >
+              {isCollapsed ? (
+                <ChevronRight size={9} strokeWidth={2.8} />
+              ) : (
+                <ChevronLeft size={9} strokeWidth={2.8} />
+              )}
+            </span>
+
+            {isCollapsed && (
+              <span
+                role="tooltip"
+                className={`pointer-events-none absolute left-[calc(100%+12px)] px-2.5 py-1.5 rounded-xl text-[11px] font-bold tracking-wide whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 backdrop-blur-xl ${
+                  isDark
+                    ? 'bg-[#04152B]/92 text-[#F1F5FF] border border-[#00C8FF]/35 shadow-[0_10px_28px_-6px_rgba(0,0,0,0.85)]'
+                    : 'bg-white/95 text-[#0B1D36] border border-[#0066FF]/20 shadow-lg'
+                }`}
+              >
+                MARVIZ AI · Expand
+              </span>
+            )}
           </button>
+
+          {!isCollapsed && (
+            <div className="min-w-0">
+              <h1 className="text-sm font-extrabold tracking-tight truncate text-[var(--text-primary)]">
+                MARVIZ AI
+              </h1>
+              <p className="text-[10px] font-medium truncate text-[var(--text-secondary)]">
+                Dev. by SF1
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Center Navigation Icons */}
