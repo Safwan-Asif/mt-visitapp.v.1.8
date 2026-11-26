@@ -23,8 +23,8 @@ interface PlanogramScorecardProps {
 function getStatusStyles(status: ComplianceBadgeStatus, isDark: boolean) {
   if (status === 'COMPLIANT') {
     return {
-      text: isDark ? 'text-emerald-400' : 'text-[#084C41]',
-      ringStroke: isDark ? '#10B981' : '#084C41',
+      text: isDark ? 'text-[#22C55E]' : 'text-[#15803D]',
+      ringStroke: isDark ? '#22C55E' : '#16A34A',
       Icon: CheckCircle2
     };
   }
@@ -78,7 +78,8 @@ export const PlanogramScorecard: React.FC<PlanogramScorecardProps> = ({
     result.overallStatus !== 'COMPLIANT';
 
   return (
-    <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full h-full overflow-hidden select-none animate-fade-in">
+    <div className="flex-1 flex flex-col w-full h-full overflow-hidden select-none pjp-atmospheric-canvas animate-fade-in">
+      <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full h-full overflow-hidden">
       {/* Top Header */}
       <div className="px-4 pt-3 pb-2.5 shrink-0">
         <p className="text-xs font-medium text-[var(--text-secondary)] truncate tabular-nums">
@@ -414,14 +415,12 @@ export const PlanogramScorecard: React.FC<PlanogramScorecardProps> = ({
       </div>
 
       {/* Sticky Bottom Done CTA */}
-      <div className="px-4 pt-3 pb-4 shrink-0 glass-nav border-t">
+      <div className="px-4 pt-3 pb-5 shrink-0">
         <button
           type="button"
           disabled={isSubmittingAck}
           onClick={() => onDone(executiveNote)}
-          className={`w-full min-h-[54px] py-3.5 px-5 rounded-2xl text-sm font-bold shadow-lg active:scale-[0.99] flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 ${
-            isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-          }`}
+          className="w-full min-h-[54px] py-3.5 px-5 rounded-full text-sm font-bold btn-electric-blue active:scale-[0.98] flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
         >
           {isSubmittingAck ? (
             <>
@@ -435,6 +434,7 @@ export const PlanogramScorecard: React.FC<PlanogramScorecardProps> = ({
             </>
           )}
         </button>
+      </div>
       </div>
     </div>
   );

@@ -1,20 +1,59 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { 
-  Camera, ArrowLeft, Plus, CheckCircle2, AlertCircle, 
-  ShieldCheck, Tag, Layers,
-  Image as ImageIcon, Upload,
-  Loader2, Check, Maximize2, Minimize2, ZoomIn, ZoomOut, X,
-  ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Sparkles
+import { motion, useReducedMotion } from 'motion/react';
+import {
+  Camera,
+  ChevronLeft,
+  ArrowRight,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  ShieldCheck,
+  Layers,
+  Image as ImageIcon,
+  Upload,
+  Loader2,
+  Check,
+  Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  RefreshCw,
+  Sparkles,
+  Zap,
+  ZapOff,
+  Columns2,
+  Square,
+  RectangleHorizontal,
+  RectangleVertical,
+  Info,
+  ClipboardCheck
 } from 'lucide-react';
-import { 
-  CategoryType, Outlet, CategoryAuditRecord, BoundingBox, 
-  UserProfile, AisleKey, AisleSessionData, AisleStatus,
-  DuplicateMatch, BayDuplicateReport, PlanogramComplianceResult, PlanogramRecord
+import {
+  CategoryType,
+  Outlet,
+  CategoryAuditRecord,
+  BoundingBox,
+  UserProfile,
+  AisleSessionData,
+  AisleStatus,
+  DuplicateMatch,
+  BayDuplicateReport,
+  PlanogramComplianceResult,
+  PlanogramRecord
 } from '../types';
-import { 
-  CATEGORY_IMAGES, DEFAULT_AI_COUNTS, SAMPLE_BOUNDING_BOXES, 
-  BRAND_COLORS, CATEGORY_BRANDS 
+import {
+  CATEGORY_IMAGES,
+  CATEGORIES,
+  BRAND_COLORS,
+  CATEGORY_BRANDS
 } from '../constants';
+import {
+  CategoryMonogramBadge,
+  AnimatedCompletionCircle
+} from './pjp/PjpPrimitives';
 import { 
   sendAuditToN8n, 
   N8nTransmissionResult, 
@@ -365,6 +404,7 @@ export interface AisleSession {
   /** AI counts after the overlap with neighbouring bays is removed (baseline for the discrepancy log). */
   seamAdjustedCounts?: Record<string, number>;
   n8nStatus: any;
+  isManualFallback?: boolean;
   analysisStartTime: number | null;
   analysisDurationSeconds: number;
   errorMessage?: string;
@@ -705,6 +745,7 @@ interface CameraWorkflowScreenProps {
   existingAudit?: CategoryAuditRecord;
   onSaveAudit: (record: CategoryAuditRecord, deferExit?: boolean) => void;
   onBack: () => void;
+  onSelectNextCategory?: (category: CategoryType) => void;
   userProfile?: UserProfile;
 }
 
@@ -714,29 +755,49 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   existingAudit,
   onSaveAudit,
   onBack,
+  onSelectNextCategory,
   userProfile
 }) => {
   const { isDark } = useTheme();
+  const shouldReduceMotion = useReducedMotion();
 
-  // 1. Four-step state machine: CAPTURE -> POSM -> RESULTS -> SCORECARD
-  const [step, setStep] = useState<'CAPTURE' | 'POSM' | 'RESULTS' | 'SCORECARD'>(
-    existingAudit ? 'RESULTS' : 'CAPTURE'
+  // PJP 2.0 step state machine: SETUP -> CAPTURE -> POSM -> RESULTS -> CATEGORY_COMPLETE (-> SCORECARD)
+  const [step, setStep] = useState<
+    'SETUP' | 'CAPTURE' | 'POSM' | 'RESULTS' | 'CATEGORY_COMPLETE' | 'SCORECARD'
+  >(existingAudit ? 'RESULTS' : 'SETUP');
+
+  // Screen 06: Aisle & Orientation configuration
+  const [aisleMode, setAisleMode] = useState<'single' | 'double'>(() =>
+    Object.keys(buildInitialAisleSessions(existingAudit)).length > 1 ? 'double' : 'single'
   );
+  const [captureOrientation, setCaptureOrientation] = useState<'horizontal' | 'vertical'>(
+    'horizontal'
+  );
+
   const [scorecardResult, setScorecardResult] = useState<PlanogramComplianceResult | null>(
     existingAudit?.planogramCompliance || null
   );
   const [isSubmittingAck, setIsSubmittingAck] = useState<boolean>(false);
+  const [isSavingAudit, setIsSavingAudit] = useState<boolean>(false);
+  const [activePlanogramsCache, setActivePlanogramsCache] = useState<PlanogramRecord[]>([]);
+
+  // Generation token map to drop stale async AI responses after retake/manual fallback
+  const captureGenRef = useRef<Record<string, number>>({});
 
   // Ensure active planogram cache is warmed for this outlet/category
   useEffect(() => {
-    fetchActivePlanograms(false).catch(() => {});
+    fetchActivePlanograms(false)
+      .then((list) => {
+        if (list.length > 0) setActivePlanogramsCache(list);
+      })
+      .catch(() => {});
   }, [outlet.id]);
 
   // Hidden native file inputs for hardware camera & photo gallery fallback
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  // Dynamic Bay Sessions (can be 1, 2, or many bays)
+  // Dynamic Bay Sessions (starts with Bay 1; expands to Bay 2+ if Double Aisle selected)
   const [aisleSessions, setAisleSessions] = useState<Record<string, AisleSession>>(() =>
     buildInitialAisleSessions(existingAudit)
   );
@@ -750,10 +811,9 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   // In RESULTS step: tabs are 'ALL' (default) | bay keys ('bay_1', 'bay_2', ...)
   const [resultsAisleView, setResultsAisleView] = useState<string | 'ALL'>('ALL');
 
-  // Post-capture inline prompt state: when true, shows "Scan next bay" & "Done shooting"
+  // Post-capture tracking
   const [showPostCapturePrompt, setShowPostCapturePrompt] = useState<boolean>(false);
   const [lastCapturedAisle, setLastCapturedAisle] = useState<string>('bay_1');
-  // In POSM step: which bay is active in the Web/Tablet preview switcher
   const [posmActiveBayKey, setPosmActiveBayKey] = useState<string>('bay_1');
 
   // Visit ID for visit-scoped autosave & table key columns
@@ -770,7 +830,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     return existingAudit?.questionnaireNewProducts || [];
   });
 
-  // POSM Questionnaire state (visibility driven solely by step === 'POSM')
+  // POSM Questionnaire state
   const [priceTagOk, setPriceTagOk] = useState<boolean>(existingAudit?.priceTagOk ?? true);
   const [posmShelfSticker, setPosmShelfSticker] = useState<boolean>(
     existingAudit?.posmShelfSticker ?? true
@@ -783,6 +843,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
   const [cameraErrorNotice, setCameraErrorNotice] = useState<string | null>(null);
   const [isLevel, setIsLevel] = useState<boolean>(false);
   const [sensorsAvailable, setSensorsAvailable] = useState<boolean>(false);
+  const [torchSupported, setTorchSupported] = useState<boolean>(false);
+  const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
 
   // Device motion stability tracking for auto-capture
   const levelHoldStartTimeRef = useRef<number | null>(null);
@@ -1143,6 +1205,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             console.info(`🔍 Enforcing 1x zoom on camera track: ${targetZ} (device range: ${minZ}-${maxZ})`);
           }
 
+          // Check hardware torch support for Screen 07 flash pill
+          setTorchSupported(Boolean(capabilities.torch));
+          setTorchEnabled(false);
+
           // Enforce continuous autofocus for clear, crisp shelf details
           if (capabilities.focusMode && Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
             advancedSettings.focusMode = 'continuous';
@@ -1205,6 +1271,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       console.warn('Live WebRTC camera stream note:', lastError?.message || lastError);
       console.groupEnd();
       setCameraStreamActive(false);
+      setTorchSupported(false);
+      setTorchEnabled(false);
 
       if (lastError?.name === 'NotAllowedError' || lastError?.name === 'PermissionDeniedError') {
         setCameraErrorNotice('Camera access denied by browser or device permission policy. Tap below to re-request permission or allow camera in browser site settings.');
@@ -1220,6 +1288,25 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     }
   }, []);
 
+  const handleToggleTorch = useCallback(async () => {
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    const track = stream?.getVideoTracks?.()?.[0];
+    if (!track) return;
+    const caps: any = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.torch) {
+      setTorchSupported(false);
+      return;
+    }
+    const next = !torchEnabled;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next } as any] });
+      setTorchEnabled(next);
+    } catch {
+      setTorchSupported(false);
+      setTorchEnabled(false);
+    }
+  }, [torchEnabled]);
+
   useEffect(() => {
     if (step !== 'CAPTURE') {
       if (videoRef.current && videoRef.current.srcObject) {
@@ -1228,6 +1315,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         videoRef.current.srcObject = null;
       }
       setCameraStreamActive(false);
+      setTorchEnabled(false);
       return;
     }
 
@@ -1240,6 +1328,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         videoRef.current.srcObject = null;
       }
       setCameraStreamActive(false);
+      setTorchEnabled(false);
     };
   }, [step, currentAisle, startCameraStream]);
 
@@ -1485,7 +1574,95 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     };
   }, [step, capturedBaySessions, stitchedPanoramaUrl, showRawPhotoComparison]);
 
-  // 2. Overlapping Async Upload & Analysis Handler (Runs in background without touching POSM)
+  // Live preview of Planogram Compliance & OOS count for Screen 14 KPI tiles
+  const livePlanogramMetrics = useMemo(() => {
+    const activePlanogram = findActivePlanogramForOutlet(outlet, category, activePlanogramsCache);
+    if (!activePlanogram) {
+      return { hasPlanogram: false, score: null as number | null, oosCount: null as number | null };
+    }
+    const bayInputs = completedAisles.map((k, idx) => {
+      const s = aisleSessions[k];
+      return {
+        key: s?.key || k,
+        label: s?.label || `Bay ${idx + 1}`,
+        boundingBoxes: s?.boxes || [],
+        boxes: s?.boxes || [],
+        planRows: s?.planRows,
+        unmappedBrands: s?.unmappedBrands
+      };
+    });
+    const collectedUnmapped = Array.from(
+      new Set(completedAisles.flatMap((k) => aisleSessions[k]?.unmappedBrands || []))
+    );
+    const evalRes = evaluatePlanogramCompliance({
+      outlet,
+      category,
+      planogram: activePlanogram,
+      confirmedCounts: combinedCounts,
+      initialAiCounts: combinedOrigCounts,
+      actualTotalFacings: combinedTotalFacings,
+      actualPrimarySharePct: primarySharePct,
+      baySessions: bayInputs,
+      excludedBoxIds: removedDuplicateBoxIds,
+      unmappedBrands: collectedUnmapped
+    });
+    return {
+      hasPlanogram: evalRes.hasPlanogram,
+      score: evalRes.hasPlanogram ? evalRes.overallScore : null,
+      oosCount: evalRes.missingOwnBrands.length
+    };
+  }, [
+    outlet,
+    category,
+    activePlanogramsCache,
+    completedAisles,
+    aisleSessions,
+    combinedCounts,
+    combinedOrigCounts,
+    combinedTotalFacings,
+    primarySharePct,
+    removedDuplicateBoxIds
+  ]);
+
+  // True provenance check for Screen 14: never report fallback/manual as AI Verified
+  const resultsProvenance = useMemo(() => {
+    const targetSessions =
+      resultsAisleView === 'ALL'
+        ? completedAisles.map((k) => aisleSessions[k]).filter(Boolean)
+        : [viewSession].filter(Boolean);
+
+    const hasManualOrFallback =
+      erroredAisles.length > 0 ||
+      targetSessions.some(
+        (s) =>
+          Boolean(s?.isManualFallback) ||
+          s?.status === 'error' ||
+          s?.n8nStatus?.source === 'simulated_fallback' ||
+          s?.n8nStatus?.source === 'manual_fallback'
+      );
+
+    const hasEdited = Object.keys(combinedCounts).some(
+      (b) => (combinedCounts[b] ?? 0) !== (combinedOrigCounts[b] ?? 0)
+    );
+
+    if (hasManualOrFallback) {
+      return { mode: 'manual' as const, label: 'Manual Entry — Verify Counts' };
+    }
+    if (hasEdited) {
+      return { mode: 'adjusted' as const, label: 'AI + Rep Adjusted' };
+    }
+    return { mode: 'ai_verified' as const, label: 'AI Verified ✓' };
+  }, [
+    resultsAisleView,
+    completedAisles,
+    aisleSessions,
+    viewSession,
+    erroredAisles,
+    combinedCounts,
+    combinedOrigCounts
+  ]);
+
+  // 2. Overlapping Async Upload & Analysis Handler (Protected by per-bay capture generation token)
   const startAsyncBayAnalysis = useCallback(
     async (
       targetAisle: string,
@@ -1494,6 +1671,8 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       seamOpts: { seam?: SeamInfo | null; shotWithGuide?: boolean; captureDims?: { width: number; height: number } } = {}
     ) => {
       const startTime = Date.now();
+      const nextToken = (captureGenRef.current[targetAisle] || 0) + 1;
+      captureGenRef.current[targetAisle] = nextToken;
 
       // Immediately set status to analysing
       setAisleSessions((prev) => ({
@@ -1515,6 +1694,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             analysisDurationSeconds: 0
           }),
           status: 'analysing',
+          isManualFallback: false,
           capturedFile: file,
           capturedPhotoUrl: dataUrl,
           capturedFileName: file?.name || `${targetAisle}_capture.jpg`,
@@ -1569,27 +1749,34 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           90000,
           seamOpts.captureDims || { width: 800, height: 800 }
         );
-        console.log(`[Bay ${targetAisle}] Transmission result:`, result);
+
+        // Guard against stale response from superseded retake or manual fallback
+        if (captureGenRef.current[targetAisle] !== nextToken) {
+          console.log(`[Bay ${targetAisle}] Dropping stale AI response (token ${nextToken}).`);
+          return;
+        }
 
         const normalized = normalizeN8nAuditResponse(
           result.rawResponse || result.rawNormalized || result,
           category
         );
 
+        const isSimulated = result.source === 'simulated_fallback' || !result.success;
         const duration = Math.round((Date.now() - startTime) / 1000);
 
         setAisleSessions((prev) => {
           const currentPrev = prev[targetAisle];
-          const newDimensions = (normalized.dimensionsExplicit && normalized.dimensions)
-            || seamOpts.captureDims
-            || currentPrev?.naturalDimensions
-            || normalized.dimensions
-            || { width: 800, height: 800 };
+          const newDimensions =
+            (normalized.dimensionsExplicit && normalized.dimensions) ||
+            seamOpts.captureDims ||
+            currentPrev?.naturalDimensions ||
+            normalized.dimensions || { width: 800, height: 800 };
           return {
             ...prev,
             [targetAisle]: {
               ...currentPrev,
               status: 'done',
+              isManualFallback: isSimulated,
               counts: { ...normalized.counts },
               rawCounts: { ...normalized.counts },
               originalAiCounts: { ...normalized.counts },
@@ -1616,6 +1803,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           };
         });
       } catch (err: any) {
+        if (captureGenRef.current[targetAisle] !== nextToken) return;
         console.error(`[Bay ${targetAisle}] Async analysis failed:`, err);
         const duration = Math.round((Date.now() - startTime) / 1000);
 
@@ -1633,8 +1821,108 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     [outlet, category, userProfile, primaryLabel, priceTagOk, posmShelfSticker, posmWobblers, gpsCoords, aisleSessions]
   );
 
-  // 3. Errored Bay Escape Hatch Handler: returns to CAPTURE for that bay only
+  // Retry Vision AI for errored or fallback bays without losing captured photos
+  const handleRetryAiAnalysis = useCallback(() => {
+    const targets = Object.values(aisleSessions).filter(
+      (s) =>
+        s.capturedPhotoUrl &&
+        (s.status === 'error' ||
+          s.isManualFallback ||
+          s.n8nStatus?.source === 'simulated_fallback' ||
+          s.n8nStatus?.source === 'manual_fallback')
+    );
+    const list =
+      targets.length > 0
+        ? targets
+        : Object.values(aisleSessions).filter((s) => Boolean(s.capturedPhotoUrl));
+    list.forEach((s) => {
+      if (s.capturedPhotoUrl) {
+        startAsyncBayAnalysis(s.key, s.capturedFile, s.capturedPhotoUrl, {
+          seam: s.seam ?? null,
+          shotWithGuide: Boolean(s.shotWithGuide),
+          captureDims: s.naturalDimensions
+        });
+      }
+    });
+  }, [aisleSessions, startAsyncBayAnalysis]);
+
+  // Manual fallback escape hatch from Screen 08 (never writes fake DEFAULT_AI_COUNTS)
+  const activateManualFallbackForInFlightBays = useCallback(() => {
+    const zeroCounts: Record<string, number> = {};
+    standardBrands.forEach((b) => {
+      zeroCounts[b] = 0;
+    });
+
+    setAisleSessions((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((k) => {
+        const s = next[k];
+        if (!s || !s.capturedPhotoUrl) return;
+        if (s.status !== 'done') {
+          captureGenRef.current[k] = (captureGenRef.current[k] || 0) + 1;
+          next[k] = {
+            ...s,
+            status: 'done',
+            isManualFallback: true,
+            counts: { ...zeroCounts },
+            rawCounts: { ...zeroCounts },
+            originalAiCounts: { ...zeroCounts },
+            totalFacings: 0,
+            errorMessage: undefined,
+            n8nStatus: {
+              source: 'manual_fallback',
+              success: false,
+              message: 'Manual facing entry selected by executive'
+            }
+          };
+        }
+      });
+      return next;
+    });
+    setStep('RESULTS');
+    setResultsAisleView('ALL');
+  }, [standardBrands]);
+
+  // Apply Screen 06 Aisle Mode selection (1 Bay vs 2 Bays)
+  const handleSelectAisleMode = (mode: 'single' | 'double') => {
+    setAisleMode(mode);
+    setAisleSessions((prev) => {
+      const next = { ...prev };
+      if (mode === 'double') {
+        if (!next.bay_2) {
+          next.bay_2 = {
+            key: 'bay_2',
+            label: 'Bay 2',
+            status: 'idle',
+            capturedFile: null,
+            capturedPhotoUrl: null,
+            capturedFileName: null,
+            naturalDimensions: { width: 800, height: 800 },
+            annotatedPhotoUrl: null,
+            rawCounts: {},
+            counts: {},
+            originalAiCounts: {},
+            totalFacings: null,
+            boxes: [],
+            rawBoxes: [],
+            n8nStatus: null,
+            analysisStartTime: null,
+            analysisDurationSeconds: 0
+          };
+        }
+      } else {
+        if (next.bay_2 && !next.bay_2.capturedPhotoUrl && !next.bay_2.annotatedPhotoUrl) {
+          delete next.bay_2;
+          if (currentAisle === 'bay_2') setCurrentAisle('bay_1');
+        }
+      }
+      return next;
+    });
+  };
+
+  // Retake bay escape hatch Handler: invalidates in-flight token and returns to CAPTURE for that bay only
   const handleRetakeBay = (bayKey: string) => {
+    captureGenRef.current[bayKey] = (captureGenRef.current[bayKey] || 0) + 1;
     setRetakeBayKey(bayKey);
     setCurrentAisle(bayKey);
     setAisleSessions((prev) => {
@@ -1645,6 +1933,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         [bayKey]: {
           ...s,
           status: 'idle',
+          isManualFallback: false,
           capturedFile: null,
           capturedPhotoUrl: null,
           capturedFileName: null,
@@ -1743,7 +2032,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     [retakeBayKey, previousCapturedBayKey, aisleSessions]
   );
 
-  /** Rep tapped Upload: store the confirmed seam and send the photo for analysis. */
+  /** Rep tapped Confirm: store seam, send photo for background AI analysis, advance to Bay 2 or directly to Questionnaire. */
   const handleConfirmUpload = () => {
     if (!pendingCapture) return;
     const { bayKey, file, dataUrl, width, height, shotWithGuide, isRetake } = pendingCapture;
@@ -1751,7 +2040,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
 
     startAsyncBayAnalysis(bayKey, file, dataUrl, { seam: pendingSeam, shotWithGuide, captureDims });
 
-    // If a middle bay was re-shot, the seam of the bay to its right is stale: re-measure it.
+    // If a middle bay was re-shot, re-measure seam with right neighbour
     const nextKey = nextCapturedBayKey(bayKey);
     const nextUrl = nextKey ? aisleSessions[nextKey]?.capturedPhotoUrl : null;
     if (nextKey && nextUrl) {
@@ -1761,20 +2050,38 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       });
     }
 
-    setCameraStreamActive(false);
-    setCurrentAisle(bayKey);
     pendingDataUrlRef.current = null;
     setPendingCapture(null);
     setPendingSeam(null);
     setShowAlignmentCheck(false);
+    setShowPostCapturePrompt(false);
 
     if (isRetake) {
       setRetakeBayKey(null);
-      setShowPostCapturePrompt(false);
+      setCameraStreamActive(false);
+      setPosmActiveBayKey(bayKey);
       setStep('POSM');
-    } else {
-      setShowPostCapturePrompt(false);
+      return;
     }
+
+    // If Double Aisle selected and Bay 2 still needs a photo, switch immediately to Bay 2 with ghost guide
+    if (
+      aisleMode === 'double' &&
+      bayKey === 'bay_1' &&
+      !aisleSessions.bay_2?.capturedPhotoUrl &&
+      !aisleSessions.bay_2?.annotatedPhotoUrl
+    ) {
+      setCurrentAisle('bay_2');
+      autoCaptureTriggeredRef.current = false;
+      levelHoldStartTimeRef.current = null;
+      return;
+    }
+
+    // All required bays captured -> immediately launch Section 1 Questionnaire while AI runs concurrently!
+    setCameraStreamActive(false);
+    setCurrentAisle(bayKey);
+    setPosmActiveBayKey(bayKey);
+    setStep('POSM');
   };
 
   /** Rep rejected the photo: discard it and return to the camera for the same bay. */
@@ -2318,11 +2625,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     setIsAddBrandOpen(false);
   };
 
-  // Save Path with Pending Bays
-  const isSaveEnabled = completedAisles.length >= 1;
+  // Save Path with duplicate click guard
+  const isSaveEnabled = completedAisles.length >= 1 && !isSavingAudit;
 
   const handleFinalSave = async () => {
-    if (!isSaveEnabled) return;
+    if (!isSaveEnabled || isSavingAudit) return;
+    setIsSavingAudit(true);
+    try {
 
     const elapsedSeconds = Math.round((Date.now() - auditStartTime) / 1000);
     const coords =
@@ -2566,10 +2875,13 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
       setSyncError(err?.message || 'Auto-sync network error');
     });
 
-    // Save audit into app state without leaving screen so executive reviews the Planogram Scorecard
+    // Save audit into app state and celebrate Category Completion (Screen 15)
     onSaveAudit(record, true);
     setScorecardResult(complianceResult);
-    setStep('SCORECARD');
+    setStep('CATEGORY_COMPLETE');
+    } finally {
+      setIsSavingAudit(false);
+    }
   };
 
   // Background Sync Retry handler
@@ -2678,7 +2990,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             }`}
           >
             {!inLightbox && (
-              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-end border border-emerald-500/30 whitespace-nowrap">
+              <span className="text-[8px] font-mono font-bold text-[#00C8FF] bg-black/85 px-1 py-0.5 rounded self-end border border-[#008DFF]/40 whitespace-nowrap">
                 Counted in {prev.label}
               </span>
             )}
@@ -2688,11 +3000,11 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
           <div
             style={{ width: `${(1 - rightSeam.cutFracLeft) * 100}%` }}
             className={`absolute top-0 bottom-0 right-0 border-l-2 border-dashed pointer-events-none flex flex-col justify-end p-1 z-0 ${
-              seamsOn ? 'border-emerald-400/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
+              seamsOn ? 'border-[#00C8FF]/90 bg-black/35' : 'border-amber-400/70 bg-transparent'
             }`}
           >
             {!inLightbox && (
-              <span className="text-[8px] font-mono font-bold text-emerald-200 bg-black/85 px-1 py-0.5 rounded self-start border border-emerald-500/30 whitespace-nowrap">
+              <span className="text-[8px] font-mono font-bold text-[#00C8FF] bg-black/85 px-1 py-0.5 rounded self-start border border-[#008DFF]/40 whitespace-nowrap">
                 Counted in {next.label}
               </span>
             )}
@@ -2722,7 +3034,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               className={`absolute rounded transition-all flex items-center justify-center pointer-events-auto cursor-pointer active:scale-95 z-10 ${
                 isRemoved
                   ? 'bg-red-950/40 border-2 border-red-500 opacity-80'
-                  : 'bg-emerald-500/20 border-2 border-dashed border-emerald-400 opacity-90'
+                  : 'bg-[#00C8FF]/20 border-2 border-dashed border-[#00C8FF] opacity-90'
               }`}
               title={isRemoved ? `${dup.brand}: counted in the neighbouring bay. Tap to count here too.` : `${dup.brand}: counted here. Tap to stop counting.`}
               aria-label={`${isRemoved ? 'Count' : 'Stop counting'} ${dup.brand} bottle`}
@@ -2800,8 +3112,28 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
     return `Analysing… (${roundedSec}s)`;
   };
 
+  // Determine categories audited including the newly finished one for Screen 15 checklist
+  const completedCategorySet = useMemo(() => {
+    const set = new Set<CategoryType>();
+    CATEGORIES.forEach((c) => {
+      if (outlet.progress[c] === 'Completed') set.add(c);
+    });
+    if (step === 'CATEGORY_COMPLETE' || step === 'SCORECARD') {
+      set.add(category);
+    }
+    return set;
+  }, [outlet.progress, step, category]);
+
+  const nextPendingCategory = useMemo(
+    () => CATEGORIES.find((c) => !completedCategorySet.has(c)) || null,
+    [completedCategorySet]
+  );
+
+  const visibleAspectRatioClass =
+    captureOrientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]';
+
   return (
-    <div className="flex-1 flex flex-col justify-between p-2 sm:p-3 md:p-4 w-full h-full max-h-[100dvh] md:max-w-7xl md:mx-auto overflow-hidden select-none">
+    <div className="flex-1 flex flex-col justify-between w-full h-full max-h-[100dvh] overflow-hidden select-none pjp-atmospheric-canvas">
       {/* Hidden Native File Inputs */}
       <input
         ref={cameraInputRef}
@@ -2821,568 +3153,710 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         aria-label="Upload photo from device gallery"
       />
 
-      {/* Top Bar: Back, Location, Category & Step Indicator */}
-      <div className="flex items-center justify-between pb-2 shrink-0 border-b border-[var(--border-glass)] gap-2">
-        <button
-          type="button"
-          onClick={onBack}
-          className="min-h-[38px] flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0 cursor-pointer"
+      {/* ================= SCREEN 06: AISLE & CAPTURE SETUP ================= */}
+      {step === 'SETUP' && (
+        <motion.div
+          initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22 }}
+          className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden px-4 pt-3 pb-5 md:py-6"
         >
-          <ArrowLeft size={15} />
-          <span className={`truncate ${step === 'RESULTS' ? 'max-w-[105px] sm:max-w-[160px]' : 'max-w-[180px] sm:max-w-xs md:max-w-md'}`}>
-            {outlet.name}
-          </span>
-        </button>
-
-        {step === 'RESULTS' && (
-          <LiveLocationBadge
-            compact
-            outletName={outlet.name}
-            targetLatitude={outlet.latitude}
-            targetLongitude={outlet.longitude}
-            onLocationCaptured={setGpsCoords}
-          />
-        )}
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[11px] font-bold text-[var(--accent-primary)] tabular-nums">
-            {step === 'CAPTURE'
-              ? `1. ${currentSession?.label || 'Bay 1'}`
-              : step === 'POSM'
-              ? '2. POSM'
-              : step === 'RESULTS'
-              ? `3. Results (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
-              : '4. Scorecard'}
-          </span>
-        </div>
-      </div>
-
-      {/* Sync Error Retry Notification Banner */}
-      {syncError && (
-        <div className="mb-2 px-3 py-2 rounded-2xl bg-rose-500/12 border border-rose-500/35 flex items-center justify-between text-xs text-rose-600 dark:text-rose-300 shrink-0">
-          <div className="flex items-center gap-1.5 truncate pr-2">
-            <AlertCircle size={14} className="text-rose-500 shrink-0" />
-            <span className="truncate">Sync failed: {syncError}</span>
-          </div>
-          <button
-            type="button"
-            onClick={handleRetrySync}
-            disabled={isRetryingSync}
-            className="px-2.5 py-1 rounded-xl bg-rose-600 text-white font-bold text-[11px] shrink-0 active:scale-95 cursor-pointer"
-          >
-            {isRetryingSync ? 'Retrying…' : 'Retry'}
-          </button>
-        </div>
-      )}
-
-      {/* ================= STEP 1: CAPTURE ================= */}
-      {step === 'CAPTURE' && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 overflow-hidden py-1.5">
-          {/* Camera Guidance Viewfinder */}
-          <div
-            ref={viewfinderRef}
-            onClick={() => {
-              if (!cameraStreamActive && !pendingCapture) startCameraStream();
-            }}
-            className="order-1 md:order-2 flex-1 relative rounded-3xl border border-[var(--border-glass-strong)] overflow-hidden bg-black flex flex-col items-center justify-center shadow-lg group cursor-pointer"
-          >
-            {/* Confirmed / Uploaded Photo Canvas View with AI Rod Scanning Animation */}
-            {Boolean(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl) && !pendingCapture && (
-              <div className="absolute inset-0 z-30 bg-black flex items-center justify-center overflow-hidden">
-                <img
-                  src={(aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl)!}
-                  alt={`${currentSession?.label || 'Bay'} Photo`}
-                  className="w-full h-full object-contain blur-[4px] scale-[1.02] transition-all duration-500"
-                />
-
-                {/* AI Laser Rod Bot Scanning Beam Line */}
-                <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                  <div className="w-full h-2.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_35px_#10B981] animate-scan-laser-rod absolute top-0 left-0 z-20" />
-                  <div className="absolute inset-0 bg-emerald-500/10" />
-                </div>
-
-                {/* Corner Target Reticles */}
-                <div className="absolute inset-4 pointer-events-none z-20">
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-md shadow-[0_0_12px_#10B981]" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-md shadow-[0_0_12px_#10B981]" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-emerald-400 rounded-bl-md shadow-[0_0_12px_#10B981]" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-md shadow-[0_0_12px_#10B981]" />
-                </div>
-
-                {/* Active AI Scanning Tag */}
-                <div className="absolute top-4 left-4 bg-black/80 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/50 flex items-center gap-2 shadow-xl z-30">
-                  <Loader2 size={13} className="text-emerald-400 animate-spin shrink-0" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                    AI Scanning &bull; {currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1'}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsFullScreenOpen(true)}
-                  className="hidden md:flex absolute bottom-4 right-4 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-[11px] font-bold text-slate-200 border border-white/15 shadow-md items-center gap-1.5 hover:bg-black/95 transition-all cursor-pointer z-30"
-                >
-                  <Maximize2 size={12} className="text-emerald-400" />
-                  <span>Tap to Zoom</span>
-                </button>
-              </div>
-            )}
-
-            {/* Live WebRTC Video Stream */}
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              autoPlay
-              onLoadedMetadata={(e) => {
-                const v = e.currentTarget;
-                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
-              }}
-              onResize={(e) => {
-                const v = e.currentTarget;
-                if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
-              }}
-              className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-                cameraStreamActive ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
-
-            {/* Fallback Shelf Photo */}
-            {!cameraStreamActive && (
-              <img
-                src={fallbackShelfPhoto}
-                alt={`${category} Supermarket Shelf`}
-                className="absolute inset-0 w-full h-full object-cover opacity-80"
-              />
-            )}
-
-            {/* Soft edge darkening scrim */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/55 pointer-events-none" />
-
-            {/* Previous-bay guide */}
-            {ghostGuideUrl && (() => {
-              const baseW = cameraStreamActive && videoDims.w && viewfinderSize.w ? viewfinderSize.w : 320;
-              const baseH = cameraStreamActive && videoDims.h && viewfinderSize.h ? viewfinderSize.h : 480;
-              const frame = cameraStreamActive && videoDims.w && viewfinderSize.w
-                ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
-                : { left: 0, top: 0, width: baseW, height: baseH };
-              const overlayWidth = Math.max(80, Math.round((frame.width || baseW) * GHOST_GUIDE_FRAC));
-
-              return (
-                <div
-                  className="absolute top-0 bottom-0 left-0 overflow-hidden pointer-events-none z-[15] border-r-2 border-dashed border-amber-400 bg-amber-500/10 shadow-xl"
-                  style={{ width: `${overlayWidth}px` }}
-                >
-                  <img
-                    src={ghostGuideUrl}
-                    alt="Previous bay overlay guide"
-                    className="absolute top-0 right-0 h-full max-w-none opacity-65 filter brightness-110 contrast-110"
-                    style={{ width: `${Math.max(300, frame.width || baseW)}px`, objectFit: 'fill' }}
-                  />
-                  <div className="absolute top-12 left-1 right-1 bg-black/85 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/80 shadow-md flex items-center justify-center text-center">
-                    <span className="text-[9px] font-bold uppercase tracking-tight text-amber-300">
-                      Align with {aisleSessions[ghostGuideBayKey!]?.label || 'Bay 1'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Camera Guidance: Level Line & Banner */}
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-4 z-10">
-              <div className="w-full flex items-center justify-between pointer-events-auto gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 bg-black/75 px-3 py-1 rounded-xl border border-white/15 backdrop-blur-md shadow-md truncate">
-                  {currentSession?.label || 'Bay 1'} &bull; {category}
-                </span>
-
-                <span
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-xl border flex items-center gap-1 backdrop-blur-md shadow-md shrink-0 ${
-                    isLevel
-                      ? 'text-emerald-300 bg-black/75 border-emerald-500/40'
-                      : 'text-rose-300 bg-black/75 border-rose-500/40'
-                  }`}
-                >
-                  {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Manual Center'}
-                </span>
-              </div>
-
-              <div className="relative w-full flex items-center justify-center my-auto z-10">
-                <div
-                  className={`w-full h-[2px] transition-colors duration-200 ${
-                    sensorsAvailable
-                      ? isLevel
-                        ? 'bg-[#22C55E] shadow-md shadow-emerald-400'
-                        : 'bg-[#EF4444] shadow-md shadow-rose-500'
-                      : 'bg-emerald-400/80'
-                  }`}
-                />
-                <div
-                  className={`absolute w-3.5 h-3.5 rounded-full border-2 transition-colors ${
-                    sensorsAvailable
-                      ? isLevel
-                        ? 'bg-[#22C55E] border-white shadow-lg shadow-emerald-400'
-                        : 'bg-[#EF4444] border-white shadow-lg shadow-rose-500'
-                      : 'bg-emerald-500 border-white'
-                  }`}
-                />
-              </div>
-
-              <div className="w-full hidden md:flex items-center justify-center pointer-events-auto">
-                <span className="text-[11px] font-medium text-slate-200 bg-black/75 px-3.5 py-1.5 rounded-full border border-white/15 backdrop-blur-md shadow-md text-center max-w-sm truncate">
-                  {ghostGuideUrl
-                    ? 'Line up the faded strip with the shelf · Tap shutter to snap'
-                    : 'Hold level · Tap shutter to snap'}
-                </span>
-              </div>
+          {/* Header */}
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to Store Audit"
+              className="w-10 h-10 rounded-full glass-panel flex items-center justify-center text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95 shrink-0"
+            >
+              <ChevronLeft size={19} />
+            </button>
+            <div className="min-w-0">
+              <h1 className="font-heading font-extrabold text-[22px] sm:text-[24px] leading-tight tracking-tight text-[var(--text-primary)] truncate">
+                Capture Setup &ndash; {category}
+              </h1>
+              <p className="text-xs text-[var(--text-secondary)] truncate">
+                {outlet.name}
+                {outlet.code ? ` · SAP ${outlet.code}` : ''}
+              </p>
             </div>
+          </div>
 
-            {/* Camera Permission Alert Box */}
-            {cameraErrorNotice && !cameraStreamActive && !showPostCapturePrompt && !pendingCapture && (
-              <div className="absolute inset-0 z-30 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center space-y-3 pointer-events-auto animate-fade-in">
-                <div className="p-3 rounded-2xl bg-amber-500/20 border border-amber-400/50 text-amber-300 shadow-lg">
-                  <AlertTriangle size={26} />
-                </div>
-                <div className="max-w-xs space-y-1">
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-white">
-                    Camera Permission &amp; Status
-                  </h4>
-                  <p className="text-[11px] text-amber-200/90 leading-relaxed font-medium">
-                    {cameraErrorNotice}
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-2 w-full max-w-xs pt-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startCameraStream();
-                    }}
-                    className="w-full min-h-[44px] py-2.5 px-3 bg-[#10B981] hover:brightness-105 text-[#05231C] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                  >
-                    <Camera size={15} />
-                    <span>Re-request Camera Permission</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      cameraInputRef.current?.click();
-                    }}
-                    className="w-full min-h-[44px] py-2 px-3 bg-white/10 hover:bg-white/15 border border-white/20 text-slate-200 text-xs font-semibold rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                  >
-                    <Upload size={13} />
-                    <span>Snap via System Camera App</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Tap to Activate Live Stream Button */}
-            {!cameraStreamActive && !cameraErrorNotice && !showPostCapturePrompt && !pendingCapture && (
-              <div className="absolute bottom-14 z-20 pointer-events-auto flex flex-col items-center space-y-2">
+          {/* Setup Cards */}
+          <div className="flex-1 overflow-y-auto py-4 space-y-5 no-scrollbar">
+            {/* Aisle Mode */}
+            <div className="space-y-2.5">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)] px-1">
+                Configure Aisle &amp; Capture
+              </h2>
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startCameraStream();
-                  }}
-                  className="min-h-[44px] px-4 py-2 rounded-2xl bg-[#084C41] hover:bg-[#063D34] text-white font-bold text-xs shadow-xl border border-white/20 flex items-center gap-2 active:scale-95 cursor-pointer"
-                >
-                  <Camera size={15} />
-                  <span>Tap to Start Live Camera</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    cameraInputRef.current?.click();
-                  }}
-                  className="text-[11px] text-emerald-300 hover:text-white underline font-semibold bg-black/70 px-2.5 py-1 rounded-lg cursor-pointer"
-                >
-                  Or snap with system camera
-                </button>
-              </div>
-            )}
-
-            {/* Review-before-upload */}
-            {pendingCapture && (() => {
-              const pc = pendingCapture;
-              const label = aisleSessions[pc.bayKey]?.label || 'Bay';
-              const prevKey = previousCapturedBayKey(pc.bayKey);
-              const prevSession = prevKey ? aisleSessions[prevKey] : null;
-              const prevLabel = prevSession?.label || 'previous bay';
-              const containerW = viewfinderSize.w > 0 ? viewfinderSize.w : (viewfinderRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 360));
-              const containerH = viewfinderSize.h > 0 ? viewfinderSize.h : (viewfinderRef.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 480));
-              const frame = fitRect(containerW, containerH, pc.width || 3, pc.height || 4);
-              const seam = pendingSeam;
-              const ovPct = seam ? seam.overlapFracRight * 100 : 0;
-              const cutPct = seam ? seam.cutFracRight * 100 : 0;
-
-              return (
-                <div
-                  className="absolute inset-0 z-40 bg-black"
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={() => handleSelectAisleMode('single')}
+                  className={`rounded-3xl p-4 flex flex-col items-center justify-center text-center gap-2.5 min-h-[126px] transition-all cursor-pointer active:scale-[0.98] ${
+                    aisleMode === 'single'
+                      ? 'glass-panel border-[#00C8FF] ring-2 ring-[#008DFF]/35 shadow-[0_0_24px_-6px_rgba(0,141,255,0.45)]'
+                      : 'glass-subtle hover:border-[#008DFF]/45'
+                  }`}
                 >
                   <div
-                    ref={previewFrameRef}
-                    className="absolute overflow-hidden touch-none select-none"
-                    style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}
-                    onPointerMove={(e) => {
-                      if (isDraggingSeamRef.current) handleSeamDrag(e.clientX);
-                    }}
-                    onPointerUp={() => { isDraggingSeamRef.current = false; }}
-                    onPointerCancel={() => { isDraggingSeamRef.current = false; }}
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${
+                      aisleMode === 'single'
+                        ? 'bg-[#0066FF]/20 border-[#00C8FF]/55 text-[#00C8FF]'
+                        : 'glass-panel text-[var(--text-secondary)]'
+                    }`}
                   >
-                    <img src={pc.dataUrl} alt={`${label} preview`} className="absolute inset-0 w-full h-full" style={{ objectFit: 'fill' }} draggable={false} />
-
-                    {prevKey && seam && !isMeasuringSeam && (
-                      <>
-                        <div
-                          className="absolute top-0 bottom-0 left-0 overflow-hidden bg-amber-500/25 pointer-events-none"
-                          style={{ width: `${ovPct}%` }}
-                        >
-                          {showAlignmentCheck && prevSession?.capturedPhotoUrl && (
-                            <img
-                              src={prevSession.capturedPhotoUrl}
-                              alt=""
-                              className="absolute max-w-none opacity-60"
-                              style={{
-                                width: `${(100 / Math.max(0.05, ovPct / 100)) / seam.widthRatio}%`,
-                                right: 0,
-                                top: `calc(50% - ${seam.dyFrac * 100}%)`,
-                                transform: 'translateY(-50%)'
-                              }}
-                            />
-                          )}
-                        </div>
-                        <div
-                          className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-emerald-400 pointer-events-none"
-                          style={{ left: `${cutPct}%` }}
-                        >
-                          <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-bold text-emerald-200 bg-black/80 px-1.5 py-0.5 rounded border border-emerald-500/50">
-                            Count line
-                          </span>
-                        </div>
-                        <div
-                          role="slider"
-                          aria-label={`Where ${prevLabel} ends`}
-                          aria-valuenow={Math.round(ovPct)}
-                          aria-valuemin={0}
-                          aria-valuemax={80}
-                          className="absolute top-0 bottom-0 w-11 -ml-[22px] flex items-center justify-center cursor-ew-resize touch-none"
-                          style={{ left: `${ovPct}%` }}
-                          onPointerDown={(e) => {
-                            isDraggingSeamRef.current = true;
-                            (e.currentTarget.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId);
-                            handleSeamDrag(e.clientX);
-                          }}
-                        >
-                          <div className="h-full w-[3px] bg-amber-400 shadow shadow-black" />
-                          <div className="absolute w-7 h-12 rounded-lg bg-amber-400 text-black text-[11px] font-black flex items-center justify-center shadow-lg">
-                            ⟷
-                          </div>
-                          <span className="absolute bottom-24 whitespace-nowrap text-[9px] font-bold text-amber-200 bg-black/85 px-1.5 py-0.5 rounded border border-amber-500/50">
-                            {prevLabel} ends here
-                          </span>
-                        </div>
-                      </>
-                    )}
+                    <Square size={22} />
                   </div>
-
-                  <div className="absolute top-0 left-0 right-0 p-2.5 bg-gradient-to-b from-black/90 via-black/70 to-transparent flex items-center justify-between pointer-events-auto z-10">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-                      {label} &bull; Review before upload
+                  <div>
+                    <span className="text-sm font-extrabold text-[var(--text-primary)] block">
+                      Single Aisle
                     </span>
-                    <div className="flex items-center gap-2">
-                      {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setShowAlignmentCheck((v) => !v)}
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md transition-colors cursor-pointer ${
-                            showAlignmentCheck ? 'bg-amber-400 text-black border border-amber-300' : 'bg-black/80 text-amber-300 border border-amber-500/50'
-                          }`}
-                        >
-                          {showAlignmentCheck ? 'Hide check' : 'Check overlap'}
-                        </button>
-                      )}
-                      {prevKey && isMeasuringSeam && (
-                        <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
-                          <Loader2 size={12} className="animate-spin" /> Measuring overlap…
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      1 shelf frame
+                    </span>
                   </div>
-                </div>
-              );
-            })()}
-          </div>
+                </button>
 
-          {/* Capture Controls Dock: Frosted Glass Desktop Left Sidebar + Mobile Bottom Bar */}
-          <div className="order-2 md:order-1 md:w-[370px] md:shrink-0 flex flex-col justify-between shrink-0 py-2.5 px-3 md:p-5 mt-1.5 md:mt-0 glass-panel-strong rounded-t-3xl md:rounded-3xl z-20 select-none overflow-hidden">
-            <div className="hidden md:flex flex-col gap-3.5">
-              <div className="flex items-center justify-between pb-2.5 border-b border-[var(--border-glass)]">
-                <div>
-                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
-                    Shelf Capture
-                  </h3>
-                  <p className="text-xs text-[var(--text-secondary)]">
-                    Target: {category} &middot; {currentSession?.label || 'Bay 1'}
-                  </p>
-                </div>
-                <span className="text-xs font-mono font-bold tabular-nums text-[var(--accent-primary)]">
-                  {capturedAisles.length} Captured
-                </span>
-              </div>
-
-              <div className="p-3.5 rounded-2xl glass-subtle space-y-2.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-primary)]">
-                  Bay Sequence Queue
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {bayKeys.map((k, idx) => {
-                    const s = aisleSessions[k];
-                    const isCaptured = Boolean(s?.capturedPhotoUrl);
-                    const isCurrent = currentAisle === k;
-                    return (
-                      <button
-                        type="button"
-                        key={k}
-                        onClick={() => setCurrentAisle(k)}
-                        className={`min-h-[36px] px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                          isCurrent
-                            ? isDark
-                              ? 'bg-[#10B981] text-[#05231C] shadow-xs'
-                              : 'bg-[#084C41] text-white shadow-xs'
-                            : isCaptured
-                            ? 'glass-panel text-[var(--accent-primary)]'
-                            : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                        }`}
-                      >
-                        <span>{s?.label || `Bay ${idx + 1}`}</span>
-                        {isCaptured && <CheckCircle2 size={12} />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl glass-subtle space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--accent-primary)]">
-                  <Layers size={14} />
-                  <span>Alignment Guidance</span>
-                </div>
-                <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
-                  {ghostGuideUrl
-                    ? 'Align the faded edge on the left with the shelf you previously photographed to ensure seamless multi-bay stitching.'
-                    : 'Hold camera upright and level with the middle shelf. Tap Shutter when the center line turns green.'}
-                </p>
+                <button
+                  type="button"
+                  onClick={() => handleSelectAisleMode('double')}
+                  className={`rounded-3xl p-4 flex flex-col items-center justify-center text-center gap-2.5 min-h-[126px] transition-all cursor-pointer active:scale-[0.98] ${
+                    aisleMode === 'double'
+                      ? 'glass-panel border-[#00C8FF] ring-2 ring-[#008DFF]/35 shadow-[0_0_24px_-6px_rgba(0,141,255,0.45)]'
+                      : 'glass-subtle hover:border-[#008DFF]/45'
+                  }`}
+                >
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${
+                      aisleMode === 'double'
+                        ? 'bg-[#0066FF]/20 border-[#00C8FF]/55 text-[#00C8FF]'
+                        : 'glass-panel text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <Columns2 size={22} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-extrabold text-[var(--text-primary)] block">
+                      Double Aisle
+                    </span>
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      2 bays + seam stitch
+                    </span>
+                  </div>
+                </button>
               </div>
             </div>
 
-            {/* Common Primary Actions */}
-            <div className="space-y-2 pt-1 md:pt-4">
-              {(() => {
-                const isPending = Boolean(pendingCapture);
-                const hasPhotoForCurrentBay = Boolean(
-                  aisleSessions[currentAisle]?.capturedPhotoUrl || aisleSessions[currentAisle]?.annotatedPhotoUrl
-                );
-                const currentLabel = pendingCapture
-                  ? (aisleSessions[pendingCapture.bayKey]?.label || 'Bay 1')
-                  : (currentSession?.label || aisleSessions[currentAisle]?.label || 'Bay 1');
+            {/* Capture Orientation */}
+            <div className="space-y-2.5">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)] px-1">
+                Capture Orientation
+              </h2>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCaptureOrientation('horizontal')}
+                  className={`rounded-3xl p-4 flex flex-col items-center justify-center text-center gap-2.5 min-h-[116px] transition-all cursor-pointer active:scale-[0.98] ${
+                    captureOrientation === 'horizontal'
+                      ? 'glass-panel border-[#00C8FF] ring-2 ring-[#008DFF]/35 shadow-[0_0_24px_-6px_rgba(0,141,255,0.45)]'
+                      : 'glass-subtle hover:border-[#008DFF]/45'
+                  }`}
+                >
+                  <div
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center border ${
+                      captureOrientation === 'horizontal'
+                        ? 'bg-[#0066FF]/20 border-[#00C8FF]/55 text-[#00C8FF]'
+                        : 'glass-panel text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <RectangleHorizontal size={22} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-extrabold text-[var(--text-primary)] block">
+                      Horizontal
+                    </span>
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      Wide 4:3 shelf
+                    </span>
+                  </div>
+                </button>
 
-                if (isPending) {
-                  return (
-                    <div className="flex items-center gap-2 w-full">
-                      <button
-                        type="button"
-                        onClick={handleConfirmUpload}
-                        disabled={isMeasuringSeam}
-                        className={`w-[68%] h-12 md:h-14 disabled:opacity-50 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer shadow-lg rounded-2xl ${
-                          isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                        }`}
-                      >
-                        <Upload size={16} />
-                        <span>Upload {currentLabel}</span>
-                      </button>
+                <button
+                  type="button"
+                  onClick={() => setCaptureOrientation('vertical')}
+                  className={`rounded-3xl p-4 flex flex-col items-center justify-center text-center gap-2.5 min-h-[116px] transition-all cursor-pointer active:scale-[0.98] ${
+                    captureOrientation === 'vertical'
+                      ? 'glass-panel border-[#00C8FF] ring-2 ring-[#008DFF]/35 shadow-[0_0_24px_-6px_rgba(0,141,255,0.45)]'
+                      : 'glass-subtle hover:border-[#008DFF]/45'
+                  }`}
+                >
+                  <div
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center border ${
+                      captureOrientation === 'vertical'
+                        ? 'bg-[#0066FF]/20 border-[#00C8FF]/55 text-[#00C8FF]'
+                        : 'glass-panel text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <RectangleVertical size={22} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-extrabold text-[var(--text-primary)] block">
+                      Vertical
+                    </span>
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      Tall 3:4 racks
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
 
-                      <button
-                        type="button"
-                        onClick={handleDiscardPending}
-                        className="w-[32%] h-12 md:h-14 glass-subtle border-rose-500/35 text-rose-600 dark:text-rose-300 active:scale-95 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer rounded-2xl transition-all"
-                      >
-                        <RefreshCw size={14} />
-                        <span>Retake</span>
-                      </button>
-                    </div>
-                  );
-                }
+            {/* Guidance Note */}
+            <div className="glass-subtle rounded-2xl px-4 py-3 flex items-center gap-2.5 text-xs text-[var(--text-secondary)]">
+              <Info size={16} className="text-[#008DFF] dark:text-[#00C8FF] shrink-0" />
+              <span>Capture the full shelf, front-on and level.</span>
+            </div>
+          </div>
 
-                if (hasPhotoForCurrentBay) {
-                  return (
-                    <div className="flex items-center gap-2 w-full">
-                      <button
-                        type="button"
-                        onClick={handleDoneShooting}
-                        className={`w-1/2 h-12 md:h-14 active:scale-[0.97] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                        }`}
-                      >
-                        <CheckCircle2 size={16} />
-                        <span className="whitespace-nowrap">Continue POSM</span>
-                      </button>
+          {/* Primary Open Camera CTA */}
+          <div className="pt-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentAisle('bay_1');
+                setStep('CAPTURE');
+              }}
+              className="w-full min-h-[54px] rounded-full btn-electric-blue font-bold text-sm tracking-wide flex items-center justify-center gap-2 cursor-pointer active:scale-[0.97]"
+            >
+              <span>Open Camera</span>
+              <ArrowRight size={17} />
+            </button>
+          </div>
+        </motion.div>
+      )}
 
-                      <button
-                        type="button"
-                        onClick={handleAddNewBay}
-                        className="w-1/2 h-12 md:h-14 glass-subtle active:scale-[0.97] font-bold text-xs text-[var(--accent-primary)] rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Plus size={15} />
-                        <span className="whitespace-nowrap">Add One More Bay</span>
-                      </button>
-                    </div>
-                  );
-                }
+      {/* ================= SCREEN 07: INTELLIGENT CAMERA CAPTURE ================= */}
+      {step === 'CAPTURE' && (
+        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-4 w-full h-full max-w-6xl mx-auto overflow-hidden bg-[#020D1F] text-[#F1F5FF]">
+          {/* Immersive Viewfinder Container */}
+          <div className="order-1 md:order-2 flex-1 flex flex-col min-h-0 relative bg-black md:m-3 md:rounded-3xl overflow-hidden border-b md:border border-white/10">
+            {/* Floating Top Camera Bar */}
+            <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between gap-2 pointer-events-none">
+              <div className="flex items-center gap-2 pointer-events-auto min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setStep('SETUP')}
+                  aria-label="Back to Capture Setup"
+                  className="w-9 h-9 rounded-full bg-[#020D1F]/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95 shrink-0"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <div className="px-3 py-1.5 rounded-full bg-[#020D1F]/80 backdrop-blur-md border border-[#104878] text-[11px] font-bold text-[#00C8FF] truncate">
+                  {currentSession?.label || 'Bay 1'} &bull; {category}
+                </div>
+              </div>
+
+              <span
+                className={`pointer-events-auto text-[11px] font-bold px-2.5 py-1 rounded-full border flex items-center gap-1 backdrop-blur-md shrink-0 ${
+                  isLevel
+                    ? 'text-[#22C55E] bg-[#020D1F]/80 border-[#22C55E]/45'
+                    : sensorsAvailable
+                    ? 'text-[#EF4444] bg-[#020D1F]/80 border-[#EF4444]/45'
+                    : 'text-[#00C8FF] bg-[#020D1F]/80 border-[#008DFF]/45'
+                }`}
+              >
+                {sensorsAvailable ? (isLevel ? '✓ Level' : 'Tilt device') : 'Level Guide'}
+              </span>
+            </div>
+
+            {/* Interactive Viewfinder Surface */}
+            <div
+              ref={viewfinderRef}
+              onClick={() => {
+                if (!cameraStreamActive && !pendingCapture) startCameraStream();
+              }}
+              className="flex-1 relative flex items-center justify-center overflow-hidden bg-black cursor-pointer"
+            >
+              {/* Live WebRTC Video Stream */}
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                autoPlay
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
+                }}
+                onResize={(e) => {
+                  const v = e.currentTarget;
+                  if (v.videoWidth && v.videoHeight) setVideoDims({ w: v.videoWidth, h: v.videoHeight });
+                }}
+                className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+                  cameraStreamActive ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+
+              {/* Fallback Shelf Photo */}
+              {!cameraStreamActive && (
+                <img
+                  src={fallbackShelfPhoto}
+                  alt={`${category} Supermarket Shelf`}
+                  className="absolute inset-0 w-full h-full object-cover opacity-75"
+                />
+              )}
+
+              {/* Subtle Edge Vignette */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/55 pointer-events-none" />
+
+              {/* Previous-Bay Ghost Guide (Bay 2+) */}
+              {ghostGuideUrl && (() => {
+                const baseW = cameraStreamActive && videoDims.w && viewfinderSize.w ? viewfinderSize.w : 320;
+                const baseH = cameraStreamActive && videoDims.h && viewfinderSize.h ? viewfinderSize.h : 480;
+                const frame =
+                  cameraStreamActive && videoDims.w && viewfinderSize.w
+                    ? fitRect(viewfinderSize.w, viewfinderSize.h, videoDims.w, videoDims.h)
+                    : { left: 0, top: 0, width: baseW, height: baseH };
+                const overlayWidth = Math.max(80, Math.round((frame.width || baseW) * GHOST_GUIDE_FRAC));
 
                 return (
-                  <div className="flex items-center gap-2 w-full">
-                    <button
-                      type="button"
-                      onClick={handleManualShutter}
-                      className={`w-[68%] h-12 md:h-14 active:scale-[0.97] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                      }`}
-                    >
-                      <Camera size={16} />
-                      <span>Shoot {currentLabel}</span>
-                    </button>
+                  <div
+                    className="absolute top-0 bottom-0 left-0 overflow-hidden pointer-events-none z-[15] border-r-2 border-dashed border-amber-400 bg-amber-500/10"
+                    style={{ width: `${overlayWidth}px` }}
+                  >
+                    <img
+                      src={ghostGuideUrl}
+                      alt="Previous bay overlay guide"
+                      className="absolute top-0 right-0 h-full max-w-none opacity-65"
+                      style={{ width: `${Math.max(300, frame.width || baseW)}px`, objectFit: 'fill' }}
+                    />
+                    <div className="absolute top-14 left-1 right-1 bg-black/85 backdrop-blur-md px-1.5 py-1 rounded border border-amber-400/80 text-center">
+                      <span className="text-[9px] font-bold uppercase tracking-tight text-amber-300">
+                        Align with {aisleSessions[ghostGuideBayKey!]?.label || 'Bay 1'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
+              {/* White Frame Corner Brackets & Center Spirit Level */}
+              {!pendingCapture && (
+                <div className="absolute inset-5 sm:inset-8 pointer-events-none z-10 flex items-center justify-center">
+                  <div className={`relative w-full max-w-md max-h-[82%] ${visibleAspectRatioClass}`}>
+                    <div className="absolute top-0 left-0 w-7 h-7 border-t-[3px] border-l-[3px] border-white rounded-tl-xl" />
+                    <div className="absolute top-0 right-0 w-7 h-7 border-t-[3px] border-r-[3px] border-white rounded-tr-xl" />
+                    <div className="absolute bottom-0 left-0 w-7 h-7 border-b-[3px] border-l-[3px] border-white rounded-bl-xl" />
+                    <div className="absolute bottom-0 right-0 w-7 h-7 border-b-[3px] border-r-[3px] border-white rounded-br-xl" />
+
+                    {/* Center Spirit Level Bar */}
+                    <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 flex items-center justify-center">
+                      <div
+                        className={`w-full h-[2px] transition-colors duration-200 ${
+                          sensorsAvailable
+                            ? isLevel
+                              ? 'bg-[#22C55E] shadow-[0_0_12px_#22C55E]'
+                              : 'bg-[#EF4444]/85'
+                            : 'bg-[#00C8FF]/80'
+                        }`}
+                      />
+                      <div
+                        className={`absolute w-3.5 h-3.5 rounded-full border-2 border-white ${
+                          sensorsAvailable
+                            ? isLevel
+                              ? 'bg-[#22C55E]'
+                              : 'bg-[#EF4444]'
+                            : 'bg-[#008DFF]'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Right-Side Floating Camera Control Rail */}
+              {!pendingCapture && (
+                <div
+                  className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-2.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={handleToggleTorch}
+                    disabled={!torchSupported}
+                    title={torchSupported ? (torchEnabled ? 'Turn off flash' : 'Turn on flash') : 'Flash unavailable'}
+                    aria-label="Toggle Flash"
+                    className={`w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center transition-all ${
+                      torchEnabled
+                        ? 'bg-[#008DFF] border-[#00C8FF] text-white shadow-[0_0_16px_rgba(0,200,255,0.55)] cursor-pointer'
+                        : torchSupported
+                        ? 'bg-[#020D1F]/80 border-white/20 text-white cursor-pointer hover:border-[#00C8FF]'
+                        : 'bg-[#020D1F]/55 border-white/10 text-white/35 cursor-not-allowed'
+                    }`}
+                  >
+                    {torchEnabled ? <Zap size={16} /> : <ZapOff size={16} />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCaptureOrientation((prev) => (prev === 'horizontal' ? 'vertical' : 'horizontal'))
+                    }
+                    className="w-10 h-10 rounded-full bg-[#020D1F]/80 backdrop-blur-md border border-white/20 text-[10px] font-extrabold text-[#00C8FF] flex items-center justify-center cursor-pointer active:scale-95"
+                    title="Switch Orientation Ratio"
+                  >
+                    {captureOrientation === 'horizontal' ? '4:3' : '3:4'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (bayKeys.length > 1) {
+                        const curIdx = bayKeys.indexOf(currentAisle);
+                        setCurrentAisle(bayKeys[(curIdx + 1) % bayKeys.length]);
+                      } else {
+                        handleSelectAisleMode('double');
+                        setCurrentAisle('bay_2');
+                      }
+                    }}
+                    className="w-10 h-10 rounded-full bg-[#020D1F]/80 backdrop-blur-md border border-white/20 text-[10px] font-extrabold text-white flex items-center justify-center cursor-pointer active:scale-95"
+                    title="Toggle Single / Double Bay"
+                  >
+                    {bayKeys.length > 1 ? `${bayKeys.indexOf(currentAisle) + 1}/${bayKeys.length}` : '1B'}
+                  </button>
+                </div>
+              )}
+
+              {/* Camera Permission Prompt */}
+              {cameraErrorNotice && !cameraStreamActive && !pendingCapture && (
+                <div
+                  className="absolute inset-0 z-30 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center p-5 text-center space-y-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="p-3 rounded-2xl bg-amber-500/20 border border-amber-400/50 text-amber-300">
+                    <AlertTriangle size={24} />
+                  </div>
+                  <div className="max-w-xs space-y-1">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-white">
+                      Camera Access Needed
+                    </h4>
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">{cameraErrorNotice}</p>
+                  </div>
+                  <div className="flex flex-col gap-2 w-full max-w-xs">
                     <button
                       type="button"
-                      onClick={() => galleryInputRef.current?.click()}
-                      disabled={Boolean(pendingCapture)}
-                      className="w-[32%] h-12 md:h-14 glass-subtle text-[var(--text-primary)] disabled:opacity-40 active:scale-[0.97] font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      onClick={() => startCameraStream()}
+                      className="w-full min-h-[44px] rounded-full btn-electric-blue text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Upload size={14} className="text-[var(--accent-primary)]" />
-                      <span>Gallery</span>
+                      <Camera size={15} />
+                      <span>Enable Camera</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="w-full min-h-[42px] rounded-full bg-white/10 border border-white/20 text-white text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Upload size={13} />
+                      <span>Use System Camera App</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Start Live Stream CTA if idle */}
+              {!cameraStreamActive && !cameraErrorNotice && !pendingCapture && (
+                <div
+                  className="absolute bottom-5 z-20 flex flex-col items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => startCameraStream()}
+                    className="min-h-[42px] px-4 py-2 rounded-full btn-electric-blue text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-lg"
+                  >
+                    <Camera size={14} />
+                    <span>Tap to Start Camera</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Pending Capture Seam & Overlap Review */}
+              {pendingCapture && (() => {
+                const pc = pendingCapture;
+                const label = aisleSessions[pc.bayKey]?.label || 'Bay';
+                const prevKey = previousCapturedBayKey(pc.bayKey);
+                const prevSession = prevKey ? aisleSessions[prevKey] : null;
+                const prevLabel = prevSession?.label || 'previous bay';
+                const containerW =
+                  viewfinderSize.w > 0
+                    ? viewfinderSize.w
+                    : viewfinderRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 360);
+                const containerH =
+                  viewfinderSize.h > 0
+                    ? viewfinderSize.h
+                    : viewfinderRef.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 480);
+                const frame = fitRect(containerW, containerH, pc.width || 3, pc.height || 4);
+                const seam = pendingSeam;
+                const ovPct = seam ? seam.overlapFracRight * 100 : 0;
+                const cutPct = seam ? seam.cutFracRight * 100 : 0;
+
+                return (
+                  <div className="absolute inset-0 z-40 bg-black" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      ref={previewFrameRef}
+                      className="absolute overflow-hidden touch-none select-none"
+                      style={{ left: frame.left, top: frame.top, width: frame.width, height: frame.height }}
+                      onPointerMove={(e) => {
+                        if (isDraggingSeamRef.current) handleSeamDrag(e.clientX);
+                      }}
+                      onPointerUp={() => {
+                        isDraggingSeamRef.current = false;
+                      }}
+                      onPointerCancel={() => {
+                        isDraggingSeamRef.current = false;
+                      }}
+                    >
+                      <img
+                        src={pc.dataUrl}
+                        alt={`${label} preview`}
+                        className="absolute inset-0 w-full h-full"
+                        style={{ objectFit: 'fill' }}
+                        draggable={false}
+                      />
+
+                      {prevKey && seam && !isMeasuringSeam && (
+                        <>
+                          <div
+                            className="absolute top-0 bottom-0 left-0 overflow-hidden bg-amber-500/25 pointer-events-none"
+                            style={{ width: `${ovPct}%` }}
+                          >
+                            {showAlignmentCheck && prevSession?.capturedPhotoUrl && (
+                              <img
+                                src={prevSession.capturedPhotoUrl}
+                                alt=""
+                                className="absolute max-w-none opacity-60"
+                                style={{
+                                  width: `${(100 / Math.max(0.05, ovPct / 100)) / seam.widthRatio}%`,
+                                  right: 0,
+                                  top: `calc(50% - ${seam.dyFrac * 100}%)`,
+                                  transform: 'translateY(-50%)'
+                                }}
+                              />
+                            )}
+                          </div>
+                          <div
+                            className="absolute top-0 bottom-0 w-0 border-r-2 border-dashed border-[#00C8FF] pointer-events-none"
+                            style={{ left: `${cutPct}%` }}
+                          >
+                            <span className="absolute top-2 left-1 whitespace-nowrap text-[9px] font-bold text-[#00C8FF] bg-[#020D1F]/85 px-1.5 py-0.5 rounded border border-[#008DFF]/60">
+                              Count line
+                            </span>
+                          </div>
+                          <div
+                            role="slider"
+                            aria-label={`Where ${prevLabel} ends`}
+                            aria-valuenow={Math.round(ovPct)}
+                            aria-valuemin={0}
+                            aria-valuemax={80}
+                            className="absolute top-0 bottom-0 w-11 -ml-[22px] flex items-center justify-center cursor-ew-resize touch-none"
+                            style={{ left: `${ovPct}%` }}
+                            onPointerDown={(e) => {
+                              isDraggingSeamRef.current = true;
+                              (e.currentTarget.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId);
+                              handleSeamDrag(e.clientX);
+                            }}
+                          >
+                            <div className="h-full w-[3px] bg-amber-400 shadow shadow-black" />
+                            <div className="absolute w-7 h-12 rounded-lg bg-amber-400 text-black text-[11px] font-black flex items-center justify-center shadow-lg">
+                              ⟷
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/85 to-transparent flex items-center justify-between pointer-events-auto z-10">
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-white">
+                        {label} &bull; Confirm Photo
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {prevKey && seam && !isMeasuringSeam && prevSession?.capturedPhotoUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAlignmentCheck((v) => !v)}
+                            className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer ${
+                              showAlignmentCheck ? 'bg-amber-400 text-black' : 'bg-black/80 text-amber-300 border border-amber-400/50'
+                            }`}
+                          >
+                            {showAlignmentCheck ? 'Hide overlap' : 'Check overlap'}
+                          </button>
+                        )}
+                        {prevKey && isMeasuringSeam && (
+                          <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                            <Loader2 size={12} className="animate-spin" /> Measuring…
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
             </div>
           </div>
+
+          {/* Native Camera Bottom Dock (Mobile) / Left Rail (Desktop) */}
+          <div className="order-2 md:order-1 md:w-[320px] md:shrink-0 bg-[#020D1F] border-t md:border-t-0 md:border-r border-[#104878]/60 px-5 pt-4 pb-[calc(18px+env(safe-area-inset-bottom,0px))] md:p-5 flex flex-col justify-between z-20 shrink-0">
+            {/* Desktop Context & Bay Queue */}
+            <div className="hidden md:flex flex-col gap-4">
+              <div>
+                <h2 className="font-heading font-extrabold text-xl text-white">Shelf Capture</h2>
+                <p className="text-xs text-[#9AB0D0]">
+                  {category} &middot; {aisleMode === 'double' ? 'Double Aisle (2 Bays)' : 'Single Aisle'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#00C8FF]">
+                  Bay Queue
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {bayKeys.map((k, idx) => {
+                    const s = aisleSessions[k];
+                    const hasPhoto = Boolean(s?.capturedPhotoUrl);
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setCurrentAisle(k)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                          currentAisle === k
+                            ? 'btn-electric-blue text-white'
+                            : hasPhoto
+                            ? 'bg-[#22C55E]/20 border border-[#22C55E]/40 text-[#4ADE80]'
+                            : 'bg-white/5 border border-white/15 text-[#9AB0D0]'
+                        }`}
+                      >
+                        <span>{s?.label || `Bay ${idx + 1}`}</span>
+                        {hasPhoto && <Check size={12} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <p className="text-xs text-[#9AB0D0] leading-relaxed">
+                {ghostGuideUrl
+                  ? 'Align the faded left strip with the edge of Bay 1, then tap the shutter.'
+                  : 'Center the shelf horizontally, wait for the green level line, and tap the shutter.'}
+              </p>
+            </div>
+
+            {/* Bottom Shutter Bar */}
+            {pendingCapture ? (
+              <div className="flex items-center justify-between gap-4 max-w-md mx-auto w-full">
+                <button
+                  type="button"
+                  onClick={handleDiscardPending}
+                  className="h-12 px-5 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <RefreshCw size={14} />
+                  <span>Retake</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleConfirmUpload}
+                  disabled={isMeasuringSeam}
+                  aria-label="Confirm Photo & Start Analysis"
+                  className="h-14 flex-1 rounded-full btn-electric-blue text-white font-bold text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <Check size={18} strokeWidth={2.8} />
+                  <span>
+                    {aisleMode === 'double' &&
+                    pendingCapture.bayKey === 'bay_1' &&
+                    !pendingCapture.isRetake &&
+                    !aisleSessions.bay_2?.capturedPhotoUrl
+                      ? 'Save & Next Bay'
+                      : 'Use Photo'}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between max-w-md mx-auto w-full">
+                {/* Left: Gallery */}
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="w-12 h-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95"
+                  aria-label="Choose from gallery"
+                  title="Choose from gallery"
+                >
+                  <ImageIcon size={20} />
+                </button>
+
+                {/* Center: Native White Double-Ring Shutter */}
+                <button
+                  type="button"
+                  onClick={handleManualShutter}
+                  aria-label={`Capture ${currentSession?.label || 'Bay 1'}`}
+                  className="w-[74px] h-[74px] rounded-full border-[3.5px] border-white/85 p-1 flex items-center justify-center cursor-pointer active:scale-90 transition-transform shadow-[0_0_25px_rgba(0,141,255,0.45)]"
+                >
+                  <span className="w-full h-full rounded-full bg-white block" />
+                </button>
+
+                {/* Right: Continue if ≥1 captured, else Debug/Native Camera */}
+                {capturedAisles.length >= 1 ? (
+                  <button
+                    type="button"
+                    onClick={handleDoneShooting}
+                    aria-label="Continue to Audit"
+                    className="w-12 h-12 rounded-full btn-electric-blue flex items-center justify-center text-white cursor-pointer active:scale-95"
+                    title="Continue to Questionnaire"
+                  >
+                    <Check size={20} strokeWidth={2.8} />
+                  </button>
+                ) : isDebugMode ? (
+                  <button
+                    type="button"
+                    onClick={handleUseDemoSample}
+                    className="w-12 h-12 rounded-2xl bg-[#0066FF]/25 border border-[#00C8FF]/45 flex items-center justify-center text-[#00C8FF] text-[10px] font-extrabold cursor-pointer active:scale-95"
+                    title="Load sample shelf"
+                  >
+                    DEMO
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="w-12 h-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center text-white cursor-pointer active:scale-95"
+                    aria-label="Open native camera app"
+                    title="Native Camera"
+                  >
+                    <Camera size={19} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ================= STEP 2: FIELD-INTEL QUESTIONNAIRE ================= */}
+      {/* ================= SCREENS 08–13: QUESTIONNAIRE + LIVE VISION AI ================= */}
       {step === 'POSM' && (
         <QuestionnaireRenderer
           category={category}
           outletId={outlet.id}
           visitId={visitId}
           isAiRunning={inFlightAisles.length > 0}
-          aiProgressPercent={Math.min(95, Math.round((completedAisles.length / Math.max(1, capturedAisles.length)) * 100))}
+          hasAiError={erroredAisles.length > 0}
+          aiProgressPercent={Math.min(
+            95,
+            Math.round((completedAisles.length / Math.max(1, capturedAisles.length)) * 100)
+          )}
+          previewPhotoUrl={
+            aisleSessions[posmActiveBayKey]?.capturedPhotoUrl ||
+            capturedBaySessions[0]?.capturedPhotoUrl ||
+            fallbackShelfPhoto
+          }
+          onRetryAi={handleRetryAiAnalysis}
+          onSkipWaitToManual={activateManualFallbackForInFlightBays}
           onComplete={(answers, newProducts) => {
             setQuestionnaireAnswers(answers);
             setQuestionnaireNewProducts(newProducts);
@@ -3397,365 +3871,356 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         />
       )}
 
-      {/* ================= STEP 3: RESULTS ================= */}
+      {/* ================= SCREEN 14: AI RESULTS & VERIFICATION ================= */}
       {step === 'RESULTS' && (
-        <div className="flex-1 flex flex-col md:flex-row md:items-stretch md:gap-5 h-full overflow-hidden pt-1.5">
-          {/* Controls & Brand Facings Dock */}
-          <div className="order-2 md:order-1 md:w-[460px] md:shrink-0 flex flex-col flex-1 md:h-full md:glass-panel md:rounded-3xl md:p-4 overflow-hidden min-h-0 pt-1.5">
-            {/* Dynamic Results Tab Strip */}
-            <div className="flex items-center justify-between pb-2 gap-1.5 shrink-0">
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                {capturedAisles.length > 1 && (
+        <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full h-full overflow-hidden px-3.5 sm:px-5 pt-3 pb-4">
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2 pb-2.5 shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => (existingAudit ? onBack() : setStep('POSM'))}
+                aria-label="Back"
+                className="w-9 h-9 rounded-full glass-panel flex items-center justify-center text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95 shrink-0"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="min-w-0">
+                <h1 className="font-heading font-extrabold text-[22px] sm:text-[24px] leading-tight tracking-tight text-[var(--text-primary)] truncate">
+                  {category} &ndash; Results
+                </h1>
+                <p className="text-[11px] text-[var(--text-secondary)] truncate">{outlet.name}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {resultsProvenance.mode === 'ai_verified' ? (
+                <span className="px-2.5 py-1 rounded-full bg-[#22C55E]/15 border border-[#22C55E]/40 text-[#15803D] dark:text-[#4ADE80] text-[11px] font-extrabold">
+                  {resultsProvenance.label}
+                </span>
+              ) : resultsProvenance.mode === 'adjusted' ? (
+                <span className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-300 text-[11px] font-extrabold">
+                  {resultsProvenance.label}
+                </span>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/45 text-amber-600 dark:text-amber-300 text-[10px] font-extrabold">
+                    Manual Entry
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setResultsAisleView('ALL')}
-                    className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 tabular-nums ${
-                      resultsAisleView === 'ALL'
-                        ? isDark
-                          ? 'bg-[#10B981] text-[#05231C]'
-                          : 'bg-[#084C41] text-white'
-                        : 'glass-subtle text-[var(--text-primary)]'
-                    }`}
+                    onClick={handleRetryAiAnalysis}
+                    className="px-2.5 py-1 rounded-full btn-electric-blue text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer"
                   >
-                    <span>ALL</span>
-                    <span className="opacity-80">{combinedTotalFacings}f</span>
+                    <RefreshCw size={10} /> Retry AI
                   </button>
-                )}
+                </div>
+              )}
+            </div>
+          </div>
 
-                {capturedAisles.map((k) => {
-                  const s = aisleSessions[k];
-                  if (!s) return null;
-                  const isSelected = (resultsAisleView === k) || (capturedAisles.length === 1 && resultsAisleView === 'ALL');
-
-                  return (
+          {/* Bay Tab Switcher + Overlap Banner */}
+          <div className="space-y-1.5 pb-2 shrink-0">
+            {(capturedAisles.length > 1 || !existingAudit) && (
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {capturedAisles.length > 1 && (
                     <button
-                      key={k}
                       type="button"
-                      onClick={() => setResultsAisleView(k)}
-                      className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 tabular-nums ${
-                        isSelected
-                          ? isDark
-                            ? 'bg-[#10B981] text-[#05231C]'
-                            : 'bg-[#084C41] text-white'
+                      onClick={() => setResultsAisleView('ALL')}
+                      className={`min-h-[32px] px-3 rounded-full text-xs font-bold cursor-pointer shrink-0 tabular-nums ${
+                        resultsAisleView === 'ALL'
+                          ? 'btn-electric-blue text-white'
                           : 'glass-subtle text-[var(--text-primary)]'
                       }`}
                     >
-                      <span>{s.label}</span>
-                      <span className="opacity-80">{s.totalFacings ?? 0}f</span>
+                      ALL {combinedTotalFacings}f
                     </button>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleAddNewBay}
-                className="min-h-[34px] px-2.5 py-1 rounded-xl text-[11px] font-bold text-[var(--accent-primary)] glass-subtle hover:bg-white/80 dark:hover:bg-white/10 transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                title="Shoot another bay"
-              >
-                <Plus size={12} />
-                <span>Add Bay</span>
-              </button>
-            </div>
-
-            {/* Bay overlap summary banner */}
-            {seamSummaries.length > 0 && (() => {
-              const isFlagged = (j: typeof seamSummaries[number]) =>
-                !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
-              const flaggedCount = seamSummaries.filter(isFlagged).length;
-              const kept = duplicateReviewStatus === 'kept';
-              const confidenceLabel = (j: typeof seamSummaries[number]) => {
-                if (!j.seam) return 'No overlap set';
-                if (j.seam.method === 'manual') return 'Set by rep';
-                return { high: 'High', medium: 'Medium', low: 'Low', none: 'Not measured' }[j.seam.confidence];
-              };
-              return (
-                <div className="pb-2 shrink-0 animate-fade-in space-y-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-2xl border text-xs font-bold transition-all cursor-pointer ${
-                      kept
-                        ? 'glass-subtle text-[var(--text-secondary)]'
-                        : flaggedCount > 0
-                        ? 'bg-amber-500/12 border-amber-500/40 text-amber-700 dark:text-amber-200'
-                        : 'glass-subtle border-[var(--border-glass-strong)] text-[var(--accent-primary)]'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 truncate">
-                      {flaggedCount > 0 && !kept ? <AlertTriangle size={13} className="shrink-0" /> : <Layers size={13} className="shrink-0" />}
-                      <span className="truncate">
-                        {kept
-                          ? 'Overlap removal off: all detections kept'
-                          : flaggedCount > 0
-                          ? `Check ${flaggedCount} bay join${flaggedCount > 1 ? 's' : ''} · ${totalDuplicatesCount} counted once`
-                          : `${totalDuplicatesCount} bottle${totalDuplicatesCount === 1 ? '' : 's'} in bay overlaps counted once`}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-1 text-[11px] shrink-0">
-                      Details {isDuplicatePanelExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </span>
-                  </button>
-
-                  {isDuplicatePanelExpanded && (
-                    <div className="hidden md:block p-3 rounded-2xl space-y-2 text-left glass-subtle">
-                      {seamSummaries.map((j) => (
-                        <div
-                          key={`${j.leftKey}-${j.rightKey}`}
-                          className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-xl border ${
-                            isFlagged(j)
-                              ? 'bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-200'
-                              : 'glass-panel text-[var(--text-primary)]'
-                          }`}
-                        >
-                          <span className="font-bold">
-                            {j.leftLabel} ⟷ {j.rightLabel}
-                            <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
-                          </span>
-                          <span className="flex items-center gap-1.5 shrink-0">
-                            {!kept && <span className="font-mono tabular-nums">{j.excluded} once</span>}
-                            <span className="text-[10px] uppercase font-bold">{confidenceLabel(j)}</span>
-                          </span>
-                        </div>
-                      ))}
-                      <p className="text-[11px] text-[var(--text-secondary)]">
-                        Open a bay tab to see count lines. Red ✕ = counted in neighbouring bay. Green = counted here.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={kept ? handleRemoveDuplicates : handleKeepAllDuplicates}
-                        className="w-full py-2 rounded-xl glass-panel text-[var(--text-primary)] font-bold text-xs cursor-pointer active:scale-[0.98]"
-                      >
-                        {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
-                      </button>
-                    </div>
                   )}
-                </div>
-              );
-            })()}
-
-            {/* Brand Facings Area */}
-            <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden">
-              <div className="flex items-center justify-between px-1 pb-1.5 shrink-0">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="font-bold uppercase tracking-wider text-[var(--text-secondary)]">
-                    Brand Facings
-                  </span>
-                  <span className="font-bold text-[var(--accent-primary)] tabular-nums">
-                    {resultsAisleView === 'ALL' ? 'ALL' : viewSession?.label} &middot;{' '}
-                    {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}
-                  </span>
+                  {capturedAisles.map((k) => {
+                    const s = aisleSessions[k];
+                    if (!s) return null;
+                    const isSelected =
+                      resultsAisleView === k || (capturedAisles.length === 1 && resultsAisleView === 'ALL');
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setResultsAisleView(k)}
+                        className={`min-h-[32px] px-3 rounded-full text-xs font-bold cursor-pointer shrink-0 tabular-nums ${
+                          isSelected
+                            ? 'btn-electric-blue text-white'
+                            : 'glass-subtle text-[var(--text-primary)]'
+                        }`}
+                      >
+                        {s.label} {s.totalFacings ?? 0}f
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setIsAddBrandOpen(true)}
-                  className="min-h-[32px] text-xs font-bold px-2.5 py-1 rounded-xl glass-subtle text-[var(--accent-primary)] flex items-center gap-1 transition-all cursor-pointer"
+                  onClick={handleAddNewBay}
+                  className="min-h-[32px] px-3 rounded-full text-[11px] font-bold text-[#008DFF] dark:text-[#00C8FF] glass-subtle flex items-center gap-1 cursor-pointer shrink-0"
                 >
-                  <Plus size={12} />
-                  <span>Brand</span>
+                  <Plus size={12} /> Add Bay
                 </button>
               </div>
+            )}
 
-              {/* Scrollable Brand List */}
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 px-0.5 pb-2 scroll-smooth">
-                {allBrandKeys.map((brand) => {
-                  const count = resultsAisleView === 'ALL'
-                    ? (combinedCounts[brand] ?? 0)
-                    : (viewSession?.counts[brand] ?? 0);
-                  const upperBrand = brand.toUpperCase().trim();
-                  const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#084C41';
-                  const isPrimary = category === 'Edible Oil'
-                    ? ['YARA', 'ZAIN', 'DAWI', 'AL RAI', 'ADEERA'].includes(upperBrand)
-                    : category === 'Flour'
-                    ? ['F1', 'F2', 'F3', 'PREM', 'SR', 'KFM'].includes(upperBrand)
-                    : ['QFM', 'QFM PREM', 'ZAIN'].includes(upperBrand);
+            {seamSummaries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsDuplicatePanelExpanded(!isDuplicatePanelExpanded)}
+                className="w-full flex items-center justify-between px-3 py-1.5 rounded-2xl glass-subtle text-xs font-bold text-[#008DFF] dark:text-[#00C8FF] cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5 truncate">
+                  <Layers size={13} className="shrink-0" />
+                  <span className="truncate">
+                    {duplicateReviewStatus === 'kept'
+                      ? 'Overlap removal off: all detections kept'
+                      : `${totalDuplicatesCount} overlap bottle${totalDuplicatesCount === 1 ? '' : 's'} counted once`}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1 text-[11px] shrink-0">
+                  Details {isDuplicatePanelExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </span>
+              </button>
+            )}
+          </div>
 
-                  const origCount = resultsAisleView === 'ALL'
-                    ? combinedOrigCounts[brand]
-                    : (viewSession?.seamAdjustedCounts?.[brand] ?? viewSession?.originalAiCounts[brand]);
+          {/* Main Verification Grid */}
+          <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+            {/* Top Two-Column Card (Image Left + Total Facings / Steppers Right) */}
+            <div className="flex-1 min-h-0 glass-panel rounded-3xl p-3 sm:p-4 grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)] sm:grid-rows-1 sm:grid-cols-[1.05fr_1fr] gap-3 overflow-hidden">
+              {/* Shelf Image Thumbnail */}
+              <div
+                ref={shelfContainerRef}
+                onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
+                className="relative h-44 sm:h-full rounded-2xl bg-black overflow-hidden border border-[var(--border-glass)] flex items-center justify-center cursor-pointer shrink-0"
+                title="Tap to swap Annotated / Raw view"
+              >
+                {isStitchingPanorama ? (
+                  <div className="flex flex-col items-center justify-center p-3 text-center text-[#00C8FF]">
+                    <Loader2 size={20} className="animate-spin mb-1" />
+                    <span className="text-[11px] font-bold text-white">Assembling Panorama…</span>
+                  </div>
+                ) : (
+                  <img
+                    ref={shelfImgRef}
+                    src={resolvedImgSrc}
+                    alt={`${category} annotated shelf`}
+                    className="w-full h-full object-contain"
+                    onLoad={updateDisplayedImgRect}
+                    onError={() => setImgErrorLevel((prev) => Math.min(2, prev + 1))}
+                  />
+                )}
 
-                  const hasChangedFromInitial = origCount !== undefined && count !== origCount;
-                  const diff = hasChangedFromInitial ? count - origCount : 0;
+                <div
+                  className="absolute pointer-events-none overflow-hidden z-10"
+                  style={
+                    displayedImgRect
+                      ? {
+                          left: `${displayedImgRect.left}px`,
+                          top: `${displayedImgRect.top}px`,
+                          width: `${displayedImgRect.width}px`,
+                          height: `${displayedImgRect.height}px`
+                        }
+                      : { inset: 0 }
+                  }
+                >
+                  {renderSeamOverlays(false)}
+                </div>
 
-                  return (
-                    <div
-                      key={brand}
-                      className={`rounded-2xl px-3 py-2 flex items-center justify-between transition-all ${
-                        hasChangedFromInitial
-                          ? 'glass-panel border-amber-500/50 ring-1 ring-amber-500/25'
-                          : isPrimary
-                          ? 'glass-panel border-[var(--border-glass-strong)]'
-                          : 'glass-subtle'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: brandColor }}
-                        />
-                        <div className="min-w-0">
-                          <span className="text-xs font-bold flex items-center gap-1.5 text-[var(--text-primary)]">
-                            <span className="truncate">{brand}</span>
-                            {isPrimary && (
-                              <span className="text-[10px] font-extrabold text-[var(--accent-primary)]">
-                                {category === 'Edible Oil' ? 'QFI' : 'QFM'}
-                              </span>
-                            )}
-                          </span>
-                          {hasChangedFromInitial && (
-                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 tabular-nums block">
-                              Initial {origCount} &rarr; Adjusted {count} ({diff > 0 ? `+${diff}` : diff})
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[#020D1F]/80 border border-[#104878] text-[10px] font-bold text-[#00C8FF] z-20">
+                  {showRawPhotoComparison ? 'Raw' : 'Annotated'}
+                </span>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateCount(brand, -1)}
-                          className="w-8 h-8 rounded-xl glass-panel font-bold text-sm text-[var(--text-primary)] flex items-center justify-center active:scale-95 transition-all cursor-pointer"
-                          aria-label={`Decrease ${brand}`}
-                        >
-                          -
-                        </button>
-                        <span className="w-7 text-center text-sm font-extrabold tabular-nums text-[var(--accent-primary)]">
-                          {count}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateCount(brand, 1)}
-                          className="w-8 h-8 rounded-xl glass-panel font-bold text-sm text-[var(--text-primary)] flex items-center justify-center active:scale-95 transition-all cursor-pointer"
-                          aria-label={`Increase ${brand}`}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                {Boolean(resolvedImgSrc) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFullScreenOpen(true);
+                      setZoomScale(1);
+                    }}
+                    className="absolute top-2 right-2 z-20 w-8 h-8 rounded-full bg-[#020D1F]/85 border border-[#104878] text-[#00C8FF] flex items-center justify-center cursor-pointer active:scale-95"
+                    aria-label="Enlarge shelf image"
+                  >
+                    <Maximize2 size={13} />
+                  </button>
+                )}
               </div>
 
-              {/* Save Action Bar Dock */}
-              <div className="pt-2 pb-1 space-y-1.5 shrink-0 border-t border-[var(--border-glass)]">
-                <button
-                  type="button"
-                  onClick={handleFinalSave}
-                  disabled={!isSaveEnabled}
-                  className={`w-full min-h-[48px] py-3 active:scale-[0.99] font-bold text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-2 hover:brightness-105 transition-all cursor-pointer disabled:opacity-50 ${
-                    isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
+              {/* Right Column: Total Facings Hero + Scrollable Brand Steppers */}
+              <div className="flex flex-col min-h-0 overflow-hidden">
+                <div className="flex items-end justify-between pb-2 border-b border-[var(--border-glass)] shrink-0">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                      Total Facings
+                    </span>
+                    <span className="font-heading font-extrabold text-[34px] leading-none tabular-nums text-[var(--text-primary)]">
+                      {resultsAisleView === 'ALL' ? combinedTotalFacings : viewSession?.totalFacings ?? 0}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddBrandOpen(true)}
+                    className="px-3 py-1.5 rounded-full glass-subtle text-[11px] font-bold text-[#008DFF] dark:text-[#00C8FF] flex items-center gap-1 cursor-pointer active:scale-95"
+                  >
+                    <Plus size={12} /> Brand
+                  </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto pt-2 space-y-1.5 pr-0.5 no-scrollbar">
+                  {allBrandKeys.map((brand) => {
+                    const count =
+                      resultsAisleView === 'ALL'
+                        ? (combinedCounts[brand] ?? 0)
+                        : (viewSession?.counts[brand] ?? 0);
+                    const upperBrand = brand.toUpperCase().trim();
+                    const brandColor = BRAND_COLORS[upperBrand] || BRAND_COLORS[brand] || '#008DFF';
+                    const origCount =
+                      resultsAisleView === 'ALL'
+                        ? combinedOrigCounts[brand]
+                        : (viewSession?.seamAdjustedCounts?.[brand] ?? viewSession?.originalAiCounts[brand]);
+                    const hasChanged = origCount !== undefined && count !== origCount;
+
+                    return (
+                      <div
+                        key={brand}
+                        className={`rounded-2xl px-2.5 py-1.5 flex items-center justify-between gap-2 ${
+                          hasChanged
+                            ? 'glass-subtle border-amber-500/45'
+                            : 'bg-black/[0.03] dark:bg-white/[0.04]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: brandColor }}
+                          />
+                          <span className="text-xs font-bold text-[var(--text-primary)] truncate">
+                            {brand}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateCount(brand, -1)}
+                            className="w-7 h-7 rounded-full glass-panel text-xs font-extrabold text-[var(--text-primary)] flex items-center justify-center cursor-pointer active:scale-90"
+                            aria-label={`Decrease ${brand}`}
+                          >
+                            -
+                          </button>
+                          <span className="w-6 text-center text-xs font-extrabold tabular-nums text-[var(--accent-primary)]">
+                            {count}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateCount(brand, 1)}
+                            className="w-7 h-7 rounded-full glass-panel text-xs font-extrabold text-[var(--text-primary)] flex items-center justify-center cursor-pointer active:scale-90"
+                            aria-label={`Increase ${brand}`}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* 3 Live KPI Summary Tiles (SOS, Planogram, OOS) */}
+            <div className="grid grid-cols-3 gap-2.5 shrink-0">
+              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                  SOS
+                </span>
+                <span className="font-heading font-extrabold text-xl tabular-nums text-[var(--text-primary)] block mt-0.5">
+                  {primarySharePct}%
+                </span>
+                <span className="text-[10px] text-[#008DFF] dark:text-[#00C8FF] font-semibold">
+                  {primaryLabel}
+                </span>
+              </div>
+
+              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                  Planogram
+                </span>
+                <span
+                  className={`font-heading font-extrabold text-xl tabular-nums block mt-0.5 ${
+                    livePlanogramMetrics.score === null
+                      ? 'text-[var(--text-primary)]'
+                      : livePlanogramMetrics.score >= 85
+                      ? 'text-[#22C55E]'
+                      : 'text-amber-400'
                   }`}
                 >
-                  <CheckCircle2 size={16} />
-                  <span>
-                    Confirm &amp; Save ({completedAisles.length} Bay{completedAisles.length > 1 ? 's' : ''})
-                  </span>
-                </button>
+                  {livePlanogramMetrics.score !== null ? `${livePlanogramMetrics.score}%` : '—'}
+                </span>
+                <span className="text-[10px] text-[var(--text-secondary)]">
+                  {livePlanogramMetrics.hasPlanogram ? 'Active target' : 'No planogram'}
+                </span>
+              </div>
 
-                <div className="flex items-center justify-center gap-5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setStep('POSM')}
-                    className="text-[var(--accent-primary)] font-semibold hover:underline flex items-center gap-1 cursor-pointer py-1"
-                  >
-                    <ShieldCheck size={12} /> Review POSM
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStep('CAPTURE')}
-                    className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-semibold flex items-center gap-1 cursor-pointer py-1"
-                  >
-                    <Camera size={12} /> Return to Camera
-                  </button>
-                </div>
+              <div className="glass-panel rounded-2xl px-3 py-2.5 text-center">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] block">
+                  OOS
+                </span>
+                <span
+                  className={`font-heading font-extrabold text-xl tabular-nums block mt-0.5 ${
+                    livePlanogramMetrics.oosCount && livePlanogramMetrics.oosCount > 0
+                      ? 'text-rose-500'
+                      : 'text-[var(--text-primary)]'
+                  }`}
+                >
+                  {livePlanogramMetrics.oosCount !== null ? livePlanogramMetrics.oosCount : '—'}
+                </span>
+                <span className="text-[10px] text-[var(--text-secondary)]">Zero-facing</span>
               </div>
             </div>
-          </div>
 
-          {/* Shelf Image Preview Canvas */}
-          <div
-            ref={shelfContainerRef}
-            onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-            className="order-1 md:order-2 md:flex-1 h-[54%] md:h-full shrink-0 min-h-[210px] bg-black rounded-3xl border border-[var(--border-glass-strong)] overflow-hidden shadow-xl relative flex items-center justify-center cursor-pointer group"
-            title="Tap photo to swap between Annotated and Raw view"
-          >
-            {isStitchingPanorama ? (
-              <div className="flex flex-col items-center justify-center p-4 text-center text-emerald-300">
-                <Loader2 size={24} className="animate-spin text-emerald-400 mb-2" />
-                <p className="text-xs font-bold text-white">Assembling Multi-Bay Panorama…</p>
-                <p className="text-[11px] text-emerald-400/80 mt-0.5">
-                  Stitching {capturedBaySessions.length} bays left-to-right
-                </p>
-              </div>
-            ) : !resolvedImgSrc ? (
-              <div className="flex flex-col items-center justify-center p-4 text-center text-amber-300">
-                <ImageIcon size={26} className="text-amber-400 mb-1" />
-                <p className="text-xs font-bold text-white">No Photo Available</p>
-              </div>
-            ) : (
-              <img
-                ref={shelfImgRef}
-                src={resolvedImgSrc}
-                alt="QFI Shelf Audit preview"
-                className="w-full h-full object-contain block transition-all hover:scale-[1.01] active:scale-[0.99] cursor-zoom-in"
-                onLoad={updateDisplayedImgRect}
-                onError={() => setImgErrorLevel((prev) => Math.min(2, prev + 1))}
-              />
-            )}
-
-            <div
-              className="absolute pointer-events-none overflow-hidden z-10"
-              style={
-                displayedImgRect
-                  ? {
-                      left: `${displayedImgRect.left}px`,
-                      top: `${displayedImgRect.top}px`,
-                      width: `${displayedImgRect.width}px`,
-                      height: `${displayedImgRect.height}px`
-                    }
-                  : { inset: 0 }
-              }
-            >
-              {renderSeamOverlays(false)}
-            </div>
-
-            <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 text-[10px] font-bold text-emerald-300 pointer-events-none z-20">
-              {resultsAisleView === 'ALL' && capturedBaySessions.length > 1
-                ? (showRawPhotoComparison ? 'Raw Panorama (Tap for AI)' : 'Annotated Panorama (Tap for Raw)')
-                : (showRawPhotoComparison ? 'Raw Photo (Tap for AI)' : 'AI Annotated (Tap for Raw)')}
-            </div>
-
-            {Boolean(resolvedImgSrc) && (
+            {/* Bottom Dual Actions: Retake | Confirm & Save */}
+            <div className="flex items-center gap-3 pt-0.5 shrink-0">
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsFullScreenOpen(true);
-                  setZoomScale(1);
+                onClick={() => {
+                  const targetBay =
+                    resultsAisleView === 'ALL' ? (completedAisles[0] || currentAisle || 'bay_1') : resultsAisleView;
+                  handleRetakeBay(targetBay);
                 }}
-                className="absolute top-2.5 right-2.5 z-20 px-2.5 py-1.5 rounded-xl bg-black/80 hover:bg-black border border-white/20 text-emerald-300 hover:text-white text-[11px] font-bold shadow-lg backdrop-blur-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-                title="View image in full screen with zoom"
-                aria-label="Enlarge image to full screen"
+                className="min-h-[50px] px-5 rounded-full glass-panel font-bold text-xs text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95 shrink-0"
               >
-                <Maximize2 size={12} className="text-emerald-400" />
-                <span>Enlarge</span>
+                Retake
               </button>
-            )}
 
-            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-[11px] text-white bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/15 shadow-sm pointer-events-auto z-20">
-              <span className="font-semibold truncate max-w-[190px]">
-                {resultsAisleView === 'ALL'
-                  ? `${category} Panorama (${completedAisles.length} Bay${completedAisles.length > 1 ? 's' : ''})`
-                  : `${category} · ${viewSession?.label || 'Bay'}`}
-              </span>
-              <span className="text-emerald-300 font-extrabold tabular-nums shrink-0">
-                {primaryLabel}: {primarySharePct}%
-              </span>
+              <button
+                type="button"
+                onClick={handleFinalSave}
+                disabled={!isSaveEnabled}
+                className="flex-1 min-h-[50px] rounded-full btn-electric-blue font-bold text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-[0.97] disabled:opacity-55"
+              >
+                {isSavingAudit ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Saving…</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Confirm &amp; Save</span>
+                    <ArrowRight size={17} />
+                  </>
+                )}
+              </button>
             </div>
           </div>
 
-          {/* Mobile Slide-Up Sheet for Overlap Details */}
+          {/* Mobile Overlap Details Bottom Sheet */}
           {isDuplicatePanelExpanded && seamSummaries.length > 0 && (() => {
             const isFlagged = (j: typeof seamSummaries[number]) =>
               !j.seam || (j.seam.method !== 'manual' && (j.seam.confidence === 'low' || j.seam.confidence === 'none'));
@@ -3768,10 +4233,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             return (
               <>
                 <div
-                  className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+                  className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40"
                   onClick={() => setIsDuplicatePanelExpanded(false)}
                 />
-                <div className="fixed inset-x-0 bottom-0 z-50 md:hidden glass-panel-strong rounded-t-3xl p-4 space-y-3 max-h-[75vh] overflow-y-auto animate-fade-in">
+                <div className="fixed inset-x-0 bottom-0 z-50 max-w-xl mx-auto glass-panel-strong rounded-t-3xl p-4 space-y-3 max-h-[75vh] overflow-y-auto animate-fade-in">
                   <div className="w-10 h-1 bg-[var(--border-glass-strong)] rounded-full mx-auto" />
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-primary)]">
@@ -3780,7 +4245,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsDuplicatePanelExpanded(false)}
-                      className="text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2 py-1"
+                      className="text-xs font-semibold text-[var(--text-secondary)] px-2 py-1 cursor-pointer"
                     >
                       Close
                     </button>
@@ -3796,7 +4261,10 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                     >
                       <span className="font-bold">
                         {j.leftLabel} ⟷ {j.rightLabel}
-                        <span className="font-normal opacity-80"> · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}</span>
+                        <span className="font-normal opacity-80">
+                          {' '}
+                          · {j.seam ? `${Math.round(j.seam.overlapFracRight * 100)}% overlap` : 'overlap unknown'}
+                        </span>
                       </span>
                       <span className="flex items-center gap-1.5 shrink-0">
                         {!kept && <span className="font-mono tabular-nums">{j.excluded} once</span>}
@@ -3804,9 +4272,6 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       </span>
                     </div>
                   ))}
-                  <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-                    Open a bay tab to see count lines. Red ✕ = counted in neighbouring bay. Green = counted here.
-                  </p>
                   <button
                     type="button"
                     onClick={() => {
@@ -3814,7 +4279,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                       else handleKeepAllDuplicates();
                       setIsDuplicatePanelExpanded(false);
                     }}
-                    className="w-full min-h-[44px] py-2.5 rounded-2xl glass-panel text-[var(--text-primary)] font-bold text-xs uppercase tracking-wider cursor-pointer active:scale-[0.98]"
+                    className="w-full min-h-[44px] py-2.5 rounded-full glass-panel text-[var(--text-primary)] font-bold text-xs cursor-pointer"
                   >
                     {kept ? 'Count overlaps once' : 'Keep all detections (turn off)'}
                   </button>
@@ -3825,7 +4290,111 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
         </div>
       )}
 
-      {/* ================= STEP 4: PLANOGRAM SCORECARD ================= */}
+      {/* ================= SCREEN 15: CATEGORY COMPLETION ================= */}
+      {step === 'CATEGORY_COMPLETE' && (
+        <motion.div
+          initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.24 }}
+          className="flex-1 flex flex-col justify-between max-w-xl mx-auto w-full h-full overflow-hidden px-5 pt-4 pb-6"
+        >
+          <div className="flex items-center justify-between shrink-0">
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to Store Audit"
+              className="w-10 h-10 rounded-full glass-panel flex items-center justify-center text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95"
+            >
+              <ChevronLeft size={19} />
+            </button>
+            <LiveLocationBadge
+              compact
+              outletName={outlet.name}
+              targetLatitude={outlet.latitude}
+              targetLongitude={outlet.longitude}
+              onLocationCaptured={setGpsCoords}
+            />
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-5 py-2 overflow-y-auto no-scrollbar">
+            <AnimatedCompletionCircle size={108} />
+
+            <div className="space-y-1">
+              <h1 className="font-heading font-extrabold text-[30px] sm:text-[34px] leading-tight tracking-tight text-[var(--text-primary)]">
+                {category} Completed
+              </h1>
+              <p className="text-sm font-semibold text-[#008DFF] dark:text-[#00C8FF] tabular-nums">
+                {completedCategorySet.size} / 3 Categories Audited
+              </p>
+            </div>
+
+            {/* Category Progress Checklist */}
+            <div className="w-full glass-panel rounded-3xl p-4 divide-y divide-[var(--border-glass)] text-left">
+              {CATEGORIES.map((cat) => {
+                const isDone = completedCategorySet.has(cat);
+                return (
+                  <div
+                    key={cat}
+                    className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <CategoryMonogramBadge category={cat} completed={isDone} size="sm" />
+                      <span
+                        className={`text-sm font-bold ${
+                          isDone ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        {cat}
+                      </span>
+                    </div>
+                    {isDone ? (
+                      <span className="w-6 h-6 rounded-full bg-[#22C55E] text-white flex items-center justify-center shadow-[0_0_10px_rgba(34,197,94,0.45)]">
+                        <Check size={13} strokeWidth={2.8} />
+                      </span>
+                    ) : (
+                      <span className="w-5 h-5 rounded-full border border-[var(--border-glass-strong)]" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {scorecardResult && (
+              <button
+                type="button"
+                onClick={() => setStep('SCORECARD')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full glass-subtle text-xs font-bold text-[#008DFF] dark:text-[#00C8FF] hover:border-[#008DFF] cursor-pointer transition-colors"
+              >
+                <ClipboardCheck size={14} />
+                <span>
+                  View Planogram Scorecard
+                  {scorecardResult.hasPlanogram ? ` (${scorecardResult.overallScore}%)` : ''}
+                </span>
+              </button>
+            )}
+          </div>
+
+          {/* Primary Bottom CTA */}
+          <div className="pt-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                if (nextPendingCategory && onSelectNextCategory) {
+                  onSelectNextCategory(nextPendingCategory);
+                } else {
+                  onBack();
+                }
+              }}
+              className="w-full min-h-[54px] rounded-full btn-electric-blue font-bold text-sm tracking-wide flex items-center justify-center gap-2 cursor-pointer active:scale-[0.97]"
+            >
+              <span>{nextPendingCategory ? 'Next Category' : 'Finish Outlet'}</span>
+              <ArrowRight size={17} />
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ================= OPTIONAL SCORECARD DETAILS ================= */}
       {step === 'SCORECARD' && scorecardResult && (
         <PlanogramScorecard
           outlet={outlet}
@@ -3910,9 +4479,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className={`flex-1 min-h-[42px] py-2 text-xs font-bold rounded-xl shadow-md cursor-pointer ${
-                    isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                  }`}
+                  className="flex-1 min-h-[42px] py-2 text-xs font-bold rounded-xl cursor-pointer btn-electric-blue text-white"
                 >
                   Add Brand
                 </button>
@@ -3946,7 +4513,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowRawPhotoComparison(!showRawPhotoComparison)}
-                  className="px-2.5 py-1 text-xs font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 cursor-pointer"
+                  className="px-2.5 py-1 text-xs font-bold rounded-xl border border-[#008DFF]/50 bg-[#0066FF]/20 hover:bg-[#0066FF]/35 text-[#00C8FF] cursor-pointer"
                 >
                   {showRawPhotoComparison ? 'AI' : 'Raw'}
                 </button>
@@ -3956,7 +4523,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 type="button"
                 onClick={() => setZoomScale((prev) => Math.max(1, Number((prev - 0.5).toFixed(1))))}
                 disabled={zoomScale <= 1}
-                className="p-1.5 rounded-xl bg-white/10 border border-white/15 text-emerald-300 disabled:opacity-40 cursor-pointer"
+                className="p-1.5 rounded-xl bg-[#0B2542]/80 border border-[#104878] text-[#00C8FF] disabled:opacity-40 cursor-pointer"
                 aria-label="Zoom Out"
               >
                 <ZoomOut size={15} />
@@ -3965,7 +4532,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setZoomScale(1)}
-                className="px-2 py-1 text-xs font-mono font-bold tabular-nums text-emerald-300 bg-white/10 border border-white/15 rounded-xl cursor-pointer min-w-[48px] text-center"
+                className="px-2 py-1 text-xs font-mono font-bold tabular-nums text-[#00C8FF] bg-[#0B2542]/80 border border-[#104878] rounded-xl cursor-pointer min-w-[48px] text-center"
               >
                 {Math.round(zoomScale * 100)}%
               </button>
@@ -3974,7 +4541,7 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
                 type="button"
                 onClick={() => setZoomScale((prev) => Math.min(4, Number((prev + 0.5).toFixed(1))))}
                 disabled={zoomScale >= 4}
-                className="p-1.5 rounded-xl bg-white/10 border border-white/15 text-emerald-300 disabled:opacity-40 cursor-pointer"
+                className="p-1.5 rounded-xl bg-[#0B2542]/80 border border-[#104878] text-[#00C8FF] disabled:opacity-40 cursor-pointer"
                 aria-label="Zoom In"
               >
                 <ZoomIn size={15} />
@@ -4019,18 +4586,18 @@ export const CameraWorkflowScreen: React.FC<CameraWorkflowScreenProps> = ({
             </div>
           </div>
 
-          <div className="px-3 sm:px-4 py-2 bg-black/90 border-t border-white/10 flex items-center justify-between text-xs text-emerald-200 shrink-0 z-30 gap-2">
-            <span className="text-[11px] text-slate-300 truncate">
+          <div className="px-3 sm:px-4 py-2 bg-[#020D1F]/95 border-t border-[#104878] flex items-center justify-between text-xs text-[#A5B8D5] shrink-0 z-30 gap-2">
+            <span className="text-[11px] text-[#A5B8D5] truncate">
               Double-tap or pinch to zoom &bull; Drag to pan
             </span>
 
             <div className="flex items-center gap-2.5 shrink-0">
               {step === 'CAPTURE' ? (
-                <span className="font-mono text-emerald-300 text-xs">
+                <span className="font-mono text-[#00C8FF] text-xs">
                   {aisleSessions[lastCapturedAisle]?.capturedFileName || 'captured_photo.jpg'}
                 </span>
               ) : (
-                <span className="font-bold text-emerald-300 text-xs tabular-nums">
+                <span className="font-bold text-[#00C8FF] text-xs tabular-nums">
                   {primaryLabel}: {primarySharePct}% &bull; {resultsAisleView === 'ALL' ? combinedTotalFacings : (viewSession?.totalFacings ?? 0)}f
                 </span>
               )}

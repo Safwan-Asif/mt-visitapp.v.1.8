@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, MapPin } from 'lucide-react';
+import { Search, X, MapPin, SlidersHorizontal } from 'lucide-react';
 import { MapOutlet } from '../../data/data';
 
 interface MobileHeaderProps {
   outlets: MapOutlet[];
   onSelectOutletFromSearch: (outlet: MapOutlet) => void;
+  onOpenSettings?: () => void;
 }
 
 function getOutletStatusIndicator(outlet: MapOutlet): {
@@ -22,7 +23,8 @@ function getOutletStatusIndicator(outlet: MapOutlet): {
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({
   outlets,
-  onSelectOutletFromSearch
+  onSelectOutletFromSearch,
+  onOpenSettings
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -82,27 +84,43 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
     <div ref={containerRef} className="relative">
       <header
         aria-label="GeoIntel Header"
-        className="marviz-glass rounded-xl px-2.5 py-1 flex items-center justify-between gap-2 text-white border border-slate-700/40 bg-slate-900/60 backdrop-blur-md"
+        className="marviz-glass rounded-xl px-3 py-1 flex items-center justify-between gap-2 text-[#F1F5FF] border border-[#104878] bg-[#061C35]/85 backdrop-blur-md"
       >
         {/* Subtle Single-Line Title */}
-        <span className="font-heading text-[11px] font-bold tracking-[0.08em] uppercase leading-none text-slate-300/90 pl-0.5">
+        <span className="font-heading text-[11px] font-bold tracking-[0.1em] uppercase leading-none text-[#A5B8D5] pl-0.5">
           GEOINTEL
         </span>
 
-        {/* Subtle Search Trigger Button */}
-        <button
-          type="button"
-          onClick={() => setIsSearchOpen((prev) => !prev)}
-          aria-label={isSearchOpen ? 'Close outlet search' : 'Search Doha outlets'}
-          aria-expanded={isSearchOpen}
-          className={`w-6 h-6 rounded-lg flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
-            isSearchOpen
-              ? 'bg-[#1685FF] text-white'
-              : 'text-slate-400 hover:text-white hover:bg-white/10'
-          }`}
-        >
-          {isSearchOpen ? <X size={13} /> : <Search size={13} />}
-        </button>
+        {/* Compact Action Icons: Search & Map Settings */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen((prev) => !prev)}
+            aria-label={isSearchOpen ? 'Close outlet search' : 'Search Doha outlets'}
+            aria-expanded={isSearchOpen}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
+              isSearchOpen
+                ? 'bg-[#0066FF] text-white'
+                : 'text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542]'
+            }`}
+          >
+            {isSearchOpen ? <X size={14} /> : <Search size={14} />}
+          </button>
+
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(false);
+                onOpenSettings();
+              }}
+              aria-label="Open GeoIntel settings and theme"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542] transition-colors cursor-pointer active:scale-95 shrink-0"
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Expandable Floating Outlet Quick-Search Drawer */}
@@ -110,9 +128,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         <div
           role="dialog"
           aria-label="Search Doha outlets"
-          className="mt-1.5 marviz-glass-strong rounded-2xl p-2 text-white shadow-2xl border border-sky-400/30 animate-fade-in"
+          className="mt-1.5 marviz-glass-strong rounded-2xl p-2 text-[#F1F5FF] shadow-2xl border border-[#008DFF]/40 animate-fade-in"
         >
-          <div className="flex items-center gap-2 px-2.5 h-10 rounded-xl bg-slate-950/70 border border-slate-700/75 focus-within:border-sky-400/70">
+          <div className="flex items-center gap-2 px-2.5 h-10 rounded-xl bg-[#04152B] border border-[#104878] focus-within:border-[#008DFF]">
             <Search size={15} className="text-sky-400 shrink-0" />
             <input
               ref={inputRef}

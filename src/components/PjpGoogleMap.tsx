@@ -173,14 +173,14 @@ const OutletMarkerNode: React.FC<OutletMarkerProps> = ({
   let background = '#1E293B';
   let borderColor = '#0F172A';
   if (isDone) {
-    background = '#059669';
-    borderColor = '#065F46';
+    background = '#22C55E';
+    borderColor = '#15803D';
   } else if (isSelected) {
-    background = '#084C41';
-    borderColor = '#34D399';
+    background = '#0066FF';
+    borderColor = '#00C8FF';
   } else if (isInProgress) {
-    background = '#D97706';
-    borderColor = '#92400E';
+    background = '#FFB800';
+    borderColor = '#B45309';
   }
 
   const glyphText =
@@ -216,7 +216,7 @@ const OutletMarkerNode: React.FC<OutletMarkerProps> = ({
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 {autoOptimize && typeof stopNumber === 'number' && (
-                  <span className="inline-block text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                  <span className="inline-block text-[10px] font-extrabold uppercase tracking-wider text-[#0066FF]">
                     Stop #{stopNumber}
                   </span>
                 )}
@@ -229,7 +229,7 @@ const OutletMarkerNode: React.FC<OutletMarkerProps> = ({
 
             <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200 text-[11px]">
               <span className="font-semibold text-slate-700">
-                Category: <strong className="text-emerald-700">{doneCategories}/3</strong>
+                Category: <strong className="text-[#0066FF]">{doneCategories}/3</strong>
               </span>
               {autoOptimize && legDistanceMeters ? (
                 <span className="font-semibold text-slate-600 tabular-nums">
@@ -242,7 +242,7 @@ const OutletMarkerNode: React.FC<OutletMarkerProps> = ({
               <button
                 type="button"
                 onClick={() => onStartAudit(outlet)}
-                className="w-full mt-1 py-1.5 px-2.5 rounded-lg bg-[#084C41] text-white text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-[#063A32] cursor-pointer"
+                className="w-full mt-1 py-1.5 px-2.5 rounded-lg bg-[#0066FF] text-white text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-[#0052CC] cursor-pointer"
               >
                 <span>{isDone ? 'View Audit' : 'Start Audit'}</span>
                 <ExternalLink size={11} />
@@ -406,7 +406,7 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
           {autoOptimize && decodedPath.length > 1 && (
             <Polyline
               path={decodedPath}
-              strokeColor={isDark ? '#34D399' : '#084C41'}
+              strokeColor={isDark ? '#00C8FF' : '#0066FF'}
               strokeOpacity={0.92}
               strokeWeight={5}
             />
@@ -429,8 +429,8 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
 
       {autoOptimize && origin && (
         <div className="absolute bottom-2.5 left-2.5 right-14 pointer-events-none flex items-center gap-1.5">
-          <div className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-white/90 dark:bg-[#0B110F]/90 backdrop-blur-md border border-[var(--border-glass)] text-[var(--text-primary)] shadow-sm">
-            <Navigation size={11} className="text-sky-600 dark:text-sky-400 shrink-0" />
+          <div className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-white/92 dark:bg-[#020D1F]/90 backdrop-blur-md border border-[var(--border-glass)] text-[var(--text-primary)] shadow-sm">
+            <Navigation size={11} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
             <span className="truncate">
               Start: {origin.source === 'gps' ? 'Current GPS' : 'Old Doha Port'}
             </span>

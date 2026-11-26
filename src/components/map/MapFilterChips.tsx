@@ -27,7 +27,7 @@ export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
     <div
       role="tablist"
       aria-label="Filter map outlets"
-      className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5"
+      className="grid grid-cols-4 gap-1.5 py-0.5"
     >
       {FILTER_OPTIONS.map((opt) => {
         const isActive = activeFilter === opt.id;
@@ -38,10 +38,10 @@ export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
             type="button"
             aria-selected={isActive}
             onClick={() => onChangeFilter(opt.id)}
-            className={`min-h-[38px] px-3 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 shrink-0 transition-all cursor-pointer active:scale-95 border backdrop-blur-md ${
+            className={`min-h-[34px] px-1.5 rounded-xl text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95 border backdrop-blur-md whitespace-nowrap ${
               isActive
-                ? 'bg-[#1685FF] text-white border-sky-300/60 shadow-[0_4px_14px_rgba(22,133,255,0.45)]'
-                : 'bg-[rgba(10,20,36,0.78)] text-slate-300 border-slate-700/70 hover:text-white hover:border-sky-400/40'
+                ? 'btn-electric-blue border-[#008DFF]/80 shadow-[0_4px_16px_rgba(0,102,255,0.48)]'
+                : 'bg-[#061C35]/85 text-[#A5B8D5] border-[#104878] hover:text-[#F1F5FF] hover:border-[#008DFF]/70'
             }`}
           >
             {opt.dotColor && (
@@ -52,10 +52,10 @@ export const MapFilterChips: React.FC<MapFilterChipsProps> = ({
                 }}
               />
             )}
-            <span>{opt.label}</span>
+            <span className="truncate">{opt.label}</span>
             <span
-              className={`text-[10px] tabular-nums px-1 rounded ${
-                isActive ? 'bg-white/20 text-white' : 'bg-slate-800/80 text-slate-400'
+              className={`text-[9.5px] tabular-nums px-1 rounded shrink-0 ${
+                isActive ? 'bg-white/20 text-white' : 'bg-[#0B2542] text-[#A5B8D5]'
               }`}
             >
               {counts[opt.id]}

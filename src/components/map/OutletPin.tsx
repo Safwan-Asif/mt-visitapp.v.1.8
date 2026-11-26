@@ -196,11 +196,11 @@ export function createOutletPinIcon(
 
   const orderBadgeHtml =
     outlet.scheduledForToday && outlet.visitOrder !== null
-      ? `<span style="position:absolute;top:-3px;left:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:9999px;background:#071421;border:1.5px solid #38BDF8;color:#E0F2FE;font-size:9.5px;font-weight:800;font-family:'Barlow Condensed',sans-serif;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 2px 5px rgba(0,0,0,0.7);">${outlet.visitOrder}</span>`
+      ? `<span style="position:absolute;top:-3px;left:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:9999px;background:#020D1F;border:1.5px solid #00C8FF;color:#F1F5FF;font-size:9.5px;font-weight:800;font-family:'Barlow Condensed',sans-serif;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 2px 5px rgba(0,0,0,0.7);">${outlet.visitOrder}</span>`
       : '';
 
   const secondaryDotHtml = spec.secondaryAlertHex
-    ? `<span style="position:absolute;top:-1px;right:-2px;width:11px;height:11px;border-radius:9999px;background:${spec.secondaryAlertHex};border:2px solid #071421;box-shadow:0 2px 5px rgba(0,0,0,0.7);"></span>`
+    ? `<span style="position:absolute;top:-1px;right:-2px;width:11px;height:11px;border-radius:9999px;background:${spec.secondaryAlertHex};border:2px solid #020D1F;box-shadow:0 2px 5px rgba(0,0,0,0.7);"></span>`
     : '';
 
   const storeSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M3 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0 2 2 0 0 0 4 0"/><path d="M5 12v8h14v-8"/></svg>`;

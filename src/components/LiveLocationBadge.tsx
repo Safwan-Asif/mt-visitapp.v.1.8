@@ -99,9 +99,9 @@ export const LiveLocationBadge: React.FC<LiveLocationBadgeProps> = ({
             className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
               isGps
                 ? isDark
-                  ? 'bg-emerald-500/15 text-[#34D399]'
-                  : 'bg-[#084C41]/10 text-[#084C41]'
-                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  ? 'bg-[#0066FF]/20 text-[#00C8FF]'
+                  : 'bg-[#0066FF]/12 text-[#0066FF]'
+                : 'bg-[#FFB800]/15 text-[#FFB800]'
             }`}
           >
             <MapPin size={15} />

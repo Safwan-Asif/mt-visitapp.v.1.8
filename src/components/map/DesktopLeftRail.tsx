@@ -102,7 +102,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
   return (
     <aside
       aria-label="Map Layers, Quick Filters and Legend"
-      className="hidden md:flex flex-col gap-2 w-[228px] max-h-[calc(100%-76px)] overflow-y-auto no-scrollbar pointer-events-auto"
+      className="hidden md:flex flex-col gap-2 w-[208px] lg:w-[228px] max-h-[calc(100%-70px)] overflow-y-auto no-scrollbar pointer-events-auto"
     >
       {/* 1. MAP LAYERS */}
       <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
@@ -146,7 +146,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
                       title={style.description}
                       className={`min-h-[28px] px-1 rounded-lg text-[10.5px] font-semibold transition-all cursor-pointer ${
                         selected
-                          ? 'bg-[#1685FF] text-white shadow-sm'
+                          ? 'bg-[#0066FF] text-white shadow-sm'
                           : 'text-slate-300 hover:text-white hover:bg-white/5'
                       }`}
                     >
@@ -176,7 +176,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
               </span>
               <span
                 className={`w-8 h-[18px] rounded-full p-0.5 flex items-center transition-colors shrink-0 ${
-                  showJourneyPlan ? 'bg-[#1685FF]' : 'bg-slate-700'
+                  showJourneyPlan ? 'bg-[#0066FF]' : 'bg-slate-700'
                 }`}
               >
                 <span
@@ -217,7 +217,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
                   </span>
                   <span
                     className={`w-8 h-[18px] rounded-full p-0.5 flex items-center transition-colors shrink-0 ${
-                      isOn ? 'bg-[#1685FF]' : 'bg-slate-700'
+                      isOn ? 'bg-[#0066FF]' : 'bg-slate-700'
                     }`}
                   >
                     <span

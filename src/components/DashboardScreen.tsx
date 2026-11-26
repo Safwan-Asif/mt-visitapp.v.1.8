@@ -565,7 +565,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full h-full overflow-hidden px-3.5 pt-3.5 md:px-8 md:pt-6 select-none animate-fade-in">
-      <div className="flex-1 overflow-y-auto pb-24 md:pb-8 space-y-4 pr-0.5">
+      <div className="flex-1 overflow-y-auto pb-[calc(80px+env(safe-area-inset-bottom,0px))] md:pb-8 space-y-4 pr-0.5">
         {/* TOP ROW: Today's Visits Hero + AI Insights Summary (Side-by-side on Desktop, Stacked on Mobile) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
           {/* 2. TODAY'S VISITS HERO CARD */}
@@ -616,13 +616,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   const barColor =
                     seg.state === 'completed'
                       ? isDark
-                        ? 'bg-[#10B981]'
-                        : 'bg-[#084C41]'
+                        ? 'bg-[#00C8FF]'
+                        : 'bg-[#0066FF]'
                       : seg.state === 'in_progress'
-                      ? 'bg-amber-500'
+                      ? 'bg-[#FFB800]'
                       : isDark
-                      ? 'bg-white/14'
-                      : 'bg-[#084C41]/14';
+                      ? 'bg-[#104878]/50'
+                      : 'bg-[#0066FF]/14';
 
                   return (
                     <div
@@ -635,7 +635,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                           : 'Untouched'
                       }`}
                       className={`h-2 rounded-full transition-all duration-300 ${barColor} ${
-                        seg.isUnplanned ? 'ring-1 ring-offset-1 ring-amber-500/50 dark:ring-offset-[#111D19]' : ''
+                        seg.isUnplanned ? 'ring-1 ring-offset-1 ring-[#FFB800]/60 dark:ring-offset-[#020D1F]' : ''
                       }`}
                     />
                   );
@@ -661,19 +661,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <button
               type="button"
               onClick={goPendingPjp}
-              className={`w-full min-h-[54px] px-4 py-2.5 rounded-2xl flex items-center justify-between gap-3 transition-all cursor-pointer active:scale-[0.99] shadow-sm ${
-                isDark
-                  ? 'bg-[#10B981] text-[#05231C] hover:bg-[#34D399]'
-                  : 'bg-[#0F1B17] text-white hover:bg-[#084C41]'
-              }`}
+              className="w-full min-h-[54px] px-4 py-2.5 rounded-2xl flex items-center justify-between gap-3 transition-all cursor-pointer active:scale-[0.99] btn-electric-blue text-white"
             >
               <span className="flex flex-col items-start text-left min-w-0">
                 <span className="text-sm font-bold leading-tight">Next outlet?</span>
-                <span
-                  className={`text-xs truncate max-w-full ${
-                    isDark ? 'text-[#05231C]/80 font-semibold' : 'text-white/75 font-medium'
-                  }`}
-                >
+                <span className="text-xs truncate max-w-full text-white/85 font-medium">
                   {nextPendingOutlet
                     ? `${nextPendingOutlet.name} – ${nextPendingOutlet.branch}`
                     : 'All planned outlets visited · Review PJP'}
@@ -687,28 +679,28 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <section
             className={`lg:col-span-5 rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3.5 transition-colors ${
               isDark
-                ? 'glass-panel border border-emerald-500/25 bg-[#111D19]/90 text-[#ECFDF5]'
-                : 'bg-[#0F1B17] text-[#F5F4EF] shadow-[0_14px_34px_-14px_rgba(8,40,32,0.35)]'
+                ? 'glass-panel border border-[#008DFF]/35 bg-[#061C35]/95 text-[#F1F5FF]'
+                : 'bg-[#04152B] text-[#F1F5FF] border border-[#104878] shadow-[0_14px_34px_-14px_rgba(0,102,255,0.28)]'
             }`}
           >
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-emerald-300">
+                <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#00C8FF]">
                   <Lightbulb size={14} className="shrink-0" />
                   <span>AI Insights</span>
                 </div>
-                <span className="text-[11px] font-medium text-white/60 whitespace-nowrap">
+                <span className="text-[11px] font-medium text-[#A5B8D5] whitespace-nowrap">
                   Preview Summary
                 </span>
               </div>
 
-              <div className="space-y-2.5 text-[13px] leading-relaxed text-white/90">
+              <div className="space-y-2.5 text-[13px] leading-relaxed text-[#F1F5FF]/90">
                 <p>
-                  <strong className="font-semibold text-amber-300">Area of concern:</strong>{' '}
+                  <strong className="font-semibold text-[#FFB800]">Area of concern:</strong>{' '}
                   Flour and Edible Oil facings across D-Ring and Wakra hypermarkets are trending below target shelf share, with repeat stockouts in core 1.5L and 5kg packs.
                 </p>
                 <p>
-                  <strong className="font-semibold text-emerald-300">Next best step:</strong>{' '}
+                  <strong className="font-semibold text-[#00C8FF]">Next best step:</strong>{' '}
                   Prioritize eye-level planogram reset and price-tag verification at your next pending stops before afternoon replenishment cutoffs.
                 </p>
               </div>
@@ -805,7 +797,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     fill="transparent"
                     stroke="currentColor"
                     strokeWidth="5"
-                    className={isDark ? 'text-white/12' : 'text-[#084C41]/12'}
+                    className={isDark ? 'text-[#104878]/60' : 'text-[#0066FF]/15'}
                   />
                   <circle
                     cx="19"
@@ -864,7 +856,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
           {attentionItems.length === 0 ? (
             <div className="glass-panel rounded-2xl p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-[#22C55E]/15 text-[#22C55E] flex items-center justify-center shrink-0">
                 <CheckCircle2 size={18} />
               </div>
               <div>
@@ -978,8 +970,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   className={`rounded-2xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between gap-1 min-h-[68px] ${
                     isSelected
                       ? isDark
-                        ? 'bg-[#10B981]/18 border border-[#10B981] text-[#ECFDF5]'
-                        : 'bg-[#084C41] border border-[#084C41] text-white shadow-sm'
+                        ? 'bg-[#0066FF]/22 border border-[#008DFF] text-[#F1F5FF] shadow-[0_0_18px_rgba(0,102,255,0.22)]'
+                        : 'bg-[#0066FF] border border-[#0066FF] text-white shadow-sm'
                       : 'glass-subtle text-[var(--text-primary)] hover:border-[var(--border-glass-strong)]'
                   }`}
                 >
@@ -987,8 +979,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     className={`text-[11px] font-semibold truncate ${
                       isSelected
                         ? isDark
-                          ? 'text-emerald-300'
-                          : 'text-white/80'
+                          ? 'text-[#00C8FF]'
+                          : 'text-white/85'
                         : 'text-[var(--text-secondary)]'
                     }`}
                   >
@@ -1002,8 +994,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       className={`text-[10px] tabular-nums ${
                         isSelected
                           ? isDark
-                            ? 'text-emerald-200/80'
-                            : 'text-white/75'
+                            ? 'text-[#A5B8D5]'
+                            : 'text-white/80'
                           : 'text-[var(--text-muted)]'
                       }`}
                     >
@@ -1027,12 +1019,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <linearGradient id="sosAreaGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop
                     offset="0%"
-                    stopColor={isDark ? '#10B981' : '#084C41'}
-                    stopOpacity="0.22"
+                    stopColor={isDark ? '#00C8FF' : '#0066FF'}
+                    stopOpacity="0.26"
                   />
                   <stop
                     offset="100%"
-                    stopColor={isDark ? '#10B981' : '#084C41'}
+                    stopColor={isDark ? '#00C8FF' : '#0066FF'}
                     stopOpacity="0.01"
                   />
                 </linearGradient>
@@ -1088,7 +1080,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <path
                   d={linePath}
                   fill="none"
-                  stroke={isDark ? '#10B981' : '#084C41'}
+                  stroke={isDark ? '#00C8FF' : '#0066FF'}
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -1121,8 +1113,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       cx={node.x}
                       cy={node.y}
                       r={isFocused ? 6 : 4.5}
-                      fill={isDark ? '#10B981' : '#084C41'}
-                      stroke={isDark ? '#0B110F' : '#FFFFFF'}
+                      fill={isDark ? '#00C8FF' : '#0066FF'}
+                      stroke={isDark ? '#020D1F' : '#FFFFFF'}
                       strokeWidth="2"
                     />
                     <text
@@ -1173,10 +1165,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                       isProcessing
-                        ? 'bg-amber-500/14 text-amber-600 dark:text-amber-400'
+                        ? 'bg-[#FFB800]/16 text-[#FFB800]'
                         : isDark
-                        ? 'bg-[#10B981]/18 text-[#34D399]'
-                        : 'bg-[#084C41]/10 text-[#084C41]'
+                        ? 'bg-[#22C55E]/18 text-[#22C55E]'
+                        : 'bg-[#22C55E]/12 text-[#16A34A]'
                     }`}
                   >
                     {isProcessing ? <Clock size={18} /> : <CheckCircle2 size={18} />}
@@ -1295,7 +1287,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   className="p-2.5 rounded-xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between gap-2 text-[var(--text-primary)]"
                 >
                   <span className="flex items-center gap-2 truncate font-semibold">
-                    <FileSpreadsheet size={14} className="text-teal-600 dark:text-teal-400 shrink-0" />
+                    <FileSpreadsheet size={14} className="text-[var(--accent-primary)] shrink-0" />
                     <span className="truncate">Master PJP Schedule</span>
                   </span>
                   <ExternalLink size={12} className="text-[var(--text-muted)] shrink-0" />
@@ -1313,9 +1305,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   type="button"
                   onClick={handleExportAllToGoogleSheets}
                   disabled={isExportingAll}
-                  className={`min-h-[44px] py-2 px-3 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-50 ${
-                    isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                  }`}
+                  className="min-h-[44px] py-2 px-3 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-50 btn-electric-blue text-white"
                 >
                   {isExportingAll ? (
                     <>
@@ -1374,7 +1364,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               Paste this snippet into your Google Sheet under <strong>Extensions &gt; Apps Script</strong>, then deploy as Web App (Execute as: <em>Me</em>, Access: <em>Anyone</em>).
             </p>
 
-            <div className="flex-1 overflow-y-auto bg-black/80 rounded-2xl p-3 border border-emerald-500/20 font-mono text-[10px] text-emerald-300 select-all">
+            <div className="flex-1 overflow-y-auto bg-[#020D1F] rounded-2xl p-3 border border-[#104878] font-mono text-[10px] text-[#00C8FF] select-all">
               <pre className="whitespace-pre-wrap leading-tight">
                 {getAppsScriptTemplateCode()}
               </pre>
@@ -1384,9 +1374,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <button
                 type="button"
                 onClick={handleCopyScript}
-                className={`flex-1 min-h-[44px] py-2 font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 cursor-pointer ${
-                  isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                }`}
+                className="flex-1 min-h-[44px] py-2 font-bold text-xs rounded-2xl flex items-center justify-center gap-1.5 cursor-pointer btn-electric-blue text-white"
               >
                 {copiedScript ? <Check size={14} /> : <Copy size={14} />}
                 <span>{copiedScript ? 'Copied to Clipboard!' : 'Copy Code'}</span>

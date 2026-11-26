@@ -129,7 +129,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
       style={{
         transform: dragDeltaY !== 0 ? `translateY(${dragDeltaY}px)` : undefined
       }}
-      className="md:hidden fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none transition-transform duration-200 ease-out"
+      className="md:hidden fixed inset-x-0 bottom-[calc(70px+env(safe-area-inset-bottom,0px))] z-[460] px-2.5 sm:px-4 pointer-events-none transition-transform duration-200 ease-out"
     >
       <div className="max-w-md mx-auto marviz-glass-strong rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white">
         {/* Touch-Draggable Header & Handle */}
@@ -265,7 +265,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
               <button
                 type="button"
                 onClick={() => onMoreDetails(outlet)}
-                className="w-full min-h-[46px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(22,133,255,0.45)] transition-all cursor-pointer active:scale-[0.99]"
+                className="w-full min-h-[46px] rounded-xl btn-electric-blue font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99]"
               >
                 <BarChart3 size={16} />
                 <span>ANALYTICS</span>
@@ -275,7 +275,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
                 <button
                   type="button"
                   onClick={() => onStartOutletVisit(outlet)}
-                  className="flex-1 min-h-[46px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(22,133,255,0.45)] transition-all cursor-pointer active:scale-[0.99]"
+                  className="flex-1 min-h-[46px] rounded-xl btn-electric-blue font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99]"
                 >
                   <Navigation size={15} className="fill-white" />
                   <span>START OUTLET VISIT</span>

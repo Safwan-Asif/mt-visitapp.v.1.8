@@ -96,10 +96,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <div className="flex items-center gap-2">
             <span
               className={`w-2 h-2 rounded-full ${
-                isDark ? 'bg-[#10B981]' : 'bg-[#084C41]'
+                isDark ? 'bg-[#00C8FF]' : 'bg-[#0066FF]'
               }`}
             />
-            <span className="text-[11px] font-bold tracking-widest uppercase text-[var(--accent-primary)]">
+            <span className="text-[11px] font-bold tracking-widest uppercase text-[var(--accent-cyan)]">
               Qatar Food Industries
             </span>
           </div>
@@ -107,14 +107,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <button
             type="button"
             onClick={toggleTheme}
-            className="min-h-[40px] px-3 rounded-xl glass-subtle hover:bg-white/80 dark:hover:bg-white/10 transition-all flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)] cursor-pointer active:scale-95"
+            className="min-h-[40px] px-3 rounded-xl glass-subtle hover:bg-white/80 dark:hover:bg-[#0B2542] transition-all flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)] cursor-pointer active:scale-95"
             title={isDark ? 'Switch to Frosted Light' : 'Switch to Dark Glass'}
             aria-label={isDark ? 'Switch to Frosted Light' : 'Switch to Dark Glass'}
           >
             {isDark ? (
-              <Sun size={14} className="text-amber-400" />
+              <Sun size={14} className="text-[#FFB800]" />
             ) : (
-              <Moon size={14} className="text-[#084C41]" />
+              <Moon size={14} className="text-[#0066FF]" />
             )}
             <span className="text-[11px] font-semibold">
               {isDark ? 'Light' : 'Dark'}
@@ -130,23 +130,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <div
                 className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center shadow-lg shrink-0 ${
                   isDark
-                    ? 'bg-[#10B981] text-[#05231C] shadow-emerald-950/50'
-                    : 'bg-[#084C41] text-white shadow-[#084C41]/25'
+                    ? 'btn-electric-blue'
+                    : 'bg-[#0066FF] text-white shadow-[#0066FF]/25'
                 }`}
               >
                 <span className="text-sm font-extrabold tracking-wider leading-none">
                   QFI
                 </span>
-                <span className="text-[8px] font-bold uppercase tracking-widest opacity-80 mt-0.5">
+                <span className="text-[8px] font-bold uppercase tracking-widest opacity-85 mt-0.5">
                   MT v1
                 </span>
               </div>
               <div>
-                <h1 className="text-lg md:text-xl font-extrabold tracking-tight text-[var(--text-primary)]">
+                <h1 className="font-heading italic text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--text-primary)]">
                   MARVIZ AI
                 </h1>
                 <p className="text-xs text-[var(--text-secondary)]">
-                  Modern Trade Sales Channel&middot;
+                  Modern Trade Sales Channel
                 </p>
               </div>
             </div>
@@ -156,8 +156,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                   isDark
-                    ? 'bg-emerald-500/15 text-[#34D399]'
-                    : 'bg-[#084C41]/10 text-[#084C41]'
+                    ? 'bg-[#0066FF]/20 text-[#00C8FF] border border-[#008DFF]/30'
+                    : 'bg-[#0066FF]/10 text-[#0066FF]'
                 }`}
               >
                 <User size={16} />
@@ -165,7 +165,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--accent-primary)]">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--accent-cyan)]">
                     Executive
                   </span>
                   <span className="text-[10px] font-mono tabular-nums font-bold text-[var(--text-secondary)]">
@@ -189,8 +189,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         value={exec.username}
                         className={
                           isDark
-                            ? 'bg-[#111D19] text-[#ECFDF5]'
-                            : 'bg-white text-[#0F1B17]'
+                            ? 'bg-[#061C35] text-[#F1F5FF]'
+                            : 'bg-white text-[#0B1D36]'
                         }
                       >
                         {exec.name}
@@ -199,7 +199,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                   </select>
                   <ChevronDown
                     size={15}
-                    className="absolute right-0 pointer-events-none text-[var(--accent-primary)]"
+                    className="absolute right-0 pointer-events-none text-[var(--accent-cyan)]"
                   />
                 </div>
               </div>
@@ -215,7 +215,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <div className="flex flex-col items-center space-y-4">
             <div className="flex flex-col items-center space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">
-                <Lock size={13} className="text-[var(--accent-primary)]" />
+                <Lock size={13} className="text-[var(--accent-cyan)]" />
                 <span>Enter 4-Digit Security PIN</span>
               </div>
 
@@ -229,11 +229,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                       className={`w-3.5 h-3.5 rounded-full transition-all duration-200 ${
                         isFilled
                           ? isDark
-                            ? 'bg-[#10B981] scale-110 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
-                            : 'bg-[#084C41] scale-110 shadow-sm'
+                            ? 'bg-[#00C8FF] scale-110 shadow-[0_0_12px_rgba(0,200,255,0.65)]'
+                            : 'bg-[#0066FF] scale-110 shadow-sm'
                           : isDark
-                          ? 'bg-white/10 border border-white/20'
-                          : 'bg-[#084C41]/10 border border-[#084C41]/20'
+                          ? 'bg-[#0B2542] border border-[#104878]'
+                          : 'bg-[#0066FF]/10 border border-[#0066FF]/25'
                       }`}
                     />
                   );
@@ -241,7 +241,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               </div>
 
               {error && (
-                <p className="text-xs font-semibold text-rose-500 tracking-wide pt-0.5">
+                <p className="text-xs font-semibold text-[#EF4444] tracking-wide pt-0.5">
                   {error}
                 </p>
               )}
@@ -254,7 +254,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                   key={digit}
                   type="button"
                   onClick={() => handleKeyPress(digit)}
-                  className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                  className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-[#0B2542] text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
                 >
                   {digit}
                 </button>
@@ -265,8 +265,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 onClick={handleQuickDemo}
                 className={`h-12 rounded-2xl text-[11px] font-bold transition-all flex items-center justify-center text-center leading-tight px-1 active:scale-95 cursor-pointer border ${
                   isDark
-                    ? 'bg-[#10B981]/15 hover:bg-[#10B981]/25 border-emerald-500/30 text-[#34D399]'
-                    : 'bg-[#084C41]/10 hover:bg-[#084C41]/15 border-[#084C41]/20 text-[#084C41]'
+                    ? 'bg-[#0066FF]/20 hover:bg-[#0066FF]/30 border-[#008DFF]/50 text-[#00C8FF]'
+                    : 'bg-[#0066FF]/10 hover:bg-[#0066FF]/15 border-[#0066FF]/25 text-[#0066FF]'
                 }`}
                 title="Auto-fill Executive Demo PIN"
               >
@@ -276,7 +276,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <button
                 type="button"
                 onClick={() => handleKeyPress('0')}
-                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-[#0B2542] text-base font-bold tabular-nums text-[var(--text-primary)] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
               >
                 0
               </button>
@@ -284,7 +284,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <button
                 type="button"
                 onClick={handleDelete}
-                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-white/12 text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                className="h-12 rounded-2xl glass-subtle hover:bg-white/85 dark:hover:bg-[#0B2542] text-[var(--text-secondary)] hover:text-[#EF4444] transition-all flex items-center justify-center active:scale-95 cursor-pointer"
                 aria-label="Delete last digit"
               >
                 <Delete size={18} />
@@ -298,8 +298,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               className={`w-full max-w-[276px] min-h-[48px] py-3 rounded-2xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2 ${
                 pin.length === 4
                   ? isDark
-                    ? 'bg-[#10B981] text-[#05231C] shadow-lg shadow-emerald-950/40 hover:brightness-105 active:scale-[0.99] cursor-pointer'
-                    : 'bg-[#084C41] text-white shadow-lg shadow-[#084C41]/25 hover:brightness-110 active:scale-[0.99] cursor-pointer'
+                    ? 'btn-electric-blue active:scale-[0.99] cursor-pointer'
+                    : 'bg-[#0066FF] text-white shadow-lg shadow-[#0066FF]/25 hover:brightness-110 active:scale-[0.99] cursor-pointer'
                   : 'glass-subtle text-[var(--text-muted)] cursor-not-allowed opacity-70'
               }`}
             >

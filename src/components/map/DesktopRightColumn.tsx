@@ -88,13 +88,13 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
     : 0;
 
   return (
-    <div className="hidden md:flex flex-col items-end gap-2.5 w-[328px] lg:w-[348px] max-h-[calc(100%-64px)] pointer-events-none">
+    <div className="hidden md:flex flex-col items-end gap-2.5 w-[296px] lg:w-[336px] max-h-full pointer-events-none">
       {/* Top-Right Row: Compass Rose + Today's Journey + Outlet Health */}
       <div className="flex items-start gap-2.5 w-full justify-end pointer-events-auto shrink-0">
         {/* Tactical Compass Rose */}
         <div
           aria-hidden="true"
-          className="hidden lg:flex w-14 h-14 rounded-full marviz-glass items-center justify-center shrink-0 mt-1"
+          className="hidden xl:flex w-14 h-14 rounded-full marviz-glass items-center justify-center shrink-0 mt-1"
         >
           <svg width="42" height="42" viewBox="0 0 48 48" fill="none">
             <circle cx="24" cy="24" r="20" stroke="rgba(148,163,184,0.35)" strokeWidth="1" />
@@ -126,9 +126,9 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
                 {formattedProgress}
               </div>
             </div>
-            <div className="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <div className="mt-1.5 h-1.5 rounded-full bg-[#04152B] overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-[#22C55E] to-[#34D399]"
+                className="h-full rounded-full bg-gradient-to-r from-[#0066FF] via-[#008DFF] to-[#00C8FF]"
                 style={{ width: `${Math.min(100, metrics.progressPercent)}%` }}
               />
             </div>
@@ -178,7 +178,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
       {selectedOutlet && (
         <section
           aria-label={`Selected outlet details for ${selectedOutlet.name}`}
-          className="w-full marviz-glass-strong rounded-2xl overflow-hidden text-white pointer-events-auto flex flex-col max-h-[calc(100vh-270px)] animate-fade-in"
+          className="w-full marviz-glass-strong rounded-2xl overflow-hidden text-white pointer-events-auto flex flex-col flex-1 min-h-0 animate-fade-in"
         >
           {/* Storefront Header Image with Scrim & Top Overlays */}
           <div className="relative h-28 shrink-0 bg-gradient-to-br from-slate-800 to-slate-950 overflow-hidden">
@@ -334,7 +334,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               <button
                 type="button"
                 onClick={() => onMoreDetails(selectedOutlet)}
-                className="w-full min-h-[44px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_22px_rgba(22,133,255,0.5)] cursor-pointer transition-all active:scale-[0.99]"
+                className="w-full min-h-[44px] rounded-xl btn-electric-blue font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99]"
               >
                 <BarChart3 size={16} />
                 <span>ANALYTICS</span>
@@ -343,7 +343,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               <button
                 type="button"
                 onClick={() => onStartOutletVisit(selectedOutlet)}
-                className="w-full min-h-[44px] rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-white font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-[0_6px_22px_rgba(22,133,255,0.5)] cursor-pointer transition-all active:scale-[0.99]"
+                className="w-full min-h-[44px] rounded-xl btn-electric-blue font-heading text-[15px] font-bold tracking-wider uppercase flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99]"
               >
                 <Navigation size={15} className="fill-white" />
                 <span>START OUTLET VISIT</span>

@@ -196,8 +196,8 @@ const DrumColumn: React.FC<DrumColumnProps> = ({
               opacity,
               color: isCentered
                 ? isDark
-                  ? '#ECFDF5'
-                  : '#084C41'
+                  ? '#F1F5FF'
+                  : '#0066FF'
                 : 'var(--text-secondary)'
             }}
             className={`w-full flex items-center justify-center tabular-nums cursor-pointer transition-[opacity,transform] duration-100 ${
@@ -355,9 +355,7 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
             onClick={() => setActiveEndpoint('from')}
             className={`min-h-[34px] px-3 rounded-lg cursor-pointer transition-all ${
               activeEndpoint === 'from'
-                ? isDark
-                  ? 'bg-[#10B981] text-[#05231C] shadow-xs'
-                  : 'bg-[#084C41] text-white shadow-xs'
+                ? 'btn-electric-blue'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -368,9 +366,7 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
             onClick={() => setActiveEndpoint('to')}
             className={`min-h-[34px] px-3 rounded-lg cursor-pointer transition-all ${
               activeEndpoint === 'to'
-                ? isDark
-                  ? 'bg-[#10B981] text-[#05231C] shadow-xs'
-                  : 'bg-[#084C41] text-white shadow-xs'
+                ? 'btn-electric-blue'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -393,8 +389,8 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
           aria-hidden="true"
           className={`pointer-events-none absolute inset-x-1.5 rounded-xl z-0 border ${
             isDark
-              ? 'bg-[#10B981]/14 border-[#10B981]/30'
-              : 'bg-[#084C41]/8 border-[#084C41]/20'
+              ? 'bg-[#0066FF]/16 border-[#008DFF]/45'
+              : 'bg-[#0066FF]/10 border-[#0066FF]/25'
           }`}
           style={{
             top: `${ITEM_HEIGHT * 2}px`,
@@ -444,9 +440,7 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
           <button
             type="button"
             onClick={() => setIsOpen(false)}
-            className={`min-h-[40px] sm:min-h-[34px] px-4 rounded-xl text-xs font-bold cursor-pointer active:scale-[0.98] transition-transform ${
-              isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-            }`}
+            className="min-h-[40px] sm:min-h-[34px] px-4 rounded-xl text-xs font-bold btn-electric-blue cursor-pointer active:scale-[0.98] transition-transform"
           >
             Done
           </button>
@@ -467,8 +461,8 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
             className={`flex-1 min-h-[44px] px-3 py-1.5 rounded-lg flex items-center gap-2 text-left transition-all cursor-pointer ${
               isOpen && activeEndpoint === 'from'
                 ? isDark
-                  ? 'bg-[#10B981]/18 text-[#ECFDF5] ring-1 ring-[#10B981]/60'
-                  : 'bg-white/85 text-[#084C41] shadow-sm ring-1 ring-[#084C41]/25'
+                  ? 'bg-[#0066FF]/20 text-[#F1F5FF] ring-1 ring-[#008DFF]/70'
+                  : 'bg-white/95 text-[#0066FF] shadow-sm ring-1 ring-[#0066FF]/35'
                 : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
             }`}
           >
@@ -495,8 +489,8 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
             className={`flex-1 min-h-[44px] px-3 py-1.5 rounded-lg flex items-center justify-between gap-2 text-left transition-all cursor-pointer ${
               isOpen && activeEndpoint === 'to'
                 ? isDark
-                  ? 'bg-[#10B981]/18 text-[#ECFDF5] ring-1 ring-[#10B981]/60'
-                  : 'bg-white/85 text-[#084C41] shadow-sm ring-1 ring-[#084C41]/25'
+                  ? 'bg-[#0066FF]/20 text-[#F1F5FF] ring-1 ring-[#008DFF]/70'
+                  : 'bg-white/95 text-[#0066FF] shadow-sm ring-1 ring-[#0066FF]/35'
                 : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
             }`}
           >
@@ -535,7 +529,7 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
           role="dialog"
           aria-label="Select From and To dates"
           className={`absolute left-0 top-full mt-2 w-[380px] rounded-2xl p-4 shadow-2xl border border-[var(--border-glass-strong)] backdrop-blur-2xl z-40 animate-fade-in ${
-            isDark ? 'bg-[#0F1B17]/95' : 'bg-[#FAF9F5]/96'
+            isDark ? 'bg-[#061C35]/96' : 'bg-[#F4F7FB]/98'
           }`}
         >
           {pickerPanelBody}
@@ -560,7 +554,7 @@ export const WheelDateRangePicker: React.FC<WheelDateRangePickerProps> = ({
             />
             <div
               className={`relative z-10 w-full max-w-lg rounded-t-3xl p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl border-t border-[var(--border-glass-strong)] backdrop-blur-2xl animate-fade-in ${
-                isDark ? 'bg-[#0F1B17]/96' : 'bg-[#FAF9F5]/98'
+                isDark ? 'bg-[#061C35]/96' : 'bg-[#F4F7FB]/98'
               }`}
             >
               {pickerPanelBody}

@@ -1,28 +1,28 @@
 import React, { useState, useEffect } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
-  ArrowLeft,
-  CheckCircle2,
-  ChevronRight,
-  MapPin,
+  ChevronLeft,
   Check,
-  Clock,
-  ShieldCheck,
-  ArrowRight
+  ChevronRight,
+  Lock,
+  ArrowRight,
+  Clock
 } from 'lucide-react';
 import { Outlet, CategoryType, CategoryAuditRecord, PlanogramRecord } from '../types';
 import { CATEGORIES } from '../constants';
-import { useTheme } from '../ThemeContext';
 import { FinishOutletScreen } from './FinishOutletScreen';
 import {
   fetchActivePlanograms,
   findActivePlanogramForOutlet,
   getPlannedQfiTotal
 } from '../services/planogramService';
+import { CategoryMonogramBadge, MiniProgressRing } from './pjp/PjpPrimitives';
 
 interface OutletOverviewProps {
   outlet: Outlet;
   audits: Record<string, CategoryAuditRecord>;
   planograms?: PlanogramRecord[];
+  isLastPendingOutlet?: boolean;
   onBack: () => void;
   onSelectCategory: (category: CategoryType) => void;
   onFinishOutlet?: (confidence: string) => void;
@@ -33,12 +33,13 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
   outlet,
   audits,
   planograms,
+  isLastPendingOutlet = false,
   onBack,
   onSelectCategory,
   onFinishOutlet,
   onFinishScreenChange
 }) => {
-  const { isDark } = useTheme();
+  const shouldReduceMotion = useReducedMotion();
   const [showFinishScreen, setShowFinishScreen] = useState<boolean>(false);
   const [localPlanograms, setLocalPlanograms] = useState<PlanogramRecord[]>(planograms || []);
 
@@ -57,6 +58,7 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
   const allDone = completedCount === categories.length;
 
   const openFinishScreen = () => {
+    if (!allDone) return;
     setShowFinishScreen(true);
     onFinishScreenChange?.(true);
   };
@@ -66,6 +68,7 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
       <FinishOutletScreen
         outlet={outlet}
         visitId={outlet.visitId || `visit_${outlet.id}_${new Date().toISOString().slice(0, 10)}`}
+        isLastPendingOutlet={isLastPendingOutlet}
         onFinishOutlet={(confidence) => {
           onFinishScreenChange?.(false);
           onFinishOutlet?.(confidence);
@@ -76,192 +79,153 @@ export const OutletOverview: React.FC<OutletOverviewProps> = ({
   }
 
   return (
-    <div className="flex-1 flex flex-col max-w-5xl mx-auto w-full h-full overflow-hidden px-3.5 pt-3.5 md:px-8 md:pt-6 select-none animate-fade-in">
-      {/* Top Back & Outlet Summary */}
-      <div className="space-y-3 shrink-0">
-        <button
-          type="button"
-          onClick={onBack}
-          className="min-h-[40px] inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors group cursor-pointer"
-        >
-          <ArrowLeft size={15} className="group-hover:-translate-x-0.5 transition-transform" />
-          <span>Back to Route PJP</span>
-        </button>
+    <div className="flex-1 flex flex-col w-full h-full overflow-hidden select-none pjp-atmospheric-canvas">
+      <motion.div
+        initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22 }}
+        className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden px-4 pt-3 pb-[calc(86px+env(safe-area-inset-bottom,0px))] md:py-6"
+      >
+        {/* Top Store Audit Header */}
+        <div className="space-y-4 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back to Route"
+                className="w-10 h-10 rounded-full glass-panel flex items-center justify-center text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95 shrink-0"
+              >
+                <ChevronLeft size={19} />
+              </button>
+              <div className="min-w-0">
+                <h1 className="font-heading font-extrabold text-[26px] leading-none tracking-tight text-[var(--text-primary)]">
+                  Store Audit
+                </h1>
+                <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
+                  {outlet.name}
+                  {outlet.code ? ` · SAP ${outlet.code}` : ''}
+                </p>
+              </div>
+            </div>
 
-        <div className="glass-panel rounded-3xl p-4 md:p-5 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-primary)]">
-              Active Store Audit
-            </span>
-            <span className="text-xs font-mono font-bold tabular-nums text-[var(--text-secondary)]">
-              Seq {outlet.sequence}
-            </span>
+            <MiniProgressRing completed={completedCount} total={3} size={46} />
           </div>
 
-          <div>
-            <h2 className="text-lg md:text-xl font-extrabold tracking-tight text-[var(--text-primary)] truncate">
-              {outlet.name}
-            </h2>
-            <p className="text-xs text-[var(--text-secondary)] flex items-center gap-1.5 mt-1">
-              <MapPin size={13} className="text-[var(--accent-primary)] shrink-0" />
-              <span className="truncate tabular-nums">
-                {outlet.code ? `SAP ${outlet.code} · ` : ''}
-                {outlet.branch} &middot; {outlet.address || 'Doha Commercial District'}
-              </span>
-            </p>
-          </div>
-
-          {outlet.isUnmapped && (
-            <div className="glass-subtle rounded-2xl p-2.5 text-xs text-amber-700 dark:text-amber-300">
+          {outlet.isUnmapped && outlet.unmappedRemark && (
+            <div className="glass-subtle rounded-2xl px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300 border-amber-500/35">
               <span className="font-bold uppercase tracking-wider text-[10px] block mb-0.5">
                 Unmapped Visit Reason
               </span>
               <span>{outlet.unmappedRemark}</span>
             </div>
           )}
+        </div>
 
-          <div className="pt-2.5 border-t border-[var(--border-glass)] flex items-center justify-between text-xs">
-            <span className="text-[var(--text-secondary)]">
-              Audit Progress:{' '}
-              <strong className="text-[var(--text-primary)] tabular-nums">
-                {completedCount} of 3 Categories
-              </strong>
-            </span>
-            <span className="font-extrabold tabular-nums text-[var(--accent-primary)]">
-              {Math.round((completedCount / 3) * 100)}%
+        {/* Category Audit Selection Rows */}
+        <div className="flex-1 overflow-y-auto py-4 space-y-3 no-scrollbar">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+              Select Category to Audit
+            </h2>
+            <span className="text-[11px] font-bold text-[#008DFF] dark:text-[#00C8FF] tabular-nums">
+              {completedCount}/3 Done
             </span>
           </div>
-        </div>
-      </div>
 
-      {/* Category Audit Cards */}
-      <div className="flex-1 overflow-y-auto pt-4 pb-24 md:pb-8 space-y-3">
-        <div className="flex items-center justify-between px-0.5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
-            Mandatory Category Audits
-          </h3>
-          <span className="text-[11px] font-semibold text-[var(--accent-primary)]">
-            Sub-2m Target
-          </span>
-        </div>
+          <div className="space-y-2.5">
+            {categories.map((cat) => {
+              const status = outlet.progress[cat] || 'Not Started';
+              const isCompleted = status === 'Completed';
+              const isInProgress = status === 'In Progress';
+              const auditKey = `${outlet.id}_${cat}`;
+              const existingAudit = audits[auditKey];
+              const matchedPlanogram = findActivePlanogramForOutlet(
+                outlet,
+                cat,
+                activePlanogramPool
+              );
+              const plannedQfi = matchedPlanogram
+                ? getPlannedQfiTotal(matchedPlanogram, cat)
+                : 0;
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {categories.map((cat) => {
-            const status = outlet.progress[cat] || 'Not Started';
-            const isCompleted = status === 'Completed';
-            const isInProgress = status === 'In Progress';
-            const auditKey = `${outlet.id}_${cat}`;
-            const existingAudit = audits[auditKey];
-            const matchedPlanogram = findActivePlanogramForOutlet(
-              outlet,
-              cat,
-              activePlanogramPool
-            );
-            const plannedQfi = matchedPlanogram
-              ? getPlannedQfiTotal(matchedPlanogram, cat)
-              : 0;
-
-            return (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => onSelectCategory(cat)}
-                className="glass-panel rounded-3xl p-4 text-left transition-all cursor-pointer group flex flex-col justify-between gap-3 hover:border-[var(--border-glass-strong)] active:scale-[0.99]"
-              >
-                <div className="flex items-start justify-between gap-3 w-full">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className={`w-10 h-10 rounded-2xl flex items-center justify-center font-extrabold text-xs shrink-0 ${
-                        isCompleted
-                          ? isDark
-                            ? 'bg-emerald-500/20 text-[#34D399]'
-                            : 'bg-[#084C41] text-white'
-                          : isDark
-                          ? 'bg-white/10 text-[#34D399]'
-                          : 'bg-[#084C41]/10 text-[#084C41]'
-                      }`}
-                    >
-                      {cat.substring(0, 2).toUpperCase()}
-                    </div>
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => onSelectCategory(cat)}
+                  className={`w-full rounded-3xl p-4 text-left transition-all cursor-pointer group flex items-center justify-between gap-3 active:scale-[0.985] ${
+                    isCompleted
+                      ? 'glass-panel border-[#22C55E]/45'
+                      : 'glass-panel hover:border-[#008DFF]/65'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <CategoryMonogramBadge category={cat} completed={isCompleted} size="md" />
                     <div className="min-w-0">
-                      <h4 className="text-sm font-bold text-[var(--text-primary)] group-hover:text-[var(--accent-primary)] transition-colors">
+                      <h3 className="text-[15px] font-extrabold text-[var(--text-primary)] group-hover:text-[#008DFF] dark:group-hover:text-[#00C8FF] transition-colors">
                         {cat}
-                      </h4>
-                      <p className="text-xs text-[var(--text-secondary)] tabular-nums leading-snug">
-                        {matchedPlanogram
-                          ? `Planogram v${matchedPlanogram.version} · ${plannedQfi} QFI faces`
-                          : 'Photo · POSM · Facings'}
+                      </h3>
+                      <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate mt-0.5">
+                        {isCompleted && existingAudit
+                          ? `${existingAudit.totalFacings} Facings · ${Math.round(
+                              existingAudit.shareOfShelfPct ?? existingAudit.primarySharePct ?? 0
+                            )}% SOS`
+                          : matchedPlanogram
+                          ? `Planogram v${matchedPlanogram.version} · ${plannedQfi} faces`
+                          : 'Capture · POSM · Facings'}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0 pt-1">
+                  <div className="flex items-center gap-2 shrink-0">
                     {isCompleted ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-bold text-[var(--accent-primary)]">
-                        <Check size={13} /> Done
+                      <span className="w-7 h-7 rounded-full bg-[#22C55E] text-white flex items-center justify-center shadow-[0_0_12px_rgba(34,197,94,0.45)]">
+                        <Check size={14} strokeWidth={2.8} />
                       </span>
                     ) : isInProgress ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-600 dark:text-amber-400">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-500 text-[11px] font-bold">
                         <Clock size={12} /> Resume
                       </span>
                     ) : (
-                      <span className="text-xs font-semibold text-[var(--text-secondary)]">
-                        Start
-                      </span>
+                      <ChevronRight
+                        size={18}
+                        className="text-[var(--text-muted)] group-hover:text-[#00C8FF] transition-colors"
+                      />
                     )}
-                    <ChevronRight
-                      size={16}
-                      className="text-[var(--text-muted)] group-hover:text-[var(--accent-primary)] transition-colors"
-                    />
                   </div>
-                </div>
-
-                {isCompleted && (
-                  <div className="pt-2.5 border-t border-[var(--border-glass)] flex items-center justify-between text-xs text-[var(--text-secondary)] w-full">
-                    <span className="flex items-center gap-1 font-semibold text-[var(--accent-primary)]">
-                      <ShieldCheck size={13} />
-                      {existingAudit?.annotatedPhotoUrl ? 'AI Annotated' : 'Verified CV'}
-                    </span>
-                    <span className="tabular-nums font-medium">
-                      {existingAudit
-                        ? `${existingAudit.totalFacings} Facings${
-                            existingAudit.activeAisleCount && existingAudit.activeAisleCount > 1
-                              ? ` (${existingAudit.activeAisleCount} Bays)`
-                              : ''
-                          }`
-                        : 'Audit Logged'}
-                    </span>
-                  </div>
-                )}
-              </button>
-            );
-          })}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Finish Outlet Banner */}
-        {allDone && (
-          <div className="pt-2">
-            <div className="glass-panel-strong rounded-3xl p-4 md:p-5 text-center space-y-3">
-              <div className="flex items-center justify-center gap-2 text-xs font-bold text-[var(--accent-primary)]">
-                <CheckCircle2 size={16} />
-                <span>All 3 Categories Completed for {outlet.name}</span>
-              </div>
-              <button
-                type="button"
-                onClick={openFinishScreen}
-                className={`w-full max-w-md mx-auto min-h-[52px] py-3.5 px-5 font-bold text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg cursor-pointer flex items-center justify-center gap-2 active:scale-[0.99] ${
-                  isDark
-                    ? 'bg-[#10B981] text-[#05231C] shadow-emerald-950/40'
-                    : 'bg-[#084C41] text-white shadow-[#084C41]/25'
-                }`}
-              >
-                <span>Finish Outlet &bull; Rate Confidence</span>
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+        {/* Bottom Gated Complete Outlet CTA */}
+        <div className="pt-2 shrink-0">
+          <button
+            type="button"
+            disabled={!allDone}
+            onClick={openFinishScreen}
+            className={`w-full min-h-[54px] rounded-full font-bold text-sm tracking-wide flex items-center justify-center gap-2 transition-all ${
+              allDone
+                ? 'btn-electric-blue cursor-pointer active:scale-[0.97]'
+                : 'glass-panel text-[var(--text-muted)] opacity-75 cursor-not-allowed'
+            }`}
+          >
+            {allDone ? (
+              <>
+                <span>Complete Outlet</span>
+                <ArrowRight size={17} />
+              </>
+            ) : (
+              <>
+                <Lock size={15} />
+                <span>Complete Outlet ({completedCount}/3 Audited)</span>
+              </>
+            )}
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 };

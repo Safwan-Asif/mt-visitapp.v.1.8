@@ -192,8 +192,8 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
                         value={item.id}
                         className={
                           isDark
-                            ? 'bg-[#111D19] text-[#ECFDF5]'
-                            : 'bg-white text-[#0F1B17]'
+                            ? 'bg-[#061C35] text-[#F1F5FF]'
+                            : 'bg-white text-[#0B1D36]'
                         }
                       >
                         {matchedCats ? '★ [Planogram] ' : ''}
@@ -276,9 +276,7 @@ export const AddOutletModal: React.FC<AddOutletModalProps> = ({
               disabled={!selectedMasterStore || remark.trim().length < 5}
               className={`flex-1 min-h-[44px] py-2.5 rounded-2xl text-xs font-bold shadow-lg flex items-center justify-center gap-1.5 transition-all ${
                 selectedMasterStore && remark.trim().length >= 5
-                  ? isDark
-                    ? 'bg-[#10B981] text-[#05231C] cursor-pointer active:scale-[0.99]'
-                    : 'bg-[#084C41] text-white cursor-pointer active:scale-[0.99]'
+                  ? 'btn-electric-blue cursor-pointer active:scale-[0.99]'
                   : 'glass-subtle text-[var(--text-muted)] cursor-not-allowed opacity-60'
               }`}
             >

@@ -1,21 +1,25 @@
 import React, { useState } from 'react';
-import { CheckCircle2, ShieldCheck, ArrowRight, Star } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
+import { Check, ShieldCheck, ArrowRight } from 'lucide-react';
 import { Outlet } from '../types';
+import { CATEGORIES } from '../constants';
 import { CONFIDENCE_OPTIONS } from '../config/masters';
-import { useTheme } from '../ThemeContext';
+import { AnimatedCompletionCircle } from './pjp/PjpPrimitives';
 
 interface FinishOutletScreenProps {
   outlet: Outlet;
   visitId: string;
+  isLastPendingOutlet?: boolean;
   onFinishOutlet: (confidence: string) => void;
 }
 
 export const FinishOutletScreen: React.FC<FinishOutletScreenProps> = ({
   outlet,
   visitId,
+  isLastPendingOutlet = false,
   onFinishOutlet
 }) => {
-  const { isDark } = useTheme();
+  const shouldReduceMotion = useReducedMotion();
   const [selectedConfidence, setSelectedConfidence] = useState<string>('High');
 
   const handleSubmit = () => {
@@ -26,92 +30,97 @@ export const FinishOutletScreen: React.FC<FinishOutletScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-between p-4 md:p-8 max-w-lg mx-auto w-full h-full overflow-y-auto select-none animate-fade-in">
-      {/* Top Header */}
-      <div className="space-y-1.5 pt-2 text-center shrink-0">
-        <p className="text-xs font-bold uppercase tracking-wider text-[var(--accent-primary)]">
-          All 3 Categories Completed
-        </p>
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight text-[var(--text-primary)]">
-          Finish {outlet.name}
-        </h1>
-        <p className="text-xs text-[var(--text-secondary)] tabular-nums">
-          {outlet.branch} &middot; Route Sequence {outlet.sequence}
-        </p>
-      </div>
+    <div className="flex-1 flex flex-col justify-between w-full h-full overflow-y-auto select-none pjp-atmospheric-canvas relative">
+      {/* Subtle Emerald Top Ambient Radiance */}
+      <div className="fixed top-12 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full bg-[#22C55E]/15 blur-3xl pointer-events-none" />
 
-      {/* Center Confidence Card */}
-      <div className="my-auto py-6">
-        <div className="glass-panel-strong rounded-3xl p-6 space-y-5 text-center">
-          <div
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg mx-auto ${
-              isDark
-                ? 'bg-[#10B981] text-[#05231C]'
-                : 'bg-[#084C41] text-white'
-            }`}
-          >
-            <CheckCircle2 size={28} strokeWidth={2.2} />
-          </div>
+      <motion.div
+        initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.26 }}
+        className="flex-1 flex flex-col justify-between p-5 md:p-8 max-w-md mx-auto w-full relative z-10"
+      >
+        <div className="my-auto py-4 space-y-6 text-center">
+          {/* Glowing Emerald Checkmark Circle */}
+          <AnimatedCompletionCircle size={112} />
 
           <div className="space-y-1.5">
-            <h2 className="text-lg font-extrabold tracking-tight text-[var(--text-primary)]">
-              How confident are you in today&apos;s data?
-            </h2>
-            <p className="text-xs text-[var(--text-secondary)] max-w-xs mx-auto">
-              Audit accuracy indicator attached to this market visit report
+            <h1 className="font-heading font-extrabold text-[34px] leading-none tracking-tight text-[var(--text-primary)]">
+              Outlet Completed
+            </h1>
+            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+              {outlet.name}
+              {outlet.branch ? ` · ${outlet.branch}` : ''}
+            </p>
+            <p className="text-xs font-extrabold text-[#22C55E] tabular-nums pt-0.5">
+              3 / 3 Categories Audited
             </p>
           </div>
 
-          <div className="space-y-2.5 pt-1">
-            {CONFIDENCE_OPTIONS.map((option) => {
-              const isSelected = selectedConfidence === option;
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setSelectedConfidence(option)}
-                  className={`w-full min-h-[54px] py-3.5 px-5 rounded-2xl text-sm font-bold transition-all cursor-pointer flex items-center justify-between active:scale-[0.99] ${
-                    isSelected
-                      ? isDark
-                        ? 'bg-[#10B981] text-[#05231C] shadow-lg'
-                        : 'bg-[#084C41] text-white shadow-lg shadow-[#084C41]/25'
-                      : 'glass-subtle text-[var(--text-primary)] hover:bg-white/80 dark:hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Star
-                      size={16}
-                      className={
-                        isSelected
-                          ? 'text-amber-300 fill-amber-300'
-                          : 'text-[var(--text-muted)]'
-                      }
-                    />
-                    <span>{option} Confidence</span>
-                  </div>
-                  {isSelected && <ShieldCheck size={18} strokeWidth={2.2} />}
-                </button>
-              );
-            })}
+          {/* 3-Category Completed Summary Card */}
+          <div className="glass-panel rounded-3xl divide-y divide-[var(--border-glass)] overflow-hidden text-left">
+            {CATEGORIES.map((cat) => (
+              <div
+                key={cat}
+                className="px-4 py-3 flex items-center justify-between gap-3 text-sm"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-[#22C55E] shrink-0" strokeWidth={2.6} />
+                  <span className="font-bold text-[var(--text-primary)]">{cat}</span>
+                </div>
+                <span className="w-6 h-6 rounded-full bg-[#22C55E]/20 border border-[#22C55E]/45 text-[#22C55E] flex items-center justify-center">
+                  <Check size={12} strokeWidth={2.8} />
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Data Confidence Segmented Pill Selector (Preserved fo_confidence field) */}
+          <div className="glass-panel rounded-2xl p-3.5 space-y-2.5 text-left">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-1.5">
+                <ShieldCheck size={14} className="text-[#008DFF] dark:text-[#00C8FF]" />
+                <span>Data Confidence</span>
+              </span>
+              <span className="text-[11px] font-bold text-[#008DFF] dark:text-[#00C8FF]">
+                {selectedConfidence}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {CONFIDENCE_OPTIONS.map((option) => {
+                const isSelected = selectedConfidence === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setSelectedConfidence(option)}
+                    className={`min-h-[42px] rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95 ${
+                      isSelected
+                        ? 'btn-electric-blue text-white'
+                        : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Bottom Sticky Action */}
-      <div className="pt-2 pb-2 shrink-0">
-        <button
-          type="button"
-          onClick={handleSubmit}
-          className={`w-full min-h-[54px] py-3.5 font-bold text-xs uppercase tracking-wider rounded-2xl transition-all shadow-xl flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] ${
-            isDark
-              ? 'bg-[#10B981] text-[#05231C]'
-              : 'bg-[#084C41] text-white shadow-[#084C41]/25'
-          }`}
-        >
-          <span>Market done! Next market</span>
-          <ArrowRight size={16} />
-        </button>
-      </div>
+        {/* Bottom Primary Pill CTA */}
+        <div className="pt-2 pb-3 shrink-0">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            className="w-full min-h-[54px] rounded-full btn-electric-blue font-bold text-sm tracking-wide flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.97]"
+          >
+            <span>{isLastPendingOutlet ? 'Finish Route' : 'Next Outlet'}</span>
+            <ArrowRight size={17} />
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 };

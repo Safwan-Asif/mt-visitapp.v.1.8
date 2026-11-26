@@ -38,6 +38,7 @@ interface MobileMapScreenProps {
   appOutlets?: Outlet[];
   audits?: Record<string, CategoryAuditRecord>;
   livePjpDataset?: LivePjpDataset;
+  useCustomAppRoute?: boolean;
   isSyncingPjp?: boolean;
   onStartOutletVisit: (outlet: MapOutlet) => void;
   onMoreDetails: (outletId: string, outlet: MapOutlet) => void;
@@ -50,6 +51,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   appOutlets = [],
   audits = {},
   livePjpDataset,
+  useCustomAppRoute = false,
   isSyncingPjp = false,
   onStartOutletVisit,
   onMoreDetails,
@@ -205,9 +207,10 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         executive,
         dataset,
         appOutlets,
-        audits
+        audits,
+        useCustomAppRoute
       }),
-    [executive, dataset, appOutlets, audits]
+    [executive, dataset, appOutlets, audits, useCustomAppRoute]
   );
 
   // Default-select Stop #1 on desktop screens so the right detail card opens on a live outlet
@@ -415,16 +418,16 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
     }
   };
 
-  // Lift mobile lower-left Layers button cleanly above the bottom sheet and native 5-tab MobileBottomNav
+  // Lift mobile lower-left Layers button cleanly above the bottom sheet and MobileBottomNav; hide on expanded sheet
   const layersBottomOffsetClass =
     sheetState === 'expanded'
-      ? 'bottom-[calc(422px+env(safe-area-inset-bottom,0px))]'
+      ? 'hidden md:flex'
       : sheetState === 'peek'
-      ? 'bottom-[calc(216px+env(safe-area-inset-bottom,0px))]'
-      : 'bottom-[calc(88px+env(safe-area-inset-bottom,0px))]';
+      ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))]'
+      : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))]';
 
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#071421] select-none">
+    <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#020D1F] select-none">
       {/* DESKTOP COMMAND CENTER HEADER BAR (md+) */}
       <DesktopTopBar
         metrics={journeyMetrics}
@@ -482,7 +485,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         </div>
 
         {/* DESKTOP RIGHT FLOATING COLUMN: COMPASS + JOURNEY + OUTLET HEALTH + SELECTED OUTLET CARD */}
-        <div className="hidden md:block absolute right-16 top-3 bottom-3 z-[455] pointer-events-none">
+        <div className="hidden md:block absolute right-3 top-3 bottom-[68px] z-[455] pointer-events-none">
           <DesktopRightColumn
             metrics={journeyMetrics}
             healthBreakdown={healthBreakdown}
@@ -494,7 +497,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         </div>
 
         {/* DESKTOP BOTTOM FLOATING BAR: NEXT STOP / DEMO ETA + OUTLET PRIORITY OVERVIEW */}
-        <div className="hidden md:block absolute left-[252px] bottom-3.5 z-[450] pointer-events-none">
+        <div className="hidden md:block absolute left-[228px] lg:left-[252px] right-[248px] bottom-3 z-[450] pointer-events-none">
           <DesktopBottomBar
             nextStop={nextStopEstimate}
             healthBreakdown={healthBreakdown}
@@ -508,6 +511,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
             <MobileHeader
               outlets={outlets}
               onSelectOutletFromSearch={handleSelectOutletFromSearch}
+              onOpenSettings={() => setIsSettingsOpen((v) => !v)}
             />
             <JourneyProgressHUD metrics={journeyMetrics} />
             <MapFilterChips
@@ -552,9 +556,9 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           <div
             role="dialog"
             aria-label="GeoIntel Settings"
-            className="md:hidden fixed inset-x-3 bottom-[calc(74px+env(safe-area-inset-bottom,0px))] z-[475] max-w-sm mx-auto marviz-glass-strong rounded-2xl p-4 text-white animate-fade-in"
+            className="md:hidden fixed inset-x-3 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-[475] max-w-sm mx-auto marviz-glass-strong rounded-2xl p-4 text-[#F1F5FF] animate-fade-in"
           >
-            <div className="flex items-center justify-between pb-2.5 border-b border-slate-700/70">
+            <div className="flex items-center justify-between pb-2.5 border-b border-[#104878]">
               <span className="font-heading text-sm font-bold uppercase tracking-wider">
                 GeoIntel Settings
               </span>
@@ -562,7 +566,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
                 type="button"
                 onClick={() => setIsSettingsOpen(false)}
                 aria-label="Close map settings"
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542] cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -572,13 +576,13 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setShowJourneyPlan((prev) => !prev)}
-                className="w-full min-h-[44px] px-3 rounded-xl bg-slate-900/65 border border-slate-700/70 flex items-center justify-between text-xs font-semibold cursor-pointer"
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B2542] border border-[#104878] hover:border-[#008DFF] flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
               >
                 <span className="flex items-center gap-2">
-                  <Route size={15} className="text-sky-400" />
+                  <Route size={15} className="text-[#00C8FF]" />
                   Planned Journey Overlay
                 </span>
-                <span className={showJourneyPlan ? 'text-sky-400 font-bold' : 'text-slate-400'}>
+                <span className={showJourneyPlan ? 'text-[#00C8FF] font-bold' : 'text-[#647D9E]'}>
                   {showJourneyPlan ? 'ON' : 'OFF'}
                 </span>
               </button>
@@ -586,17 +590,17 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               <button
                 type="button"
                 onClick={toggleTheme}
-                className="w-full min-h-[44px] px-3 rounded-xl bg-slate-900/65 border border-slate-700/70 flex items-center justify-between text-xs font-semibold cursor-pointer"
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B2542] border border-[#104878] hover:border-[#008DFF] flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
               >
                 <span className="flex items-center gap-2">
-                  {isDark ? <Sun size={15} className="text-amber-400" /> : <Moon size={15} />}
+                  {isDark ? <Sun size={15} className="text-[#FFB800]" /> : <Moon size={15} className="text-[#00C8FF]" />}
                   App Theme
                 </span>
-                <span className="text-slate-300">{isDark ? 'Dark Tactical' : 'Light'}</span>
+                <span className="text-[#A5B8D5]">{isDark ? 'Deep Navy' : 'Light'}</span>
               </button>
 
-              <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 p-2.5 flex items-start gap-2 text-[11px] text-slate-300 leading-snug">
-                <Info size={14} className="text-sky-400 shrink-0 mt-0.5" />
+              <div className="rounded-xl bg-[#04152B] border border-[#104878] p-2.5 flex items-start gap-2 text-[11px] text-[#A5B8D5] leading-snug">
+                <Info size={14} className="text-[#00C8FF] shrink-0 mt-0.5" />
                 <span>
                   Live PJP outlet positions from Customer Master paired with browser GPS location tracking. Satellite imagery &copy; Esri.
                 </span>
@@ -606,7 +610,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="w-full min-h-[44px] px-3 rounded-xl bg-red-950/40 hover:bg-red-900/50 border border-red-500/35 flex items-center justify-center gap-2 text-xs font-bold text-red-300 cursor-pointer"
+                  className="w-full min-h-[44px] px-3 rounded-xl bg-[#EF4444]/15 hover:bg-[#EF4444]/25 border border-[#EF4444]/40 flex items-center justify-center gap-2 text-xs font-bold text-[#FCA5A5] cursor-pointer transition-colors"
                 >
                   <LogOut size={15} />
                   Sign Out ({executive?.name || 'Safwan Asif'})

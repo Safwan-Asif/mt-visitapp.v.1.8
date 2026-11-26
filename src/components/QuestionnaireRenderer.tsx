@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
-  ArrowLeft,
+  ChevronLeft,
   Camera,
   Check,
-  ChevronRight,
+  CheckCircle2,
+  ArrowRight,
+  ChevronDown,
   Image as ImageIcon,
   Plus,
-  RefreshCw,
-  Trash2
+  Loader2,
+  Trash2,
+  Sparkles,
+  Circle
 } from 'lucide-react';
 import { CategoryType } from '../types';
 import { useTheme } from '../ThemeContext';
@@ -18,19 +23,21 @@ import {
   SECTION_ORDER
 } from '../config/questions';
 import { savePhotoToIndexedDB, getPhotoFromIndexedDB } from '../utils/photoStorage';
+import { VisionAiStatusCapsule } from './pjp/PjpPrimitives';
 
 interface QuestionnaireRendererProps {
   category: CategoryType;
   outletId: string;
   visitId: string;
   isAiRunning: boolean;
+  hasAiError?: boolean;
   aiProgressPercent: number;
+  previewPhotoUrl?: string | null;
+  onRetryAi?: () => void;
+  onSkipWaitToManual?: () => void;
   onComplete: (answers: Record<string, any>, newProducts: Array<Record<string, any>>) => void;
   onBackToCapture: () => void;
 }
-
-const ISSUE_WHEN_YES = new Set(['np_seen']);
-const ISSUE_WHEN_NO = new Set(['os_price_tag_ok', 'os_shelf_strip', 'os_wobblers']);
 
 const NEW_PRODUCT_FIELDS = [
   'np_photo',
@@ -112,11 +119,16 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
   outletId,
   visitId,
   isAiRunning,
+  hasAiError = false,
   aiProgressPercent,
+  previewPhotoUrl,
+  onRetryAi,
+  onSkipWaitToManual,
   onComplete,
   onBackToCapture
 }) => {
   const { isDark } = useTheme();
+  const shouldReduceMotion = useReducedMotion();
 
   const autosaveKey = `mta_questionnaire_${visitId}_${outletId}_${category}`;
   const newProductsAutosaveKey = `${autosaveKey}_new_products`;
@@ -444,152 +456,205 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
     }
   };
 
-  // ================= AI WAITING SCREEN =================
+  // ================= SCREEN 08: VISION AI LIVE PROCESSING BRIDGE =================
   if (isCompleted) {
+    const stages = [
+      { label: 'Detecting products', done: aiProgressPercent >= 25 },
+      { label: 'Analysing facings', done: aiProgressPercent >= 55, active: aiProgressPercent >= 25 && aiProgressPercent < 55 },
+      { label: 'Calculating Share of Shelf', done: aiProgressPercent >= 80, active: aiProgressPercent >= 55 && aiProgressPercent < 80 },
+      { label: 'Checking planogram', done: aiProgressPercent >= 98, active: aiProgressPercent >= 80 }
+    ];
+
     return (
-      <div className="flex-1 flex flex-col justify-center items-center p-6 text-center select-none animate-fade-in">
-        <div className="w-full max-w-sm glass-panel-strong rounded-3xl p-6 flex flex-col items-center space-y-5">
-          <div
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg ${
-              isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-            }`}
-          >
-            <RefreshCw size={24} className="animate-spin stroke-[2]" />
-          </div>
+      <div className="flex-1 flex flex-col justify-between items-center p-5 max-w-md mx-auto w-full text-center select-none animate-fade-in">
+        <div className="pt-2 space-y-1">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-[#008DFF] dark:text-[#00C8FF]">
+            {category} · Vision AI
+          </p>
+          <h2 className="font-heading font-extrabold text-[28px] leading-none text-[var(--text-primary)]">
+            Processing with AI
+          </h2>
+        </div>
 
-          <div className="space-y-1.5">
-            <p className="text-xs font-bold uppercase tracking-wider text-[var(--accent-primary)]">
-              Field Intel Saved
-            </p>
-            <h2 className="text-xl font-extrabold tracking-tight text-[var(--text-primary)]">
-              Reading your shelf…
-            </h2>
-            <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
-              Shelf vision AI is finishing facing counts and Share of Shelf.
-            </p>
-          </div>
+        {/* Glowing 3D Perspective Shelf Scan Frame (Matched to Screen 08) */}
+        <div className="relative w-full max-w-[290px] h-48 my-4 rounded-3xl overflow-hidden border border-[#008DFF]/55 bg-[#04152B] shadow-[0_0_40px_-8px_rgba(0,141,255,0.45)] flex items-center justify-center">
+          {previewPhotoUrl ? (
+            <img
+              src={previewPhotoUrl}
+              alt="Shelf under Vision AI scan"
+              className="w-full h-full object-cover opacity-80"
+            />
+          ) : (
+            <Sparkles size={36} className="text-[#00C8FF] opacity-55" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#020D1F]/80 via-transparent to-[#020D1F]/40" />
+          <div className="w-full h-2 bg-gradient-to-r from-transparent via-[#00C8FF] to-transparent shadow-[0_0_24px_#00C8FF] animate-scan-laser-rod absolute left-0 z-20" />
+        </div>
 
-          <div className="w-full space-y-2 pt-1">
-            <div
-              className={`w-full h-2 rounded-full overflow-hidden ${
-                isDark ? 'bg-white/10' : 'bg-[#084C41]/10'
-              }`}
-            >
-              <div
-                className="h-full bg-[var(--accent-primary)] transition-all duration-500 rounded-full"
-                style={{ width: `${Math.max(20, aiProgressPercent)}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-              <span>Shelf detection</span>
-              <span className="font-mono tabular-nums font-bold text-[var(--accent-primary)]">
-                {aiProgressPercent}%
+        {/* 4-Stage Live Checklist */}
+        <div className="w-full glass-panel rounded-3xl p-4 space-y-3 text-left">
+          {stages.map((st) => (
+            <div key={st.label} className="flex items-center gap-3 text-xs">
+              {st.done ? (
+                <CheckCircle2 size={16} className="text-[#22C55E] shrink-0" />
+              ) : st.active ? (
+                <Loader2 size={16} className="text-[#00C8FF] animate-spin shrink-0" />
+              ) : (
+                <Circle size={15} className="text-[var(--text-muted)] shrink-0" />
+              )}
+              <span
+                className={
+                  st.done || st.active
+                    ? 'font-bold text-[var(--text-primary)]'
+                    : 'font-medium text-[var(--text-muted)]'
+                }
+              >
+                {st.label}
               </span>
             </div>
-          </div>
+          ))}
+        </div>
+
+        {/* Non-trapping Manual Fallback Escape Hatch */}
+        <div className="w-full pt-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (!hasCompletedRef.current) {
+                hasCompletedRef.current = true;
+                onSkipWaitToManual?.();
+                onComplete(answers, finalNewProducts);
+              }
+            }}
+            className="w-full min-h-[44px] rounded-full glass-subtle text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            Enter Facings Manually Instead
+          </button>
         </div>
       </div>
     );
   }
 
   const currentSectionMeta = SECTIONS[currentSectionId];
-  const nextSectionMeta =
-    blockIndex < SECTION_ORDER.length - 1 ? SECTIONS[SECTION_ORDER[blockIndex + 1]] : null;
+  const isLastBlock = blockIndex === SECTION_ORDER.length - 1;
 
   const renderQuestionTree = (q: QuestionConfig, depth = 0): React.ReactNode => {
     const val = answers[q.id];
     const hasError = missingFields.has(q.id);
-    const label = q.shortLabel || q.text;
+    const label = q.text || q.shortLabel;
     const resolvedOptions =
       typeof q.options === 'function' ? q.options(category) : q.options || [];
     const visibleChildren = getVisibleChildren(q.id);
 
-    const getYesNoButtonStyle = (opt: 'Yes' | 'No') => {
-      const isSelected = val === opt;
-      if (!isSelected) {
-        return 'bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]';
-      }
-      if (opt === 'Yes' && ISSUE_WHEN_YES.has(q.id)) {
-        return 'bg-rose-600 text-white shadow-xs';
-      }
-      if (opt === 'No' && ISSUE_WHEN_NO.has(q.id)) {
-        return 'bg-rose-600 text-white shadow-xs';
-      }
-      if (opt === 'Yes') {
-        return isDark
-          ? 'bg-[#10B981] text-[#05231C] shadow-xs'
-          : 'bg-[#084C41] text-white shadow-xs';
-      }
-      return isDark
-        ? 'bg-white/15 text-[#ECFDF5] shadow-xs'
-        : 'bg-[#0F1B17] text-white shadow-xs';
-    };
-
     const renderControl = () => {
       if (q.type === 'yes_no') {
         return (
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex-1 min-w-0">
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
               <span
-                className={`text-sm font-semibold leading-snug block ${
+                className={`text-[14.5px] font-bold leading-snug ${
                   hasError ? 'text-rose-500' : 'text-[var(--text-primary)]'
                 }`}
               >
                 {label}
               </span>
               {hasError && (
-                <span className="text-[11px] font-semibold text-rose-500 mt-0.5 block">
-                  Required
-                </span>
+                <span className="text-[11px] font-bold text-rose-500 shrink-0">Required</span>
               )}
             </div>
 
             <div
               role="group"
               aria-label={label}
-              className="inline-flex p-1 rounded-xl shrink-0 glass-subtle"
+              className="grid grid-cols-2 gap-2"
             >
-              {(['Yes', 'No'] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => updateAnswer(q.id, opt)}
-                  className={`min-h-[40px] min-w-[54px] px-3 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-[0.97] ${getYesNoButtonStyle(
-                    opt
-                  )}`}
-                >
-                  {opt}
-                </button>
-              ))}
+              {(['Yes', 'No'] as const).map((opt) => {
+                const isSelected = val === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => updateAnswer(q.id, opt)}
+                    className={`min-h-[44px] rounded-full text-xs font-bold transition-all cursor-pointer active:scale-[0.97] ${
+                      isSelected
+                        ? 'btn-electric-blue text-white'
+                        : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                );
+              })}
             </div>
           </div>
         );
       }
 
       if (q.type === 'choice') {
-        const useFixedGrid =
-          resolvedOptions.length === 3 || resolvedOptions.length === 4;
+        if (resolvedOptions.length > 4) {
+          return (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor={`select-${q.id}`}
+                  className={`text-xs font-bold ${
+                    hasError ? 'text-rose-500' : 'text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {label}
+                </label>
+                {hasError && (
+                  <span className="text-[11px] font-bold text-rose-500">Required</span>
+                )}
+              </div>
+              <div className="relative">
+                <select
+                  id={`select-${q.id}`}
+                  value={val ?? ''}
+                  onChange={(e) => updateAnswer(q.id, e.target.value)}
+                  className={`w-full min-h-[46px] pl-3.5 pr-9 rounded-2xl text-sm font-semibold appearance-none glass-subtle text-[var(--text-primary)] outline-none cursor-pointer ${
+                    hasError
+                      ? 'border-rose-500'
+                      : 'focus:ring-2 focus:ring-[#008DFF]/45'
+                  }`}
+                >
+                  <option value="" className="bg-[#04152B] text-white">
+                    Choose {q.shortLabel || 'option'}
+                  </option>
+                  {resolvedOptions.map((option) => (
+                    <option key={option} value={option} className="bg-[#04152B] text-white">
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={16}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
+                />
+              </div>
+            </div>
+          );
+        }
+
         const gridClass =
           resolvedOptions.length === 3
             ? 'grid grid-cols-3 gap-2'
-            : resolvedOptions.length === 4 && resolvedOptions.every((o) => o.length <= 10)
-            ? 'grid grid-cols-4 gap-1.5'
-            : useFixedGrid
-            ? 'grid grid-cols-2 gap-2'
-            : 'flex flex-wrap gap-2';
+            : resolvedOptions.length === 4 && resolvedOptions.every((o) => o.length <= 12)
+            ? 'grid grid-cols-2 sm:grid-cols-4 gap-2'
+            : 'grid grid-cols-2 gap-2';
 
         return (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span
-                className={`text-sm font-semibold ${
+                className={`text-[14px] font-bold ${
                   hasError ? 'text-rose-500' : 'text-[var(--text-primary)]'
                 }`}
               >
                 {label}
               </span>
               {hasError && (
-                <span className="text-[11px] font-semibold text-rose-500">Required</span>
+                <span className="text-[11px] font-bold text-rose-500">Required</span>
               )}
             </div>
             <div className={gridClass}>
@@ -600,14 +665,12 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                     key={option}
                     type="button"
                     onClick={() => updateAnswer(q.id, option)}
-                    className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer active:scale-[0.98] text-center ${
+                    className={`min-h-[44px] px-2.5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer active:scale-[0.97] text-center ${
                       isSelected
-                        ? isDark
-                          ? 'bg-[#10B981] text-[#05231C] font-bold shadow-xs'
-                          : 'bg-[#084C41] text-white font-bold shadow-xs'
+                        ? 'btn-electric-blue text-white'
                         : hasError
-                        ? 'bg-rose-500/10 border border-rose-500/40 text-rose-600 dark:text-rose-300'
-                        : 'glass-subtle text-[var(--text-primary)] hover:bg-white/80 dark:hover:bg-white/10'
+                        ? 'bg-rose-500/10 border border-rose-500/40 text-rose-500'
+                        : 'glass-subtle text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                     }`}
                   >
                     {option}
@@ -625,14 +688,14 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
             <div className="flex items-center justify-between gap-2">
               <label
                 htmlFor={`input-${q.id}`}
-                className={`text-sm font-semibold ${
-                  hasError ? 'text-rose-500' : 'text-[var(--text-primary)]'
+                className={`text-xs font-bold ${
+                  hasError ? 'text-rose-500' : 'text-[var(--text-secondary)]'
                 }`}
               >
                 {label}
               </label>
               {hasError && (
-                <span className="text-[11px] font-semibold text-rose-500">Required</span>
+                <span className="text-[11px] font-bold text-rose-500">Required</span>
               )}
             </div>
             <div className="relative flex items-center">
@@ -645,12 +708,12 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                 value={val ?? ''}
                 onChange={(e) => updateAnswer(q.id, e.target.value)}
                 placeholder={q.placeholder || '0'}
-                className={`w-full min-h-[48px] px-3.5 ${
+                className={`w-full min-h-[46px] px-3.5 ${
                   q.unit ? 'pr-16' : 'pr-3.5'
-                } rounded-xl text-base font-bold tabular-nums glass-subtle text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none transition-colors ${
+                } rounded-2xl text-base font-bold tabular-nums glass-subtle text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none transition-colors ${
                   hasError
                     ? 'border-rose-500 focus:border-rose-500'
-                    : 'focus:ring-2 focus:ring-[var(--accent-primary)]/40'
+                    : 'focus:ring-2 focus:ring-[#008DFF]/45'
                 }`}
               />
               {q.unit && (
@@ -669,14 +732,14 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
             <div className="flex items-center justify-between gap-2">
               <label
                 htmlFor={`input-${q.id}`}
-                className={`text-sm font-semibold ${
-                  hasError ? 'text-rose-500' : 'text-[var(--text-primary)]'
+                className={`text-xs font-bold ${
+                  hasError ? 'text-rose-500' : 'text-[var(--text-secondary)]'
                 }`}
               >
                 {label}
               </label>
               {hasError && (
-                <span className="text-[11px] font-semibold text-rose-500">Required</span>
+                <span className="text-[11px] font-bold text-rose-500">Required</span>
               )}
             </div>
             <input
@@ -685,10 +748,10 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
               value={val ?? ''}
               onChange={(e) => updateAnswer(q.id, e.target.value)}
               placeholder={q.placeholder || 'Enter details...'}
-              className={`w-full min-h-[48px] px-3.5 rounded-xl text-sm font-medium glass-subtle text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none transition-colors ${
+              className={`w-full min-h-[46px] px-3.5 rounded-2xl text-sm font-medium glass-subtle text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none transition-colors ${
                 hasError
                   ? 'border-rose-500 focus:border-rose-500'
-                  : 'focus:ring-2 focus:ring-[var(--accent-primary)]/40'
+                  : 'focus:ring-2 focus:ring-[#008DFF]/45'
               }`}
             />
           </div>
@@ -703,38 +766,38 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span
-                className={`text-sm font-semibold ${
-                  hasError ? 'text-rose-500' : 'text-[var(--text-primary)]'
+                className={`text-xs font-bold ${
+                  hasError ? 'text-rose-500' : 'text-[var(--text-secondary)]'
                 }`}
               >
                 {label}
               </span>
               {hasError && (
-                <span className="text-[11px] font-semibold text-rose-500">Photo required</span>
+                <span className="text-[11px] font-bold text-rose-500">Photo required</span>
               )}
             </div>
 
             {val ? (
-              <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl glass-subtle">
+              <div className="flex items-center justify-between gap-3 p-2.5 rounded-2xl glass-subtle">
                 {previewSrc ? (
                   <img
                     src={previewSrc}
                     alt={label}
-                    className="h-12 w-14 object-cover rounded-lg shrink-0"
+                    className="h-12 w-14 object-cover rounded-xl shrink-0"
                   />
                 ) : (
-                  <div className="h-12 w-14 rounded-lg bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
-                    <Check size={18} className="text-[var(--accent-primary)]" />
+                  <div className="h-12 w-14 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
+                    <Check size={18} className="text-[#22C55E]" />
                   </div>
                 )}
-                <span className="text-xs font-semibold flex-1 text-[var(--accent-primary)]">
+                <span className="text-xs font-bold flex-1 text-[#22C55E]">
                   Photo attached
                 </span>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     type="button"
                     onClick={() => triggerPhotoPicker(q.id, 'camera')}
-                    className="min-h-[40px] px-3 rounded-lg text-xs font-bold glass-panel text-[var(--accent-primary)] cursor-pointer"
+                    className="min-h-[38px] px-3 rounded-xl text-xs font-bold glass-panel text-[#008DFF] dark:text-[#00C8FF] cursor-pointer"
                   >
                     Retake
                   </button>
@@ -742,7 +805,7 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                     type="button"
                     onClick={() => updateAnswer(q.id, undefined)}
                     title="Remove photo"
-                    className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg glass-panel text-[var(--text-secondary)] hover:text-rose-500 cursor-pointer"
+                    className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl glass-panel text-[var(--text-secondary)] hover:text-rose-500 cursor-pointer"
                   >
                     <Trash2 size={15} />
                   </button>
@@ -754,13 +817,13 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                   type="button"
                   disabled={isProcessingPhoto}
                   onClick={() => triggerPhotoPicker(q.id, 'camera')}
-                  className={`min-h-[46px] px-3 rounded-xl flex items-center justify-center gap-2 text-xs font-bold cursor-pointer active:scale-[0.98] ${
+                  className={`min-h-[44px] px-3 rounded-2xl flex items-center justify-center gap-2 text-xs font-bold cursor-pointer active:scale-[0.98] ${
                     hasError
-                      ? 'bg-rose-500/10 border border-rose-500/40 text-rose-600 dark:text-rose-300'
-                      : 'glass-subtle text-[var(--accent-primary)] hover:bg-white/80 dark:hover:bg-white/10'
+                      ? 'bg-rose-500/10 border border-rose-500/40 text-rose-500'
+                      : 'glass-subtle text-[#008DFF] dark:text-[#00C8FF]'
                   }`}
                 >
-                  <Camera size={16} />
+                  <Camera size={15} />
                   <span>
                     {isProcessingPhoto && activePhotoFieldRef.current === q.id
                       ? 'Saving…'
@@ -771,9 +834,9 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                   type="button"
                   disabled={isProcessingPhoto}
                   onClick={() => triggerPhotoPicker(q.id, 'gallery')}
-                  className="min-h-[46px] px-3 rounded-xl glass-subtle text-[var(--text-primary)] hover:bg-white/80 dark:hover:bg-white/10 flex items-center justify-center gap-2 text-xs font-semibold cursor-pointer active:scale-[0.98]"
+                  className="min-h-[44px] px-3 rounded-2xl glass-subtle text-[var(--text-primary)] flex items-center justify-center gap-2 text-xs font-semibold cursor-pointer active:scale-[0.98]"
                 >
-                  <ImageIcon size={16} />
+                  <ImageIcon size={15} />
                   <span>Gallery</span>
                 </button>
               </div>
@@ -800,7 +863,7 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
             {newProductsList.map((prod, idx) => (
               <div
                 key={`${prod.np_brand}-${idx}`}
-                className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl glass-subtle"
+                className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl glass-subtle"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   {prod.np_photo && photoPreviews[prod.np_photo] && (
@@ -812,11 +875,11 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                   )}
                   <div className="min-w-0">
                     <p className="text-xs font-bold truncate text-[var(--text-primary)]">
-                      #{idx + 1} &middot;{' '}
+                      #{idx + 1} ·{' '}
                       {prod.np_brand === 'Other' ? prod.np_brand_other : prod.np_brand}
                     </p>
                     <p className="text-[11px] truncate text-[var(--text-secondary)] tabular-nums">
-                      {prod.np_subcat} &middot; {prod.np_pack} &middot; {prod.np_price} QAR
+                      {prod.np_subcat} · {prod.np_pack} · {prod.np_price} QAR
                     </p>
                   </div>
                 </div>
@@ -830,24 +893,32 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                 </button>
               </div>
             ))}
-            <p className="text-[11px] font-semibold pt-1 text-[var(--accent-primary)]">
+            <p className="text-[11px] font-semibold pt-1 text-[#008DFF] dark:text-[#00C8FF]">
               New product #{newProductsList.length + 1} (optional)
             </p>
           </div>
         )}
 
-        {visibleChildren.length > 0 && (
-          <div className="mt-3 pl-3.5 pt-2 border-t border-[var(--border-glass)] space-y-1">
-            {visibleChildren.map((child) => renderQuestionTree(child, depth + 1))}
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {visibleChildren.length > 0 && (
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={shouldReduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="mt-3 pl-3 pt-2 border-t border-[var(--border-glass)] space-y-1 overflow-hidden"
+            >
+              {visibleChildren.map((child) => renderQuestionTree(child, depth + 1))}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {isNewProductEnd && answers.np_seen === 'Yes' && (
           <div className="pt-3">
             <button
               type="button"
               onClick={handleAddAnotherNewProduct}
-              className="w-full min-h-[44px] px-3.5 rounded-xl border border-dashed border-[var(--border-glass-strong)] flex items-center justify-center gap-2 text-xs font-bold text-[var(--accent-primary)] hover:bg-[var(--accent-soft)] transition-colors cursor-pointer"
+              className="w-full min-h-[44px] px-3.5 rounded-2xl border border-dashed border-[#008DFF]/50 flex items-center justify-center gap-2 text-xs font-bold text-[#008DFF] dark:text-[#00C8FF] hover:bg-[#008DFF]/10 transition-colors cursor-pointer"
             >
               <Plus size={15} />
               <span>Add another new product</span>
@@ -859,41 +930,34 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden select-none animate-fade-in">
-      {/* Top Header */}
-      <div className="px-4 pt-3 pb-2.5 space-y-3 shrink-0">
+    <div className="flex-1 flex flex-col justify-between max-w-2xl mx-auto w-full h-full overflow-hidden select-none">
+      {/* Top Header + Progress + Floating Vision AI Capsule */}
+      <div className="px-3.5 pt-2 pb-2.5 space-y-2.5 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={handleBack}
-            className="min-h-[44px] min-w-[44px] rounded-xl glass-panel flex items-center justify-center text-[var(--text-primary)] transition-colors cursor-pointer"
+            className="w-10 h-10 rounded-full glass-panel flex items-center justify-center text-[var(--text-primary)] hover:border-[#008DFF] transition-colors cursor-pointer active:scale-95 shrink-0"
             title={blockIndex === 0 ? 'Back to shelf photos' : 'Previous block'}
+            aria-label="Back"
           >
-            <ArrowLeft size={18} />
+            <ChevronLeft size={19} />
           </button>
 
-          <div className="text-center">
-            <p className="text-[11px] font-bold tracking-wide text-[var(--accent-primary)] tabular-nums">
-              {category} &middot; Block {blockIndex + 1} of {SECTION_ORDER.length}
-            </p>
-            <h1 className="text-lg font-extrabold tracking-tight leading-tight text-[var(--text-primary)]">
-              {currentSectionMeta?.name}
+          <div className="text-center min-w-0">
+            <h1 className="text-base font-extrabold tracking-tight leading-tight text-[var(--text-primary)] truncate">
+              {category} Audit
             </h1>
+            <p className="text-[11px] font-bold tracking-wide text-[#008DFF] dark:text-[#00C8FF] tabular-nums">
+              {blockIndex + 1} of {SECTION_ORDER.length} · {currentSectionMeta?.name}
+            </p>
           </div>
 
-          <div className="min-w-[54px] text-right">
-            <span
-              className={`text-[11px] font-mono tabular-nums font-bold ${
-                isAiRunning ? 'text-[var(--text-secondary)]' : 'text-[var(--accent-primary)]'
-              }`}
-            >
-              {isAiRunning ? `AI ${aiProgressPercent}%` : 'AI ready'}
-            </span>
-          </div>
+          <div className="w-10 shrink-0" />
         </div>
 
-        {/* 5-Segment Block Indicator */}
-        <div className="grid grid-cols-5 gap-1.5" role="tablist" aria-label="Questionnaire blocks">
+        {/* 5-Segment Block Progress Bar */}
+        <div className="grid grid-cols-5 gap-1.5" role="tablist" aria-label="Questionnaire sections">
           {SECTION_ORDER.map((secId, idx) => {
             const isActive = idx === blockIndex;
             const isPast = idx < blockIndex;
@@ -907,27 +971,41 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
                 title={SECTIONS[secId]?.name}
                 className={`h-1.5 rounded-full transition-all ${
                   isActive
-                    ? 'bg-[var(--accent-primary)]'
+                    ? 'bg-[#00C8FF] shadow-[0_0_8px_#00C8FF]'
                     : isPast
-                    ? 'bg-[var(--accent-primary)]/45'
+                    ? 'bg-[#007AFF]'
                     : isDark
-                    ? 'bg-white/10'
-                    : 'bg-[#084C41]/12'
+                    ? 'bg-[#104878]/50'
+                    : 'bg-[#0066FF]/15'
                 } ${canTap ? 'cursor-pointer' : 'cursor-default'}`}
               />
             );
           })}
         </div>
+
+        {/* Concurrent Vision AI Status Capsule */}
+        <VisionAiStatusCapsule
+          isAiRunning={isAiRunning}
+          hasError={hasAiError}
+          progressPercent={aiProgressPercent}
+          onRetryAi={onRetryAi}
+        />
       </div>
 
       {/* Scrollable 1-Block Form Sheet */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto px-4 pt-1 pb-4 no-scrollbar"
+        className="flex-1 overflow-y-auto px-3.5 pt-0.5 pb-4 no-scrollbar"
       >
-        <div className="glass-panel rounded-3xl divide-y divide-[var(--border-glass)] overflow-hidden">
+        <motion.div
+          key={currentSectionId}
+          initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, x: 10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.18 }}
+          className="glass-panel rounded-3xl divide-y divide-[var(--border-glass)] overflow-hidden"
+        >
           {rootQuestions.map((q) => renderQuestionTree(q, 0))}
-        </div>
+        </motion.div>
       </div>
 
       <input
@@ -947,9 +1025,9 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
       />
 
       {/* Sticky Thumb-Zone Bottom CTA */}
-      <div className="px-4 pt-2.5 pb-4 shrink-0 glass-nav border-t">
+      <div className="px-3.5 pt-2 pb-3 shrink-0">
         {missingFields.size > 0 && (
-          <p className="text-xs font-semibold text-rose-500 text-center pb-2">
+          <p className="text-xs font-bold text-rose-500 text-center pb-2">
             Please complete highlighted required {missingFields.size === 1 ? 'field' : 'fields'}
           </p>
         )}
@@ -957,18 +1035,16 @@ export const QuestionnaireRenderer: React.FC<QuestionnaireRendererProps> = ({
           type="button"
           disabled={isProcessingPhoto}
           onClick={handleNextBlock}
-          className={`w-full min-h-[54px] py-3.5 px-5 rounded-2xl text-sm font-bold shadow-lg hover:brightness-105 active:scale-[0.99] flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 ${
-            isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-          }`}
+          className="w-full min-h-[54px] py-3.5 px-5 rounded-full text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 active:scale-[0.97] btn-electric-blue text-white"
         >
           <span>
             {isProcessingPhoto
               ? 'Saving photo…'
-              : nextSectionMeta
-              ? `Next: ${nextSectionMeta.name}`
-              : 'View AI Results'}
+              : isLastBlock
+              ? 'Review Audit'
+              : 'Continue'}
           </span>
-          <ChevronRight size={18} />
+          <ArrowRight size={17} />
         </button>
       </div>
     </div>

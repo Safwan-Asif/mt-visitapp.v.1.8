@@ -54,9 +54,9 @@ export const JourneyProgressHUD: React.FC<JourneyProgressHUDProps> = ({ metrics 
       </div>
 
       {/* Slim Tactical Progress Track */}
-      <div className="mt-1.5 h-1.5 w-full rounded-full bg-slate-800/90 overflow-hidden border border-slate-700/50">
+      <div className="mt-1.5 h-1.5 w-full rounded-full bg-[#04152B] overflow-hidden border border-[#104878]">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-[#1685FF] via-[#38BDF8] to-[#22C55E] transition-all duration-500 ease-out"
+          className="h-full rounded-full bg-gradient-to-r from-[#0066FF] via-[#00C8FF] to-[#22C55E] transition-all duration-500 ease-out"
           style={{ width: `${Math.min(100, Math.max(0, metrics.progressPercent))}%` }}
         />
       </div>

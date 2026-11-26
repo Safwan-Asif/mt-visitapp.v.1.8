@@ -328,7 +328,8 @@ function pickScheduleDateForExecutive<T extends { date?: string; day?: string }>
 export function buildExecutiveOutletsFromLivePjp(
   execName: string,
   dataset: LivePjpDataset,
-  execRepId?: string
+  execRepId?: string,
+  audits: Record<string, CategoryAuditRecord> = {}
 ): Outlet[] {
   const cmBySap = new Map<string, SyncedCustomerMasterRecord>();
   (dataset.customerMaster || []).forEach((cm) => {
@@ -406,14 +407,37 @@ export function buildExecutiveOutletsFromLivePjp(
         ? { lat: Number(rawLat), lng: Number(rawLng) }
         : resolveDohaAreaCoords(`${outletName} ${v.area || ''} ${v.account || ''}`, idx);
 
+    const id = sap
+      ? `out-sap-${sap}`
+      : `out-pjp-${idx + 1}-${Math.abs(
+          (v.executive + rawOutletName)
+            .split('')
+            .reduce((a, b) => (a << 5) - a + b.charCodeAt(0), 0)
+        )}`;
+
+    const progress: Record<CategoryType, 'Not Started' | 'In Progress' | 'Completed'> = {
+      'Edible Oil': 'Not Started',
+      Flour: 'Not Started',
+      Pasta: 'Not Started'
+    };
+
+    CATEGORIES.forEach((cat) => {
+      const hasAudit =
+        Boolean(audits[`${id}_${cat}`]) ||
+        Boolean(sap && audits[`out-sap-${sap}_${cat}`]) ||
+        Boolean(sap && audits[`${sap}_${cat}`]);
+      if (hasAudit) progress[cat] = 'Completed';
+    });
+
+    const statuses = Object.values(progress);
+    const status: Outlet['status'] = statuses.every((s) => s === 'Completed')
+      ? 'Completed'
+      : statuses.some((s) => s === 'Completed')
+      ? 'In Progress'
+      : 'Not Started';
+
     return {
-      id: sap
-        ? `out-sap-${sap}`
-        : `out-pjp-${idx + 1}-${Math.abs(
-            (v.executive + rawOutletName)
-              .split('')
-              .reduce((a, b) => (a << 5) - a + b.charCodeAt(0), 0)
-          )}`,
+      id,
       name: outletName,
       code: sap || undefined,
       account: cm?.account || v.account || undefined,
@@ -422,12 +446,8 @@ export function buildExecutiveOutletsFromLivePjp(
       address: `${cm?.area || v.area ? `${cm?.area || v.area}, ` : ''}${
         cm?.account || v.account ? `${cm?.account || v.account}, ` : ''
       }Qatar`,
-      status: 'Not Started' as const,
-      progress: {
-        'Edible Oil': 'Not Started' as const,
-        Flour: 'Not Started' as const,
-        Pasta: 'Not Started' as const
-      },
+      status,
+      progress,
       latitude: coords.lat,
       longitude: coords.lng
     };
@@ -535,6 +555,151 @@ function estimateOosCountFromAudit(audit: CategoryAuditRecord | undefined): numb
   return oosCount;
 }
 
+export function buildAssignedOutletPoolForExecutive(params: {
+  executive: UserProfile | null;
+  dataset: LivePjpDataset;
+  appOutlets: Outlet[];
+  audits?: Record<string, CategoryAuditRecord>;
+}): Outlet[] {
+  const { executive, dataset, appOutlets, audits = {} } = params;
+  const execName = executive?.name || 'Safwan Asif';
+  const execRepId = executive?.repId;
+
+  const cmBySap = new Map<string, SyncedCustomerMasterRecord>();
+  (dataset.customerMaster || []).forEach((cm) => {
+    const sap = normalizeSapCode(cm.sapCode);
+    if (sap) cmBySap.set(sap, cm);
+  });
+
+  const existingBySap = new Map<string, Outlet>();
+  appOutlets.forEach((o) => {
+    const sap = normalizeSapCode(
+      o.code || (o.id.startsWith('out-sap-') ? o.id.replace('out-sap-', '') : '')
+    );
+    if (sap && !existingBySap.has(sap)) {
+      existingBySap.set(sap, o);
+    }
+  });
+
+  const rawAssigns = (dataset.assignments || []).filter(
+    (a) =>
+      a.isActive &&
+      matchesExecutiveIdentity(a.executive, a.repId, execName, execRepId)
+  );
+  const months = Array.from(new Set(rawAssigns.map((a) => a.month).filter(Boolean))).sort();
+  const activeMonth = months.length > 0 ? months[months.length - 1] : '';
+  const execAssigns = activeMonth
+    ? rawAssigns.filter((a) => a.month === activeMonth)
+    : rawAssigns;
+
+  const pool: Outlet[] = [...appOutlets];
+  const seenKeys = new Set<string>();
+  appOutlets.forEach((o) => {
+    const sap = normalizeSapCode(o.code);
+    seenKeys.add(sap ? `sap:${sap}` : `id:${o.id}`);
+  });
+
+  const pushCandidate = (candidate: {
+    sapCode?: string;
+    name: string;
+    account?: string;
+    branch: string;
+    address: string;
+    latitude?: number | null;
+    longitude?: number | null;
+  }, idx: number) => {
+    const sap = normalizeSapCode(candidate.sapCode);
+    const key = sap ? `sap:${sap}` : `name:${candidate.name.trim().toLowerCase()}`;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    const match = sap ? existingBySap.get(sap) : undefined;
+    if (match) {
+      pool.push(match);
+      return;
+    }
+
+    const id = sap ? `out-sap-${sap}` : `out-pool-${idx + 1}`;
+    const progress: Record<CategoryType, 'Not Started' | 'In Progress' | 'Completed'> = {
+      'Edible Oil': 'Not Started',
+      Flour: 'Not Started',
+      Pasta: 'Not Started'
+    };
+
+    CATEGORIES.forEach((cat) => {
+      const hasAudit =
+        Boolean(audits[`${id}_${cat}`]) ||
+        Boolean(sap && audits[`out-sap-${sap}_${cat}`]) ||
+        Boolean(sap && audits[`${sap}_${cat}`]);
+      if (hasAudit) progress[cat] = 'Completed';
+    });
+
+    const statuses = Object.values(progress);
+    const status: Outlet['status'] = statuses.every((s) => s === 'Completed')
+      ? 'Completed'
+      : statuses.some((s) => s === 'Completed')
+      ? 'In Progress'
+      : 'Not Started';
+
+    const coords = !isSyntheticOrOffshoreCoord(candidate.latitude ?? undefined, candidate.longitude ?? undefined)
+      ? { lat: Number(candidate.latitude), lng: Number(candidate.longitude) }
+      : resolveDohaAreaCoords(`${candidate.name} ${candidate.branch} ${candidate.address}`, idx);
+
+    pool.push({
+      id,
+      name: candidate.name,
+      code: candidate.sapCode || undefined,
+      account: candidate.account || undefined,
+      branch: candidate.branch || 'Doha',
+      sequence: 'Assigned',
+      address: candidate.address || `${candidate.branch || 'Doha'}, Qatar`,
+      status,
+      progress,
+      latitude: coords.lat,
+      longitude: coords.lng
+    });
+  };
+
+  execAssigns.forEach((a, idx) => {
+    const sap = normalizeSapCode(a.sapCode);
+    const cm = cmBySap.get(sap);
+    if (!cm) return;
+    pushCandidate(
+      {
+        sapCode: cm.sapCode,
+        name: cm.custName,
+        account: cm.account,
+        branch: cm.branch || cm.area || 'Doha',
+        address: cm.area ? `${cm.area}, Qatar` : 'Doha, Qatar',
+        latitude: cm.latitude,
+        longitude: cm.longitude
+      },
+      idx
+    );
+  });
+
+  if (execAssigns.length === 0) {
+    (dataset.masterOutlets || [])
+      .filter((m) => matchesExecutiveIdentity(m.executive, m.repId, execName, execRepId))
+      .forEach((m, idx) => {
+        pushCandidate(
+          {
+            sapCode: m.code,
+            name: m.rawName || m.name,
+            account: m.account,
+            branch: m.branch || 'Doha',
+            address: m.address || `${m.branch || 'Doha'}, Qatar`,
+            latitude: m.latitude,
+            longitude: m.longitude
+          },
+          idx
+        );
+      });
+  }
+
+  return pool;
+}
+
 /**
  * Builds live GeoIntel MapOutlet[] from:
  *  - Sheet 1: Executive_Assignments + Customer_Master (exact GPS coords) + PJP_Schedule (today's stops)
@@ -546,8 +711,9 @@ export function buildGeoIntelMapOutlets(params: {
   dataset: LivePjpDataset;
   appOutlets: Outlet[];
   audits: Record<string, CategoryAuditRecord>;
+  useCustomAppRoute?: boolean;
 }): MapOutlet[] {
-  const { executive, dataset, appOutlets, audits } = params;
+  const { executive, dataset, appOutlets, audits, useCustomAppRoute = false } = params;
   const execName = executive?.name || 'Safwan Asif';
   const execRepId = executive?.repId;
 
@@ -569,7 +735,7 @@ export function buildGeoIntelMapOutlets(params: {
     ? rawAssigns.filter((a) => a.month === activeMonth)
     : rawAssigns;
 
-  // Determine active schedule day & stop order
+  // Determine active schedule day & stop order (either user's saved PJP custom route or live sheet PJP_Schedule)
   const execScheduleAll = (dataset.scheduleRows || []).filter((s) =>
     matchesExecutiveIdentity(s.executive, s.repId, execName, execRepId)
   );
@@ -579,14 +745,25 @@ export function buildGeoIntelMapOutlets(params: {
     : execScheduleAll;
 
   const schedOrderBySap = new Map<string, number>();
-  [...todaySched]
-    .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))
-    .forEach((s, idx) => {
-      const sap = normalizeSapCode(s.sapCode);
+  if (useCustomAppRoute) {
+    appOutlets.forEach((o, idx) => {
+      const sap = normalizeSapCode(
+        o.code || (o.id.startsWith('out-sap-') ? o.id.replace('out-sap-', '') : '')
+      );
       if (sap && !schedOrderBySap.has(sap)) {
-        schedOrderBySap.set(sap, Number(s.visitOrder) || idx + 1);
+        schedOrderBySap.set(sap, idx + 1);
       }
     });
+  } else {
+    [...todaySched]
+      .sort((a, b) => (a.visitOrder ?? 999) - (b.visitOrder ?? 999))
+      .forEach((s, idx) => {
+        const sap = normalizeSapCode(s.sapCode);
+        if (sap && !schedOrderBySap.has(sap)) {
+          schedOrderBySap.set(sap, Number(s.visitOrder) || idx + 1);
+        }
+      });
+  }
 
   // Map local appOutlets by SAP code and ID for fast status/audit merge
   const appBySap = new Map<string, Outlet>();
@@ -839,7 +1016,7 @@ export function buildGeoIntelMapOutlets(params: {
       visitStatus: allCompleted ? 'completed' : 'planned',
       healthStatus: 'healthy',
       scheduledForToday: true,
-      visitOrder: null,
+      visitOrder: useCustomAppRoute ? idx + 1 : null,
       sosScore: 0,
       previousSosScore: 0,
       flourSosPct: 0,
@@ -968,3 +1145,131 @@ export function summarizeSapPlanogramMatches(
     matchedSapCodes
   };
 }
+
+export interface SavedCustomPjpRoute {
+  date: string; // YYYY-MM-DD in Asia/Qatar
+  orderedIds: string[];
+  notice?: string;
+  totalDistanceMeters?: number;
+  totalDurationSeconds?: number;
+  legs?: OptimizedRouteLeg[];
+}
+
+export function getTodayDohaDateKey(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Qatar',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  } catch {
+    const now = new Date();
+    const dohaMs = now.getTime() + 3 * 60 * 60 * 1000;
+    return new Date(dohaMs).toISOString().slice(0, 10);
+  }
+}
+
+export function loadTodayCustomPjpRoute(username?: string): SavedCustomPjpRoute | null {
+  if (!username) return null;
+  const key = `mta_custom_pjp_${username}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const todayKey = getTodayDohaDateKey();
+
+    // Legacy boolean flag ('1') has no date stamp — expire it cleanly so schedule resets properly
+    if (raw === '1') {
+      localStorage.removeItem(key);
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<SavedCustomPjpRoute>;
+    if (
+      parsed &&
+      parsed.date === todayKey &&
+      Array.isArray(parsed.orderedIds) &&
+      parsed.orderedIds.length > 0
+    ) {
+      return {
+        date: parsed.date,
+        orderedIds: parsed.orderedIds.map((id) => String(id)),
+        notice: typeof parsed.notice === 'string' ? parsed.notice : undefined,
+        totalDistanceMeters:
+          typeof parsed.totalDistanceMeters === 'number' ? parsed.totalDistanceMeters : undefined,
+        totalDurationSeconds:
+          typeof parsed.totalDurationSeconds === 'number' ? parsed.totalDurationSeconds : undefined,
+        legs: Array.isArray(parsed.legs) ? parsed.legs : undefined
+      };
+    }
+
+    // Expired from a previous Doha calendar date -> auto-reset
+    localStorage.removeItem(key);
+    return null;
+  } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+    return null;
+  }
+}
+
+export function saveTodayCustomPjpRoute(
+  username: string | undefined,
+  payload: Omit<SavedCustomPjpRoute, 'date'> & { date?: string }
+): void {
+  if (!username) return;
+  try {
+    const record: SavedCustomPjpRoute = {
+      ...payload,
+      date: payload.date || getTodayDohaDateKey()
+    };
+    localStorage.setItem(`mta_custom_pjp_${username}`, JSON.stringify(record));
+  } catch {
+    // Ignore storage quota warnings
+  }
+}
+
+export function clearTodayCustomPjpRoute(username?: string): void {
+  if (!username) return;
+  try {
+    localStorage.removeItem(`mta_custom_pjp_${username}`);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function applySavedRouteOrder(scheduledOutlets: Outlet[], orderedIds: string[]): Outlet[] {
+  if (!orderedIds || orderedIds.length === 0 || scheduledOutlets.length === 0) {
+    return scheduledOutlets;
+  }
+
+  const byId = new Map<string, Outlet>();
+  scheduledOutlets.forEach((o) => byId.set(o.id, o));
+
+  const seen = new Set<string>();
+  const ordered: Outlet[] = [];
+
+  orderedIds.forEach((id) => {
+    const match = byId.get(id);
+    if (match && !seen.has(match.id)) {
+      seen.add(match.id);
+      ordered.push(match);
+    }
+  });
+
+  // Append any newly added scheduled stops not yet in orderedIds
+  scheduledOutlets.forEach((o) => {
+    if (!seen.has(o.id)) {
+      seen.add(o.id);
+      ordered.push(o);
+    }
+  });
+
+  const total = ordered.length;
+  return ordered.map((o, idx) => ({
+    ...o,
+    sequence: `${idx + 1} of ${total}`
+  }));
+}
+

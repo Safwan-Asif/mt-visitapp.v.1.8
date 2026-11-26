@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LogOut, Sun, Moon } from 'lucide-react';
 import { UserProfile, ScreenType, Outlet, CategoryType, CategoryAuditRecord, PlanogramRecord } from './types';
 import { INITIAL_OUTLETS, getInitialOutletsForExecutive, MasterOutletOption } from './constants';
@@ -25,7 +25,14 @@ import {
   fetchLivePjpData,
   getCachedLivePjpData,
   buildExecutiveOutletsFromLivePjp,
-  reconcileOutletsWithLivePjp
+  buildAssignedOutletPoolForExecutive,
+  reconcileOutletsWithLivePjp,
+  getTodayDohaDateKey,
+  loadTodayCustomPjpRoute,
+  saveTodayCustomPjpRoute,
+  clearTodayCustomPjpRoute,
+  applySavedRouteOrder,
+  OptimizedRouteLeg
 } from './services/pjpService';
 import { PjpVisitRow } from './data/pjpMasterData';
 
@@ -149,11 +156,14 @@ export default function App() {
     () => getCachedLivePjpData().visits
   );
   const [isSyncingMatch, setIsSyncingMatch] = useState<boolean>(false);
+  const [isCustomPjpRoute, setIsCustomPjpRoute] = useState<boolean>(false);
+  const [customRouteDate, setCustomRouteDate] = useState<string | null>(null);
 
   const syncPjpAndPlanograms = async (
     execName?: string,
     execRepId?: string,
-    auditsSnapshot?: Record<string, CategoryAuditRecord>
+    auditsSnapshot?: Record<string, CategoryAuditRecord>,
+    forceReconcileCustom: boolean = false
   ) => {
     setIsSyncingMatch(true);
     try {
@@ -168,9 +178,33 @@ export default function App() {
 
       if (execName) {
         const activeAudits = auditsSnapshot || audits;
-        setOutlets((prev) =>
-          reconcileOutletsWithLivePjp(prev, execName, livePjp, execRepId, activeAudits)
-        );
+        const savedToday = !forceReconcileCustom
+          ? loadTodayCustomPjpRoute(user?.username)
+          : null;
+
+        if (forceReconcileCustom || !savedToday) {
+          setIsCustomPjpRoute(false);
+          setCustomRouteDate(null);
+          if (forceReconcileCustom) {
+            clearTodayCustomPjpRoute(user?.username);
+          }
+          setOutlets((prev) =>
+            reconcileOutletsWithLivePjp(prev, execName, livePjp, execRepId, activeAudits)
+          );
+        } else {
+          setIsCustomPjpRoute(true);
+          setCustomRouteDate(savedToday.date);
+          setOutlets((prev) => {
+            const reconciled = reconcileOutletsWithLivePjp(
+              prev,
+              execName,
+              livePjp,
+              execRepId,
+              activeAudits
+            );
+            return applySavedRouteOrder(reconciled, savedToday.orderedIds);
+          });
+        }
       }
     } catch {
       // Non-fatal offline cache fallback
@@ -178,6 +212,34 @@ export default function App() {
       setIsSyncingMatch(false);
     }
   };
+
+  // Auto-reset optimised PJP sequence automatically when Doha calendar day rolls over
+  useEffect(() => {
+    if (!user) return;
+    const checkDayRollover = () => {
+      const todayKey = getTodayDohaDateKey();
+      if (isCustomPjpRoute && customRouteDate && customRouteDate !== todayKey) {
+        clearTodayCustomPjpRoute(user.username);
+        setIsCustomPjpRoute(false);
+        setCustomRouteDate(null);
+        setOutlets((prev) =>
+          reconcileOutletsWithLivePjp(prev, user.name, livePjpDataset, user.repId, audits)
+        );
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') checkDayRollover();
+    };
+    window.addEventListener('focus', checkDayRollover);
+    document.addEventListener('visibilitychange', onVisibility);
+    const interval = window.setInterval(checkDayRollover, 60 * 1000);
+    return () => {
+      window.removeEventListener('focus', checkDayRollover);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(interval);
+    };
+  }, [user, isCustomPjpRoute, customRouteDate, livePjpDataset, audits]);
 
   useEffect(() => {
     if (user?.username) {
@@ -234,10 +296,30 @@ export default function App() {
       const cachedPjp = getCachedLivePjpData();
       const savedUserOutlets = localStorage.getItem(userOutletsKey);
       const parsedSaved: Outlet[] = savedUserOutlets ? JSON.parse(savedUserOutlets) : [];
+      const savedTodayRoute = loadTodayCustomPjpRoute(userProfile.username);
       const hasLiveCache =
         (cachedPjp.scheduleRows?.length || 0) > 0 || (cachedPjp.visits?.length || 0) > 0;
 
-      if (hasLiveCache) {
+      if (savedTodayRoute && hasLiveCache) {
+        setIsCustomPjpRoute(true);
+        setCustomRouteDate(savedTodayRoute.date);
+        const reconciled = reconcileOutletsWithLivePjp(
+          Array.isArray(parsedSaved) ? parsedSaved : [],
+          userProfile.name,
+          cachedPjp,
+          userProfile.repId,
+          parsedAudits
+        );
+        const ordered = applySavedRouteOrder(reconciled, savedTodayRoute.orderedIds);
+        setOutlets(ordered);
+        safeSetLocalStorage(userOutletsKey, JSON.stringify(ordered));
+      } else if (savedTodayRoute && Array.isArray(parsedSaved) && parsedSaved.length > 0) {
+        setIsCustomPjpRoute(true);
+        setCustomRouteDate(savedTodayRoute.date);
+        setOutlets(applySavedRouteOrder(parsedSaved, savedTodayRoute.orderedIds));
+      } else if (hasLiveCache) {
+        setIsCustomPjpRoute(false);
+        setCustomRouteDate(null);
         const reconciled = reconcileOutletsWithLivePjp(
           Array.isArray(parsedSaved) ? parsedSaved : [],
           userProfile.name,
@@ -251,11 +333,17 @@ export default function App() {
         Array.isArray(parsedSaved) &&
         parsedSaved.some((o) => o.id.startsWith('out-sap-') || o.isUnmapped)
       ) {
+        setIsCustomPjpRoute(false);
+        setCustomRouteDate(null);
         setOutlets(parsedSaved);
       } else {
+        setIsCustomPjpRoute(false);
+        setCustomRouteDate(null);
         setOutlets(getInitialOutletsForExecutive(userProfile.name));
       }
     } catch {
+      setIsCustomPjpRoute(false);
+      setCustomRouteDate(null);
       setOutlets(getInitialOutletsForExecutive(userProfile.name));
     }
 
@@ -266,7 +354,7 @@ export default function App() {
     setActiveTab('map');
     setCurrentScreen('PJP');
 
-    syncPjpAndPlanograms(userProfile.name, userProfile.repId, parsedAudits);
+    syncPjpAndPlanograms(userProfile.name, userProfile.repId, parsedAudits, false);
   };
 
   const handleLogout = () => {
@@ -404,13 +492,60 @@ export default function App() {
     setOutlets((prev) => [newOutlet, ...prev]);
   };
 
+  const handleSaveCustomRoute = (
+    nextOutlets: Outlet[],
+    meta?: {
+      notice?: string;
+      totalDistanceMeters?: number;
+      totalDurationSeconds?: number;
+      legs?: OptimizedRouteLeg[];
+    }
+  ) => {
+    const todayKey = getTodayDohaDateKey();
+    setOutlets(nextOutlets);
+    setIsCustomPjpRoute(true);
+    setCustomRouteDate(todayKey);
+    if (user?.username) {
+      saveTodayCustomPjpRoute(user.username, {
+        date: todayKey,
+        orderedIds: nextOutlets.map((o) => o.id),
+        notice: meta?.notice,
+        totalDistanceMeters: meta?.totalDistanceMeters,
+        totalDurationSeconds: meta?.totalDurationSeconds,
+        legs: meta?.legs
+      });
+      safeSetLocalStorage(`mta_outlets_${user.username}`, JSON.stringify(nextOutlets));
+    }
+    safeSetLocalStorage('mta_outlets', JSON.stringify(nextOutlets));
+  };
+
+  const handleResetCustomRoute = () => {
+    clearTodayCustomPjpRoute(user?.username);
+    setIsCustomPjpRoute(false);
+    setCustomRouteDate(null);
+    if (user) {
+      const restored = reconcileOutletsWithLivePjp(
+        outlets,
+        user.name,
+        livePjpDataset,
+        user.repId,
+        audits
+      );
+      setOutlets(restored);
+      safeSetLocalStorage(`mta_outlets_${user.username}`, JSON.stringify(restored));
+    }
+  };
+
   const handleResetData = () => {
     const defaultOutlets = user
       ? buildExecutiveOutletsFromLivePjp(user.name, livePjpDataset, user.repId)
       : INITIAL_OUTLETS;
+    setIsCustomPjpRoute(false);
+    setCustomRouteDate(null);
     setOutlets(defaultOutlets);
     setAudits({});
     if (user?.username) {
+      clearTodayCustomPjpRoute(user.username);
       localStorage.removeItem(`mta_outlets_${user.username}`);
       localStorage.removeItem(`mta_audits_${user.username}`);
     }
@@ -425,6 +560,14 @@ export default function App() {
     setCurrentScreen('PJP');
   };
 
+  const assignedOutletPool = useMemo(
+    () =>
+      user
+        ? buildExecutiveOutletsFromLivePjp(user.name, livePjpDataset, user.repId, audits)
+        : outlets,
+    [user, livePjpDataset, outlets, audits]
+  );
+
   const isAuthenticated = Boolean(user) && currentScreen !== 'LOGIN';
   const isActiveAudit = currentScreen === 'CAMERA_WORKFLOW' || isFinishingOutlet;
   const requestsCount = 0; // Hidden on bar until requests module ships
@@ -432,7 +575,7 @@ export default function App() {
   return (
     <div
       className={`h-[100dvh] w-full overflow-hidden flex flex-col relative antialiased select-none transition-colors duration-300 ${
-        isDark ? 'bg-[#0B110F] text-[#ECFDF5]' : 'bg-[#F5F4EF] text-[#0F1B17]'
+        isDark ? 'bg-[#020D1F] text-[#F1F5FF]' : 'bg-[#F4F7FB] text-[#0B1D36]'
       }`}
     >
       {isMapsQuotaExceeded && (
@@ -453,15 +596,15 @@ export default function App() {
       )}
 
       <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden relative">
-      {/* Subtle Ambient Frosted Mesh Radiance */}
+      {/* Deep Navy / Electric Blue Ambient Radiance */}
       <div
         className={`fixed -top-24 -left-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isDark ? 'bg-emerald-900/20' : 'bg-[#084C41]/8'
+          isDark ? 'bg-[#0066FF]/16' : 'bg-[#0066FF]/8'
         }`}
       />
       <div
         className={`fixed -bottom-28 -right-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isDark ? 'bg-teal-900/15' : 'bg-emerald-600/8'
+          isDark ? 'bg-[#00C8FF]/12' : 'bg-[#008DFF]/8'
         }`}
       />
 
@@ -478,15 +621,11 @@ export default function App() {
 
       {/* Main Content Shell */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
-        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits, and full-viewport Map View) */}
-        {isAuthenticated && !isActiveAudit && activeTab !== 'map' && (
+        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits, Map View, and dedicated PJP Route header) */}
+        {isAuthenticated && !isActiveAudit && activeTab !== 'map' && activeTab !== 'pjp' && (
           <header className="md:hidden h-12 px-4 glass-nav border-b flex items-center justify-between shrink-0 z-20">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div
-                className={`w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-extrabold shrink-0 ${
-                  isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                }`}
-              >
+              <div className="w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-extrabold shrink-0 bg-[#0066FF] text-[#F1F5FF] shadow-[0_0_12px_rgba(0,102,255,0.45)]">
                 QFI
               </div>
               <h1 className="text-sm font-extrabold tracking-tight truncate text-[var(--text-primary)]">
@@ -523,11 +662,13 @@ export default function App() {
 
           {isAuthenticated && currentScreen === 'CAMERA_WORKFLOW' && selectedOutlet && selectedCategory && (
             <CameraWorkflowScreen
+              key={`${selectedOutlet.id}_${selectedCategory}`}
               outlet={selectedOutlet}
               category={selectedCategory}
               existingAudit={audits[`${selectedOutlet.id}_${selectedCategory}`]}
               onSaveAudit={handleSaveAudit}
               onBack={() => setCurrentScreen('OUTLET_OVERVIEW')}
+              onSelectNextCategory={(nextCategory) => setSelectedCategory(nextCategory)}
               userProfile={user || undefined}
             />
           )}
@@ -537,6 +678,11 @@ export default function App() {
               outlet={selectedOutlet}
               audits={audits}
               planograms={planograms}
+              isLastPendingOutlet={
+                outlets.filter(
+                  (o) => o.id !== selectedOutlet.id && o.status !== 'Completed'
+                ).length === 0
+              }
               onFinishScreenChange={setIsFinishingOutlet}
               onBack={() => {
                 setIsFinishingOutlet(false);
@@ -610,6 +756,7 @@ export default function App() {
                   appOutlets={outlets}
                   audits={audits}
                   livePjpDataset={livePjpDataset}
+                  useCustomAppRoute={isCustomPjpRoute}
                   isSyncingPjp={isSyncingMatch}
                   onStartOutletVisit={(mapOutlet) => {
                     const lowerName = mapOutlet.name.toLowerCase();
@@ -691,11 +838,19 @@ export default function App() {
               {activeTab === 'pjp' && (
                 <PJPScreen
                   outlets={outlets}
+                  assignedPool={assignedOutletPool}
+                  audits={audits}
+                  livePjpDataset={livePjpDataset}
                   executive={user}
                   planograms={planograms}
                   isSyncingMatch={isSyncingMatch}
-                  onRefreshMatch={() => syncPjpAndPlanograms(user?.name, user?.repId, audits)}
+                  onRefreshMatch={() => syncPjpAndPlanograms(user?.name, user?.repId, audits, true)}
                   requestedFilter={pjpRequestedFilter}
+                  isCustomRoute={isCustomPjpRoute}
+                  onResetCustomRoute={handleResetCustomRoute}
+                  onSaveCustomRoute={handleSaveCustomRoute}
+                  onBackToGeoIntel={() => handleSelectTab('map')}
+                  onViewDailySummary={() => handleSelectTab('today')}
                   onSelectOutlet={(outlet) => {
                     setOutletOriginTab('pjp');
                     setSelectedOutlet(outlet);

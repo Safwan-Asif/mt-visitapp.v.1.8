@@ -58,7 +58,7 @@ export const DesktopBottomBar: React.FC<DesktopBottomBarProps> = ({
       )}
 
       {/* Outlet Priority Overview Segmented Progress Bar */}
-      <div className="marviz-glass-strong rounded-2xl px-3.5 py-2 w-[290px] lg:w-[320px] text-white pointer-events-auto">
+      <div className="hidden xl:block marviz-glass-strong rounded-2xl px-3.5 py-2 w-[280px] 2xl:w-[320px] text-white pointer-events-auto">
         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-1.5">
           <span className="text-slate-200">OUTLET PRIORITY OVERVIEW</span>
           <span className="text-slate-400 tabular-nums">{healthBreakdown.total} OUTLETS</span>

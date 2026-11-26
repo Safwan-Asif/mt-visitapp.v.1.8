@@ -93,7 +93,7 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
                     onClick={() => onSelectBaseStyle(style.id)}
                     className={`min-h-[34px] px-1.5 rounded-lg text-[10.5px] font-semibold transition-all cursor-pointer ${
                       selected
-                        ? 'bg-[#1685FF] text-white shadow-sm'
+                        ? 'bg-[#0066FF] text-white shadow-sm'
                         : 'text-slate-300 hover:text-white hover:bg-white/5'
                     }`}
                   >
@@ -129,7 +129,7 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
               </div>
               <span
                 className={`w-9 h-5 rounded-full p-0.5 transition-colors flex items-center shrink-0 ${
-                  showJourneyPlan ? 'bg-[#1685FF]' : 'bg-slate-700'
+                  showJourneyPlan ? 'bg-[#0066FF]' : 'bg-slate-700'
                 }`}
               >
                 <span
@@ -157,7 +157,7 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
                   onClick={() => onSelectLayer(layer.id)}
                   className={`w-full min-h-[38px] px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left transition-colors cursor-pointer ${
                     selected
-                      ? 'bg-[#1685FF]/22 border border-sky-400/50 text-white'
+                      ? 'bg-[#0066FF]/22 border border-sky-400/50 text-white'
                       : 'border border-transparent text-slate-300 hover:bg-white/5 hover:text-white'
                   }`}
                 >
@@ -170,7 +170,7 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
                     </div>
                   </div>
                   {selected && (
-                    <span className="w-4 h-4 rounded-full bg-[#1685FF] flex items-center justify-center shrink-0">
+                    <span className="w-4 h-4 rounded-full bg-[#0066FF] flex items-center justify-center shrink-0">
                       <Check size={10} strokeWidth={3} className="text-white" />
                     </span>
                   )}
@@ -189,7 +189,7 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
         aria-label="Toggle map layers"
         className={`min-h-[44px] px-3.5 rounded-2xl marviz-glass flex items-center gap-2 text-white transition-all cursor-pointer active:scale-95 ${
           isOpen
-            ? 'border-sky-400/70 bg-[#1685FF]/25'
+            ? 'border-sky-400/70 bg-[#0066FF]/25'
             : 'hover:border-sky-400/50'
         }`}
       >

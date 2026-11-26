@@ -245,9 +245,9 @@ export const DohaTacticalMap: React.FC<DohaTacticalMapProps> = ({
             />
             <defs>
               <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#1685FF" />
-                <stop offset="50%" stopColor="#10B981" />
-                <stop offset="100%" stopColor="#3B82F6" />
+                <stop offset="0%" stopColor="#0066FF" />
+                <stop offset="50%" stopColor="#008DFF" />
+                <stop offset="100%" stopColor="#00C8FF" />
               </linearGradient>
             </defs>
           </svg>

@@ -4,38 +4,46 @@
 
 :root {
   --bg-canvas: #F4F7FB;
-  --bg-glass: rgba(255, 255, 255, 0.85);
+  --bg-secondary: #EBF1FA;
+  --bg-glass: rgba(255, 255, 255, 0.88);
   --bg-glass-strong: rgba(255, 255, 255, 0.96);
-  --bg-glass-subtle: rgba(255, 255, 255, 0.65);
-  --bg-nav: rgba(255, 255, 255, 0.92);
-  --border-glass: #DCE5F0;
-  --border-glass-strong: #CBD5E1;
-  --text-primary: #142338;
-  --text-secondary: #475569;
-  --text-muted: #94A3B8;
-  --accent-primary: #0878E8;
-  --accent-primary-hover: #0260C2;
-  --accent-soft: rgba(8, 120, 232, 0.10);
-  --badge-alert: #DC2626;
-  --glass-shadow: 0 10px 30px -10px rgba(14, 116, 144, 0.08), 0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
+  --bg-glass-subtle: rgba(235, 241, 250, 0.78);
+  --bg-nav: rgba(255, 255, 255, 0.94);
+  --border-glass: #D5E2F2;
+  --border-glass-strong: #008DFF;
+  --text-primary: #0B1D36;
+  --text-secondary: #475E7D;
+  --text-muted: #647D9E;
+  --accent-primary: #0066FF;
+  --accent-cyan: #008DFF;
+  --accent-primary-hover: #0052CC;
+  --accent-soft: rgba(0, 102, 255, 0.10);
+  --badge-alert: #EF4444;
+  --warning-amber: #FFB800;
+  --success-green: #22C55E;
+  --glass-shadow: 0 10px 30px -10px rgba(2, 13, 31, 0.09), 0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
 }
 
 .dark {
-  --bg-canvas: #071421;
-  --bg-glass: rgba(18, 35, 55, 0.78);
-  --bg-glass-strong: rgba(18, 35, 55, 0.92);
-  --bg-glass-subtle: rgba(18, 35, 55, 0.50);
-  --bg-nav: rgba(10, 19, 33, 0.88);
-  --border-glass: rgba(59, 130, 246, 0.18);
-  --border-glass-strong: rgba(59, 130, 246, 0.32);
-  --text-primary: #F3F6FA;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
-  --accent-primary: #1685FF;
-  --accent-primary-hover: #3B82F6;
-  --accent-soft: rgba(22, 133, 255, 0.16);
+  --bg-canvas: #020D1F;
+  --bg-secondary: #04152B;
+  --bg-glass: rgba(6, 28, 53, 0.84);
+  --bg-glass-strong: rgba(11, 37, 66, 0.94);
+  --bg-glass-subtle: rgba(11, 37, 66, 0.62);
+  --bg-nav: rgba(4, 21, 43, 0.92);
+  --border-glass: rgba(16, 72, 120, 0.78);
+  --border-glass-strong: rgba(0, 141, 255, 0.55);
+  --text-primary: #F1F5FF;
+  --text-secondary: #A5B8D5;
+  --text-muted: #647D9E;
+  --accent-primary: #0066FF;
+  --accent-cyan: #00C8FF;
+  --accent-primary-hover: #008DFF;
+  --accent-soft: rgba(0, 102, 255, 0.18);
   --badge-alert: #EF4444;
-  --glass-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.65), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset;
+  --warning-amber: #FFB800;
+  --success-green: #22C55E;
+  --glass-shadow: 0 16px 40px -12px rgba(2, 13, 31, 0.82), 0 1px 0 0 rgba(0, 200, 255, 0.07) inset;
 }
 
 @layer base {
@@ -45,7 +53,7 @@
   body {
     background-color: var(--bg-canvas);
     color: var(--text-primary);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
@@ -55,6 +63,39 @@
 .font-heading {
   font-family: 'Barlow Condensed', sans-serif;
   letter-spacing: 0.02em;
+}
+
+.btn-electric-blue {
+  background: linear-gradient(135deg, #00B7FF 0%, #007AFF 45%, #0054E9 100%);
+  color: #F1F5FF;
+  box-shadow: 0 10px 28px -6px rgba(0, 122, 255, 0.52), 0 0 0 1px rgba(0, 200, 255, 0.35) inset;
+}
+.btn-electric-blue:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow: 0 14px 34px -6px rgba(0, 141, 255, 0.65), 0 0 0 1px rgba(0, 200, 255, 0.5) inset;
+}
+
+.btn-emerald-glow {
+  background: linear-gradient(135deg, #22C55E 0%, #16A34A 60%, #15803D 100%);
+  color: #FFFFFF;
+  box-shadow: 0 10px 28px -6px rgba(34, 197, 94, 0.45), 0 0 0 1px rgba(134, 239, 172, 0.35) inset;
+}
+.btn-emerald-glow:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+/* Deep Navy Atmospheric Canvas & Midnight Glass Surfaces */
+.pjp-atmospheric-canvas {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(0, 122, 255, 0.14) 0%, transparent 52%),
+    radial-gradient(circle at 82% 84%, rgba(0, 200, 255, 0.08) 0%, transparent 45%),
+    linear-gradient(180deg, #F4F7FB 0%, #EBF1FA 100%);
+}
+.dark .pjp-atmospheric-canvas {
+  background:
+    radial-gradient(circle at 50% 22%, rgba(0, 122, 255, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 18% 82%, rgba(0, 200, 255, 0.10) 0%, transparent 46%),
+    linear-gradient(180deg, #020D1F 0%, #04152B 55%, #020D1F 100%);
 }
 
 /* Frosted Glass Surface Utilities */
@@ -86,6 +127,21 @@
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-color: var(--border-glass);
+}
+
+.glass-capsule-dock {
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(24px) saturate(175%);
+  -webkit-backdrop-filter: blur(24px) saturate(175%);
+  border: 1px solid rgba(0, 102, 255, 0.20);
+  box-shadow: 0 16px 38px -10px rgba(2, 13, 31, 0.16), 0 1px 0 0 rgba(255, 255, 255, 0.95) inset;
+}
+.dark .glass-capsule-dock {
+  background: rgba(6, 24, 49, 0.78);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  border: 1px solid rgba(0, 200, 255, 0.24);
+  box-shadow: 0 18px 44px -10px rgba(0, 8, 24, 0.92), 0 0 26px -8px rgba(0, 141, 255, 0.34), 0 1px 0 0 rgba(0, 200, 255, 0.22) inset;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -180,39 +236,39 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(8, 76, 65, 0.22);
+  background: rgba(0, 102, 255, 0.24);
   border-radius: 9999px;
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.25);
+  background: rgba(0, 141, 255, 0.35);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(8, 76, 65, 0.4);
+  background: rgba(0, 102, 255, 0.45);
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(52, 211, 153, 0.45);
+  background: rgba(0, 200, 255, 0.55);
 }
 
 /* =========================================================
    MARVIZ AI — MT Field Sales Tactical Map Design Tokens
    ========================================================= */
 :root {
-  --map-glass-bg: rgba(10, 20, 36, 0.80);
-  --map-glass-strong: rgba(9, 18, 33, 0.92);
-  --map-glass-border: rgba(56, 189, 248, 0.22);
-  --map-glass-border-strong: rgba(56, 189, 248, 0.38);
-  --map-text-primary: #F1F5F9;
-  --map-text-secondary: #94A3B8;
-  --map-text-muted: #64748B;
-  --map-blue: #1D8EFF;
-  --map-cyan: #38BDF8;
-  --map-teal: #14B8A6;
+  --map-glass-bg: rgba(6, 28, 53, 0.84);
+  --map-glass-strong: rgba(11, 37, 66, 0.94);
+  --map-glass-border: rgba(16, 72, 120, 0.82);
+  --map-glass-border-strong: rgba(0, 141, 255, 0.65);
+  --map-text-primary: #F1F5FF;
+  --map-text-secondary: #A5B8D5;
+  --map-text-muted: #647D9E;
+  --map-blue: #0066FF;
+  --map-cyan: #00C8FF;
+  --map-teal: #008DFF;
   --map-green: #22C55E;
-  --map-amber: #F59E0B;
+  --map-amber: #FFB800;
   --map-red: #EF4444;
-  --map-grey: #64748B;
-  --map-cta-blue: #1685FF;
-  --map-cta-blue-hover: #0B70E6;
+  --map-grey: #647D9E;
+  --map-cta-blue: #0066FF;
+  --map-cta-blue-hover: #008DFF;
 }
 
 .marviz-glass {
@@ -220,7 +276,7 @@
   backdrop-filter: blur(18px) saturate(155%);
   -webkit-backdrop-filter: blur(18px) saturate(155%);
   border: 1px solid var(--map-glass-border);
-  box-shadow: 0 12px 32px -10px rgba(2, 8, 23, 0.72), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset;
+  box-shadow: 0 12px 32px -10px rgba(2, 13, 31, 0.8), 0 1px 0 0 rgba(0, 200, 255, 0.08) inset;
 }
 
 .marviz-glass-strong {
@@ -228,15 +284,15 @@
   backdrop-filter: blur(24px) saturate(170%);
   -webkit-backdrop-filter: blur(24px) saturate(170%);
   border: 1px solid var(--map-glass-border-strong);
-  box-shadow: 0 -10px 38px -8px rgba(2, 8, 23, 0.85), 0 1px 0 0 rgba(255, 255, 255, 0.08) inset;
+  box-shadow: 0 -10px 38px -8px rgba(2, 13, 31, 0.9), 0 1px 0 0 rgba(0, 200, 255, 0.1) inset;
 }
 
 /* Leaflet container tuning for dark satellite tactical map */
 .marviz-leaflet-container {
   width: 100%;
   height: 100%;
-  background: #06101e;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #020D1F;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   outline: none;
 }
 

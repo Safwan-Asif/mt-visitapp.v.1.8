@@ -181,10 +181,10 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const controlsBottomClass =
     sheetState === 'expanded'
-      ? 'bottom-[calc(422px+env(safe-area-inset-bottom,0px))] md:bottom-4'
+      ? 'hidden md:flex md:bottom-3 md:flex-row'
       : sheetState === 'peek'
-      ? 'bottom-[calc(216px+env(safe-area-inset-bottom,0px))] md:bottom-4'
-      : 'bottom-[calc(88px+env(safe-area-inset-bottom,0px))] md:bottom-4';
+      ? 'bottom-[calc(212px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row'
+      : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))] md:bottom-3 flex-col md:flex-row';
 
   return (
     <div className="relative w-full h-full">
@@ -219,9 +219,9 @@ export const MapView: React.FC<MapViewProps> = ({
             <Polyline
               positions={roadRouteCoords}
               pathOptions={{
-                color: '#0EA5E9',
+                color: '#0066FF',
                 weight: 10,
-                opacity: 0.30,
+                opacity: 0.34,
                 lineCap: 'round',
                 lineJoin: 'round',
                 className: 'marviz-route-glow'
@@ -230,7 +230,7 @@ export const MapView: React.FC<MapViewProps> = ({
             <Polyline
               positions={roadRouteCoords}
               pathOptions={{
-                color: '#38BDF8',
+                color: '#00C8FF',
                 weight: 4,
                 opacity: 0.95,
                 dashArray: routeSource === 'osrm' ? undefined : '10 6',
@@ -300,7 +300,7 @@ export const MapView: React.FC<MapViewProps> = ({
               <button
                 type="button"
                 onClick={onResetFilter}
-                className="mt-3 min-h-[40px] px-4 rounded-xl bg-[#1685FF] hover:bg-[#0B70E6] text-xs font-bold uppercase tracking-wider text-white cursor-pointer transition-colors"
+                className="mt-3 min-h-[40px] px-4 rounded-xl bg-[#0066FF] hover:bg-[#008DFF] text-xs font-bold uppercase tracking-wider text-[#F1F5FF] cursor-pointer transition-colors"
               >
                 Show All Outlets
               </button>
@@ -309,9 +309,9 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       )}
 
-      {/* Right-Side Floating Map Controls: Style Toggle, Zoom +/- and Re-centre GPS */}
+      {/* Floating Map Controls: Style Toggle, Zoom +/- and Re-centre GPS (Vertical on Mobile, Horizontal Dock on Desktop) */}
       <div
-        className={`absolute right-3 z-[450] flex flex-col gap-2 transition-all duration-200 ${controlsBottomClass}`}
+        className={`absolute right-3 z-[450] flex gap-2 transition-all duration-200 ${controlsBottomClass}`}
       >
         {onCycleBaseStyle && (
           <button
@@ -319,27 +319,27 @@ export const MapView: React.FC<MapViewProps> = ({
             onClick={onCycleBaseStyle}
             aria-label={`Switch map layout (current: ${activeStyleConfig.label})`}
             title={`Map Mode: ${activeStyleConfig.label} — Tap to switch`}
-            className="w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center text-sky-300 hover:text-white hover:border-sky-400/60 active:scale-95 transition-all cursor-pointer"
+            className="w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center text-[#00C8FF] hover:text-white hover:border-[#008DFF] active:scale-95 transition-all cursor-pointer"
           >
             {mapBaseStyle === 'tactical_terrain' ? (
-              <Mountain size={16} />
+              <Mountain size={15} />
             ) : mapBaseStyle === 'tactical_dark' ? (
-              <MapIcon size={16} />
+              <MapIcon size={15} />
             ) : (
-              <Globe size={16} />
+              <Globe size={15} />
             )}
-            <span className="text-[8px] font-bold uppercase tracking-tight leading-none mt-0.5 text-slate-200">
+            <span className="text-[8px] font-bold uppercase tracking-tight leading-none mt-0.5 text-[#F1F5FF]">
               {activeStyleConfig.shortLabel}
             </span>
           </button>
         )}
 
-        <div className="marviz-glass rounded-2xl flex flex-col divide-y divide-slate-700/70 overflow-hidden">
+        <div className="marviz-glass rounded-2xl flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[#104878] overflow-hidden">
           <button
             type="button"
             onClick={handleZoomIn}
             aria-label="Zoom in map"
-            className="w-11 h-11 flex items-center justify-center text-slate-100 hover:bg-white/10 active:bg-white/15 transition-colors cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-[#0B2542] active:bg-[#0066FF]/25 transition-colors cursor-pointer"
           >
             <Plus size={18} />
           </button>
@@ -347,7 +347,7 @@ export const MapView: React.FC<MapViewProps> = ({
             type="button"
             onClick={handleZoomOut}
             aria-label="Zoom out map"
-            className="w-11 h-11 flex items-center justify-center text-slate-100 hover:bg-white/10 active:bg-white/15 transition-colors cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-[#0B2542] active:bg-[#0066FF]/25 transition-colors cursor-pointer"
           >
             <Minus size={18} />
           </button>
@@ -358,7 +358,7 @@ export const MapView: React.FC<MapViewProps> = ({
           onClick={onRecenterExecutive}
           aria-label="Re-centre on current location"
           title="Re-centre on Doha executive position"
-          className="w-11 h-11 rounded-2xl marviz-glass flex items-center justify-center text-sky-300 hover:text-white hover:border-sky-400/60 active:scale-95 transition-all cursor-pointer"
+          className="w-11 h-11 rounded-2xl marviz-glass flex items-center justify-center text-[#00C8FF] hover:text-white hover:border-[#008DFF] active:scale-95 transition-all cursor-pointer"
         >
           <Crosshair size={18} />
         </button>

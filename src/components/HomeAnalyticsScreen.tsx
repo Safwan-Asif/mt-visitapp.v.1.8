@@ -248,24 +248,24 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
     }
   }, [selectedMapOutlet?.nonce, basePjpData.allOutlets, basePjpData.accounts]);
 
-  // Palette adapted to Light & Dark Glass
-  const tealColor = isDark ? '#10B981' : '#0B6B63';
-  const tealDarkText = isDark ? '#34D399' : '#0B4F4A';
-  const tealSoftBg = isDark ? 'rgba(16, 185, 129, 0.14)' : '#E3EFEC';
-  const amberColor = isDark ? '#F59E0B' : '#E0A21B';
-  const crimsonColor = isDark ? '#EF4444' : '#B3452B';
-  const neutralBarTrack = isDark ? 'rgba(255, 255, 255, 0.08)' : '#E9E7E0';
-  const competitorColor = isDark ? '#475569' : '#C9CCD2';
-  const primaryInk = isDark ? '#ECFDF5' : '#16181D';
-  const mutedInk = isDark ? '#9CAEA8' : '#5B616B';
-  const gridLineColor = isDark ? 'rgba(255, 255, 255, 0.08)' : '#EFEDE6';
-  const axisLineColor = isDark ? 'rgba(255, 255, 255, 0.16)' : '#D8D5CB';
+  // Palette adapted to Deep Navy + Electric Blue + Cyan & Light Glass
+  const tealColor = isDark ? '#00C8FF' : '#0066FF';
+  const tealDarkText = isDark ? '#00C8FF' : '#0052CC';
+  const tealSoftBg = isDark ? 'rgba(0, 102, 255, 0.16)' : '#E5F0FF';
+  const amberColor = isDark ? '#FFB800' : '#D97706';
+  const crimsonColor = isDark ? '#EF4444' : '#DC2626';
+  const neutralBarTrack = isDark ? 'rgba(16, 72, 120, 0.35)' : '#E2E8F0';
+  const competitorColor = isDark ? '#334E73' : '#CBD5E1';
+  const primaryInk = isDark ? '#F1F5FF' : '#0B1D36';
+  const mutedInk = isDark ? '#A5B8D5' : '#647D9E';
+  const gridLineColor = isDark ? 'rgba(16, 72, 120, 0.35)' : '#E2E8F0';
+  const axisLineColor = isDark ? 'rgba(16, 72, 120, 0.65)' : '#CBD5E1';
 
   const accountColorPalette = [
-    isDark ? '#10B981' : '#0B4F4A',
-    isDark ? '#2DD4BF' : '#2A9D8F',
-    isDark ? '#F59E0B' : '#E0A21B',
-    isDark ? '#94A3B8' : '#8B93A0',
+    isDark ? '#0066FF' : '#0052CC',
+    isDark ? '#00C8FF' : '#0284C7',
+    isDark ? '#FFB800' : '#D97706',
+    isDark ? '#647D9E' : '#94A3B8',
     isDark ? '#38BDF8' : '#2563EB'
   ];
 
@@ -1044,7 +1044,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
       : null;
 
   return (
-    <div className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden pb-28 md:pb-10 px-4 md:px-6 lg:px-8 pt-4 md:pt-6 animate-fade-in">
+    <div className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden pb-[calc(84px+env(safe-area-inset-bottom,0px))] md:pb-10 px-4 md:px-6 lg:px-8 pt-4 md:pt-6 animate-fade-in">
       <div className="max-w-7xl mx-auto space-y-4">
         {/* 0A. HEADER: Greeting + Sync PJP + Avatar */}
         <header className="flex items-center justify-between gap-3">
@@ -1269,10 +1269,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                   }
                   className={`min-h-[50px] md:min-h-[44px] px-0.5 sm:px-2 md:px-3 py-1.5 rounded-xl md:rounded-2xl flex flex-col md:flex-row items-center justify-center gap-1 md:gap-1.5 transition-all duration-150 cursor-pointer active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] ${
                     active
-                      ? isDark
-                        ? 'bg-[#10B981] text-[#05231C] shadow-sm font-bold'
-                        : 'bg-[#084C41] text-white shadow-sm font-bold'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.05] font-semibold'
+                      ? 'btn-electric-blue text-white font-bold'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/[0.04] dark:hover:bg-[#0B2542]/60 font-semibold'
                   }`}
                 >
                   <Icon size={16} strokeWidth={active ? 2.25 : 1.85} className="shrink-0" />
@@ -1449,7 +1447,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                     cy={metrics.salesChart.dotY}
                     r="4.5"
                     fill={tealColor}
-                    stroke={isDark ? '#0B110F' : '#FFFFFF'}
+                    stroke={isDark ? '#020D1F' : '#FFFFFF'}
                     strokeWidth="2"
                   />
                 </svg>
@@ -1880,8 +1878,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                       } ${
                         row.selected
                           ? isDark
-                            ? 'ring-2 ring-[#10B981]'
-                            : 'ring-2 ring-[#084C41]'
+                            ? 'ring-2 ring-[#008DFF]'
+                            : 'ring-2 ring-[#0066FF]'
                           : 'hover:brightness-95'
                       }`}
                     >
@@ -1961,7 +1959,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                     cy={metrics.sosTrend.dotY}
                     r="4.5"
                     fill={tealColor}
-                    stroke={isDark ? '#0B110F' : '#FFFFFF'}
+                    stroke={isDark ? '#020D1F' : '#FFFFFF'}
                     strokeWidth="2"
                   />
                 </svg>
@@ -2133,8 +2131,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                                     } ${
                                       isCellSelected
                                         ? isDark
-                                          ? 'ring-2 ring-[#ECFDF5]'
-                                          : 'ring-2 ring-[#16181D]'
+                                          ? 'ring-2 ring-[#00C8FF]'
+                                          : 'ring-2 ring-[#0066FF]'
                                         : 'hover:brightness-95'
                                     }`}
                                   >
@@ -2328,9 +2326,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                     <button
                       type="button"
                       onClick={onNavigateToPendingPjp}
-                      className={`min-h-[38px] px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
-                        isDark ? 'bg-[#10B981] text-[#05231C]' : 'bg-[#084C41] text-white'
-                      }`}
+                      className="min-h-[38px] px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer btn-electric-blue text-white"
                     >
                       <span>Start audit</span>
                       <ArrowRight size={13} />
@@ -2365,8 +2361,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                       className={`w-full min-h-[42px] px-3 py-2 rounded-xl glass-subtle flex items-center gap-3 text-left cursor-pointer transition-all ${
                         isSelected
                           ? isDark
-                            ? 'ring-2 ring-[#10B981]'
-                            : 'ring-2 ring-[#084C41]'
+                            ? 'ring-2 ring-[#008DFF]'
+                            : 'ring-2 ring-[#0066FF]'
                           : 'hover:brightness-95'
                       }`}
                     >
@@ -2572,8 +2568,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           className={`w-full min-h-[44px] px-3 py-2 rounded-xl glass-subtle flex items-center gap-3 text-left cursor-pointer transition-all ${
                             isSelected
                               ? isDark
-                                ? 'ring-2 ring-[#10B981]'
-                                : 'ring-2 ring-[#084C41]'
+                                ? 'ring-2 ring-[#008DFF]'
+                                : 'ring-2 ring-[#0066FF]'
                               : 'hover:brightness-95'
                           }`}
                         >
@@ -2718,7 +2714,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                         compareCalendarDates(cellDate, toDate) <= 0;
                       const isSelected = scheduleMetrics.activeCalDay === d;
 
-                      let bg = isDark ? 'rgba(255,255,255,0.06)' : '#ECEAE3';
+                      let bg = isDark ? 'rgba(11, 37, 66, 0.55)' : '#E2E8F0';
                       let fg = mutedInk;
                       let border = '1px solid transparent';
 
@@ -2727,16 +2723,16 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           sched.completedCount / Math.max(1, sched.plannedCount);
                         if (ratio >= 1) {
                           bg = tealColor;
-                          fg = isDark ? '#05231C' : '#FFFFFF';
+                          fg = isDark ? '#020D1F' : '#FFFFFF';
                         } else if (ratio >= 0.75) {
-                          bg = isDark ? 'rgba(16, 185, 129, 0.45)' : '#9CCFC7';
-                          fg = isDark ? '#ECFDF5' : '#16181D';
+                          bg = isDark ? 'rgba(0, 102, 255, 0.45)' : '#93C5FD';
+                          fg = isDark ? '#F1F5FF' : '#0B1D36';
                         } else {
                           bg = amberColor;
-                          fg = '#16181D';
+                          fg = '#0B1D36';
                         }
                       } else if (sched && isFuture) {
-                        bg = isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(8, 76, 65, 0.05)';
+                        bg = isDark ? 'rgba(0, 102, 255, 0.14)' : 'rgba(0, 102, 255, 0.08)';
                         fg = tealDarkText;
                         border = `1px dashed ${tealColor}`;
                       } else if (isFuture) {
@@ -2756,8 +2752,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           } ${!inRange && sched ? 'opacity-45' : 'opacity-100'} ${
                             isSelected
                               ? isDark
-                                ? 'ring-2 ring-[#ECFDF5]'
-                                : 'ring-2 ring-[#16181D]'
+                                ? 'ring-2 ring-[#00C8FF]'
+                                : 'ring-2 ring-[#0066FF]'
                               : ''
                           }`}
                         >
@@ -2888,8 +2884,8 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                           className={`w-full rounded-t transition-all ${
                             isActive
                               ? isDark
-                                ? 'ring-2 ring-[#ECFDF5]'
-                                : 'ring-2 ring-[#16181D]'
+                                ? 'ring-2 ring-[#00C8FF]'
+                                : 'ring-2 ring-[#0066FF]'
                               : 'group-hover:brightness-95'
                           }`}
                           style={{
@@ -3064,7 +3060,7 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
                         backgroundColor: dot.isLate ? amberColor : tealColor,
                         border: dot.isSelected
                           ? `2px solid ${primaryInk}`
-                          : `2px solid ${isDark ? '#0B110F' : '#FFFFFF'}`,
+                          : `2px solid ${isDark ? '#020D1F' : '#FFFFFF'}`,
                         boxSizing: 'content-box'
                       }}
                     />
