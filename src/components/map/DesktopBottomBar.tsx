@@ -21,16 +21,16 @@ export const DesktopBottomBar: React.FC<DesktopBottomBarProps> = ({
     healthBreakdown.total > 0 ? (healthBreakdown.critical / healthBreakdown.total) * 100 : 0;
 
   return (
-    <div className="hidden md:flex items-end gap-3 pointer-events-none">
+    <div className="hidden md:flex items-stretch justify-center gap-3 pointer-events-none">
       {/* Next Stop & Demo Estimate ETA */}
       {nextStop && (
         <button
           type="button"
           onClick={() => onSelectOutlet(nextStop.outlet)}
           title="Demo travel estimate — tap to focus next scheduled stop"
-          className="marviz-glass-strong rounded-2xl px-3.5 py-2 flex items-center gap-3 text-white pointer-events-auto cursor-pointer hover:border-sky-400/55 transition-colors text-left"
+          className="ov-panel-elevated rounded-2xl px-3.5 py-2 flex items-center gap-3 text-white pointer-events-auto cursor-pointer hover:border-[#00C8FF]/55 transition-colors text-left"
         >
-          <div className="flex items-center gap-2 pr-3 border-r border-slate-700/70">
+          <div className="flex items-center gap-2 pr-3 border-r border-white/10">
             <Flag size={16} className="text-slate-200 shrink-0" />
             <div>
               <div className="text-[10px] text-slate-400 leading-none">Next Stop</div>
@@ -38,7 +38,7 @@ export const DesktopBottomBar: React.FC<DesktopBottomBarProps> = ({
                 {nextStop.outlet.name}
               </div>
             </div>
-            <span className="font-heading text-[15px] font-bold text-sky-400 tabular-nums ml-1">
+            <span className="font-heading text-[15px] font-bold text-sky-400 ov-tabular ml-1">
               {nextStop.distanceKm} km
             </span>
           </div>
@@ -49,7 +49,7 @@ export const DesktopBottomBar: React.FC<DesktopBottomBarProps> = ({
               <div className="text-[10px] text-slate-400 leading-none">
                 ETA <span className="text-[9px] text-sky-300/80">(Demo Est.)</span>
               </div>
-              <div className="font-heading text-[15px] font-bold text-white tabular-nums leading-tight mt-0.5">
+              <div className="font-heading text-[15px] font-bold text-white ov-tabular leading-tight mt-0.5">
                 {nextStop.etaMinutes} min
               </div>
             </div>
@@ -58,12 +58,12 @@ export const DesktopBottomBar: React.FC<DesktopBottomBarProps> = ({
       )}
 
       {/* Outlet Priority Overview Segmented Progress Bar */}
-      <div className="hidden xl:block marviz-glass-strong rounded-2xl px-3.5 py-2 w-[280px] 2xl:w-[320px] text-white pointer-events-auto">
+      <div className="hidden xl:block ov-panel-elevated rounded-2xl px-3.5 py-2 w-[280px] 2xl:w-[320px] text-white pointer-events-auto">
         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-1.5">
           <span className="text-slate-200">OUTLET PRIORITY OVERVIEW</span>
-          <span className="text-slate-400 tabular-nums">{healthBreakdown.total} OUTLETS</span>
+          <span className="text-slate-400 ov-tabular">{healthBreakdown.total} OUTLETS</span>
         </div>
-        <div className="h-2.5 w-full rounded-full overflow-hidden flex gap-0.5 bg-slate-800 border border-slate-700/60">
+        <div className="h-2.5 w-full rounded-full overflow-hidden flex gap-0.5 ov-chart-well">
           <div
             className="h-full bg-emerald-500 transition-all duration-300"
             style={{ width: `${healthyPct}%` }}

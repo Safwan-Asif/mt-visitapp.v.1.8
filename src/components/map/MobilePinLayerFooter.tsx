@@ -75,7 +75,7 @@ export const MobilePinLayerFooter: React.FC<MobilePinLayerFooterProps> = ({
     <div
       role="region"
       aria-label="Pin Colour Layer Selector"
-      className="marviz-glass rounded-xl px-1.5 py-1 border border-[#104878] bg-[#061C35]/85 backdrop-blur-md"
+      className="ov-panel rounded-xl px-1.5 py-1"
     >
       <div
         role="radiogroup"
@@ -96,7 +96,7 @@ export const MobilePinLayerFooter: React.FC<MobilePinLayerFooterProps> = ({
               className={`min-h-[26px] px-2.5 rounded-full text-[10px] sm:text-[10.5px] font-semibold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 border ${
                 selected
                   ? 'btn-electric-blue border-[#00C8FF]/75 text-white shadow-[0_2px_10px_rgba(0,122,255,0.45)]'
-                  : 'bg-[#04152B]/80 border-[#104878] text-[#A5B8D5] hover:text-[#F1F5FF] hover:border-[#008DFF]/60'
+                  : 'ov-glass-recessed text-[#A5B8D5] hover:text-[#F1F5FF] hover:border-[#00C8FF]/45'
               }`}
             >
               <span

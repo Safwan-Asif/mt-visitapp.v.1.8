@@ -46,6 +46,7 @@ interface MobileMapScreenProps {
   onNavigateTab: (tab: 'home' | 'pjp') => void;
   onOutletSheetOpenChange?: (isOpen: boolean) => void;
   onLogout?: () => void;
+  focusedOutletRequest?: { sapCode?: string; id?: string; name?: string; nonce: number } | null;
 }
 
 export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
@@ -59,7 +60,8 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
   onMoreDetails,
   onNavigateTab: _onNavigateTab,
   onOutletSheetOpenChange,
-  onLogout
+  onLogout,
+  focusedOutletRequest
 }) => {
   const { isDark, toggleTheme } = useTheme();
 
@@ -248,6 +250,37 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
       setSheetState('peek');
     }
   }, [outlets, selectedOutletId]);
+
+  const lastHandledFocusNonceRef = React.useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusedOutletRequest?.nonce || outlets.length === 0) return;
+    if (lastHandledFocusNonceRef.current === focusedOutletRequest.nonce) return;
+
+    const reqSap = String(focusedOutletRequest.sapCode || '').trim().toLowerCase();
+    const reqId = String(focusedOutletRequest.id || '').trim().toLowerCase();
+    const reqName = String(focusedOutletRequest.name || '').trim().toLowerCase();
+
+    const match =
+      (reqSap && outlets.find((o) => String(o.sapCode || '').trim().toLowerCase() === reqSap)) ||
+      (reqId && outlets.find((o) => o.id.toLowerCase() === reqId)) ||
+      (reqName &&
+        outlets.find(
+          (o) =>
+            o.name.toLowerCase() === reqName ||
+            o.name.toLowerCase().includes(reqName) ||
+            reqName.includes(o.name.toLowerCase().split(' - ')[0])
+        )) ||
+      null;
+
+    if (match) {
+      lastHandledFocusNonceRef.current = focusedOutletRequest.nonce;
+      setActiveQuickFilters([]);
+      setActiveFilter('all');
+      setSelectedOutletId(match.id);
+      setSheetState('peek');
+      setIsLayersOpen(false);
+    }
+  }, [focusedOutletRequest?.nonce, focusedOutletRequest, outlets]);
 
   const plannedStops = useMemo(
     () =>
@@ -461,7 +494,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
       : 'bottom-[calc(78px+env(safe-area-inset-bottom,0px))]';
 
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden bg-[#020D1F] select-none">
+    <div className="dark ov-scope relative w-full h-full flex flex-col overflow-hidden ov-atmospheric-canvas select-none">
       {/* DESKTOP COMMAND CENTER HEADER BAR (md+) */}
       <DesktopTopBar
         metrics={journeyMetrics}
@@ -504,7 +537,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         {/* Loading Banner */}
         {(isLoadingOutlets || isSyncingPjp) && outlets.length === 0 && (
           <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-[440] flex justify-center pointer-events-none">
-            <div className="marviz-glass px-4 py-2 rounded-xl text-xs font-semibold text-sky-200">
+            <div className="ov-panel px-4 py-2 rounded-xl text-xs font-semibold text-sky-200">
               Syncing live territory pins…
             </div>
           </div>
@@ -537,7 +570,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
         </div>
 
         {/* DESKTOP BOTTOM FLOATING BAR: NEXT STOP / DEMO ETA + OUTLET PRIORITY OVERVIEW */}
-        <div className="hidden md:block absolute left-[228px] lg:left-[252px] right-[248px] bottom-3 z-[450] pointer-events-none">
+        <div className="hidden md:flex justify-center absolute inset-x-3 bottom-3 z-[450] pointer-events-none">
           <DesktopBottomBar
             nextStop={nextStopEstimate}
             healthBreakdown={healthBreakdown}
@@ -605,9 +638,9 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
           <div
             role="dialog"
             aria-label="GeoIntel Settings"
-            className="md:hidden fixed inset-x-3 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-[475] max-w-sm mx-auto marviz-glass-strong rounded-2xl p-4 text-[#F1F5FF] animate-fade-in"
+            className="md:hidden fixed inset-x-3 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-[475] max-w-sm mx-auto ov-panel-elevated rounded-2xl p-4 text-[#F1F5FF] animate-fade-in"
           >
-            <div className="flex items-center justify-between pb-2.5 border-b border-[#104878]">
+            <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.10]">
               <span className="font-heading text-sm font-bold uppercase tracking-wider">
                 GeoIntel Settings
               </span>
@@ -615,7 +648,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
                 type="button"
                 onClick={() => setIsSettingsOpen(false)}
                 aria-label="Close map settings"
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542] cursor-pointer"
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-white/10 cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -625,7 +658,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setShowJourneyPlan((prev) => !prev)}
-                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B2542] border border-[#104878] hover:border-[#008DFF] flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
+                className="w-full min-h-[44px] px-3 rounded-xl ov-glass-recessed hover:border-[#00C8FF]/45 flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
               >
                 <span className="flex items-center gap-2">
                   <Route size={15} className="text-[#00C8FF]" />
@@ -639,7 +672,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
               <button
                 type="button"
                 onClick={toggleTheme}
-                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B2542] border border-[#104878] hover:border-[#008DFF] flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
+                className="w-full min-h-[44px] px-3 rounded-xl ov-glass-recessed hover:border-[#00C8FF]/45 flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors"
               >
                 <span className="flex items-center gap-2">
                   {isDark ? <Sun size={15} className="text-[#FFB800]" /> : <Moon size={15} className="text-[#00C8FF]" />}
@@ -648,7 +681,7 @@ export const MobileMapScreen: React.FC<MobileMapScreenProps> = ({
                 <span className="text-[#A5B8D5]">{isDark ? 'Deep Navy' : 'Light'}</span>
               </button>
 
-              <div className="rounded-xl bg-[#04152B] border border-[#104878] p-2.5 flex items-start gap-2 text-[11px] text-[#A5B8D5] leading-snug">
+              <div className="rounded-xl ov-chart-well p-2.5 flex items-start gap-2 text-[11px] text-[#A5B8D5] leading-snug">
                 <Info size={14} className="text-[#00C8FF] shrink-0 mt-0.5" />
                 <span>
                   Live PJP outlet positions from Customer Master paired with browser GPS location tracking. Satellite imagery &copy; Esri.

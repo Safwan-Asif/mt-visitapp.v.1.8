@@ -11,7 +11,8 @@ import {
   useAdvancedMarkerRef,
   useApiLoadingStatus,
   APILoadingStatus,
-  ColorScheme
+  ColorScheme,
+  RenderingType
 } from '@vis.gl/react-google-maps';
 import { Navigation, MapPin, Loader2, ExternalLink } from 'lucide-react';
 import { Outlet } from '../types';
@@ -38,6 +39,34 @@ interface PjpGoogleMapProps {
 }
 
 const DOHA_DEFAULT_CENTER = { lat: 25.2854, lng: 51.531 };
+
+function supportsHardwareWebGL(): boolean {
+  if (typeof document === 'undefined') return false;
+  try {
+    const canvas = document.createElement('canvas');
+    const attrs: WebGLContextAttributes = { failIfMajorPerformanceCaveat: true };
+    const gl =
+      (canvas.getContext('webgl2', attrs) as WebGL2RenderingContext | null) ||
+      (canvas.getContext('webgl', attrs) as WebGLRenderingContext | null);
+    if (!gl) return false;
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (debugInfo) {
+      const renderer = String(
+        gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || ''
+      ).toLowerCase();
+      if (
+        renderer.includes('swiftshader') ||
+        renderer.includes('llvmpipe') ||
+        renderer.includes('software')
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 let cachedMapsConfig: { apiKey: string; mapId: string } | null = null;
 let inflightConfigPromise: Promise<{ apiKey: string; mapId: string }> | null = null;
@@ -272,6 +301,11 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
   const [mapId, setMapId] = useState<string>(cachedMapsConfig?.mapId || envMapId || 'DEMO_MAP_ID');
   const [keyLoading, setKeyLoading] = useState<boolean>(!(cachedMapsConfig?.apiKey || envKey));
   const [infoOutletId, setInfoOutletId] = useState<string | null>(null);
+  const canUseHardwareWebGL = useMemo(() => supportsHardwareWebGL(), []);
+  const renderingType =
+    mapId === 'DEMO_MAP_ID' || !canUseHardwareWebGL
+      ? RenderingType.RASTER
+      : RenderingType.VECTOR;
 
   const decodedPath = useMemo(
     () => (encodedPolyline ? decodeEncodedPolyline(encodedPolyline) : []),
@@ -364,6 +398,7 @@ export const PjpGoogleMap: React.FC<PjpGoogleMapProps> = ({
         <MapQuotaMonitor />
         <GoogleMap
           mapId={mapId}
+          renderingType={renderingType}
           defaultCenter={initialCenter}
           defaultZoom={12}
           gestureHandling="greedy"

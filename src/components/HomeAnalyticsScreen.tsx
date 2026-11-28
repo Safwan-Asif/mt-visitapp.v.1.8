@@ -1,1094 +1,687 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react';
 import {
-  ChevronDown,
-  ChevronRight,
-  CheckCircle2,
-  AlertTriangle,
-  ShieldAlert,
-  ArrowRight,
-  Camera,
-  RefreshCw,
-  TrendingUp,
+  ArrowLeft,
   Building2,
-  Layers,
-  ClipboardCheck,
+  Calendar,
   CalendarDays,
+  ChevronDown,
   Clock,
+  ClipboardCheck,
+  Layers,
   LayoutGrid,
-  ArrowLeft
+  RefreshCw,
+  RotateCcw,
+  SlidersHorizontal,
+  TrendingUp,
+  X
 } from 'lucide-react';
-import {
-  Outlet,
-  CategoryAuditRecord,
-  CategoryType,
-  PlanogramRecord,
-  UserProfile
-} from '../types';
-import { MasterOutletOption } from '../constants';
-import { CATEGORIES } from '../constants';
-import { PjpVisitRow } from '../data/pjpMasterData';
 import { useTheme } from '../ThemeContext';
 import {
-  buildExecutivePjpAnalytics,
   CategoryFilter,
   normalizeAccountLabel
 } from '../utils/homeAnalyticsData';
 import {
-  WheelDateRangePicker,
-  CalendarDateValue,
   compareCalendarDates,
-  diffCalendarDaysInclusive,
-  formatShortCalendarDate,
-  formatCompactCalendarDate
+  formatCompactCalendarDate,
+  WheelDateRangePicker
 } from './WheelDateRangePicker';
+import {
+  AccountGroupSummary,
+  EvidenceViewerPayload,
+  HomeAnalyticsScreenProps,
+  OverviewDrilldown,
+  OverviewWorkspaceId,
+  PeriodPreset
+} from './overview/overviewTypes';
+import {
+  getDohaGreetingAndDate,
+  useOverviewAnalytics
+} from './overview/useOverviewAnalytics';
+import { GlassScopeOption, GlassScopePopover } from './overview/OverviewPrimitives';
+import { OverviewSummaryView } from './overview/OverviewSummaryView';
+import {
+  AccountsWorkspace,
+  ExecutionWorkspace,
+  ProductivityWorkspace,
+  SalesWorkspace,
+  ShelfWorkspace,
+  WorkhoursWorkspace
+} from './overview/OverviewWorkspaces';
+import {
+  AccountDetailView,
+  AvailabilityDetailView,
+  DailyJourneyDetailView,
+  GlobalFilterSheet,
+  OutletDetailView,
+  PromotionIntelligenceView,
+  ShelfEvidenceViewerModal
+} from './overview/OverviewDrilldowns';
 
-interface HomeAnalyticsScreenProps {
-  executive: UserProfile | null;
-  outlets: Outlet[];
-  pjpVisits: PjpVisitRow[];
-  masterOutlets?: MasterOutletOption[];
-  audits: Record<string, CategoryAuditRecord>;
-  planograms: PlanogramRecord[];
-  isSyncingPjp?: boolean;
-  onSyncPjp?: () => void;
-  onNavigateToPendingPjp: () => void;
-  selectedMapOutlet?: {
-    id: string;
-    name: string;
-    area: string;
-    nonce: number;
-  } | null;
-  onClearMapOutlet?: () => void;
-}
-
-type ViewTabId =
-  | 'all'
-  | 'sales'
-  | 'account'
-  | 'shelf'
-  | 'execution'
-  | 'productivity'
-  | 'workhours';
-
-const VIEW_TABS: Array<{
-  id: ViewTabId;
+const WORKSPACE_TABS: Array<{
+  id: OverviewWorkspaceId;
   label: string;
-  mobileLabel: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 }> = [
-  { id: 'all', label: 'All', mobileLabel: 'All', icon: LayoutGrid },
-  { id: 'sales', label: 'Sales', mobileLabel: 'Sales', icon: TrendingUp },
-  { id: 'account', label: 'Account', mobileLabel: 'Acct', icon: Building2 },
-  { id: 'shelf', label: 'Shelf', mobileLabel: 'Shelf', icon: Layers },
-  { id: 'execution', label: 'Execution', mobileLabel: 'Exec', icon: ClipboardCheck },
-  { id: 'productivity', label: 'Productivity', mobileLabel: 'PJP', icon: CalendarDays },
-  { id: 'workhours', label: 'Workhours', mobileLabel: 'Hours', icon: Clock }
+  { id: 'summary', label: 'All', icon: LayoutGrid },
+  { id: 'sales', label: 'Sales', icon: TrendingUp },
+  { id: 'accounts', label: 'Account', icon: Building2 },
+  { id: 'shelf', label: 'Shelf', icon: Layers },
+  { id: 'execution', label: 'Execution', icon: ClipboardCheck },
+  { id: 'productivity', label: 'Productivity', icon: CalendarDays },
+  { id: 'workhours', label: 'Workhours', icon: Clock }
 ];
 
-const DAILY_BASE_SALES = [
-  11, 14, 9, 16, 13, 12, 15, 10, 17, 14, 13, 16, 12, 15, 13, 14, 15, 13, 16, 14,
-  12, 15, 16, 13, 14, 15, 12, 14, 15, 16, 14
+const PERIOD_PRESETS: Array<{ id: PeriodPreset; label: string }> = [
+  { id: 'today', label: 'Today' },
+  { id: 'wtd', label: 'WTD' },
+  { id: 'mtd', label: 'MTD' },
+  { id: 'custom', label: 'Custom' }
 ];
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const CAT_SOS_BASE: Record<CategoryType, number> = {
-  Flour: 38,
-  'Edible Oil': 31,
-  Pasta: 29
-};
-
-const ACH_BASE: Record<CategoryType, number> = {
-  Flour: 62,
-  'Edible Oil': 54,
-  Pasta: 66
-};
-
-function getTimeGreeting(): string {
-  const hr = new Date().getHours();
-  if (hr < 12) return 'Good morning';
-  if (hr < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-function formatHourClock(t: number): string {
-  const h = Math.floor(t);
-  const m = Math.round((t - h) * 60);
-  return `${h}:${m < 10 ? '0' + m : m}`;
-}
-
-function generateVisitPunches(day: number, count: number): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  let t = 7.7 + ((day * 3) % 5) * 0.12;
-  for (let i = 0; i < count; i++) {
-    const dur = 0.55 + ((day + i) % 3) * 0.1;
-    out.push([t, t + dur]);
-    t += dur + 0.45 + ((day * 2 + i) % 3) * 0.12;
-    if (i === 2) t += 0.4;
-  }
-  return out;
-}
-
-function getWeekdayShort(year: number, month: number, day: number): string {
-  return DAY_NAMES[new Date(year, month - 1, day).getDay()] || 'Mon';
-}
-
-export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
-  executive,
-  outlets,
-  pjpVisits,
-  masterOutlets = [],
-  audits,
-  planograms,
-  isSyncingPjp = false,
-  onSyncPjp,
-  onNavigateToPendingPjp,
-  selectedMapOutlet = null,
-  onClearMapOutlet
-}) => {
+export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = (props) => {
   const { isDark } = useTheme();
+  const shouldReduceMotion = useReducedMotion();
+  const analytics = useOverviewAnalytics({ ...props, isDark });
 
-  // Global Filters (0B)
-  const [fromDate, setFromDate] = useState<CalendarDateValue>({
-    year: 2026,
-    month: 10,
-    day: 1
-  });
-  const [toDate, setToDate] = useState<CalendarDateValue>({
-    year: 2026,
-    month: 10,
-    day: 17
-  });
-
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('All');
-  const [accountFilter, setAccountFilter] = useState<string>('All');
-  const [outletFilter, setOutletFilter] = useState<string>('All');
-
-  // Unified Dashboard View State (0C) — Default 'all', clicking a button focuses that tab
-  const [activeTab, setActiveTab] = useState<ViewTabId>('all');
-
-  // Interactive Drilldown States
-  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
-  const [expandedOosAccounts, setExpandedOosAccounts] = useState<Record<string, boolean>>({});
-  const [selectedOosCell, setSelectedOosCell] = useState<{
-    outletId: string;
-    category: CategoryType;
-  } | null>(null);
-  const [selectedPosmKey, setSelectedPosmKey] = useState<
-    'shelfStrips' | 'wobblers' | 'gondola' | 'priceTag' | null
-  >(null);
-  const [selectedPromoId, setSelectedPromoId] = useState<string | null>(null);
-  const [selectedDay, setSelectedDay] = useState<number>(17);
-
-  const basePjpData = useMemo(
-    () =>
-      buildExecutivePjpAnalytics(
-        executive?.name || '',
-        outlets,
-        pjpVisits,
-        audits,
-        1,
-        executive?.repId,
-        masterOutlets
-      ),
-    [executive?.name, executive?.repId, outlets, pjpVisits, audits, masterOutlets]
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<OverviewWorkspaceId>('summary');
+  const [drilldown, setDrilldown] = useState<OverviewDrilldown>(null);
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = useState<boolean>(false);
+  const [isPeriodPopoverOpen, setIsPeriodPopoverOpen] = useState<boolean>(false);
+  const [evidencePayload, setEvidencePayload] =
+    useState<EvidenceViewerPayload | null>(null);
+  const [isDesktopViewport, setIsDesktopViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : false
   );
 
-  const scheduleMeta = basePjpData.scheduleMeta;
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const savedSummaryScrollRef = useRef<number>(0);
+  const periodPopoverRef = useRef<HTMLDivElement | null>(null);
 
-  const defaultFromDate = useMemo<CalendarDateValue>(
-    () => ({ year: scheduleMeta.year, month: scheduleMeta.month, day: 1 }),
-    [scheduleMeta.year, scheduleMeta.month]
-  );
-  const defaultToDate = useMemo<CalendarDateValue>(
-    () => ({
-      year: scheduleMeta.year,
-      month: scheduleMeta.month,
-      day: scheduleMeta.cutoffDay
-    }),
-    [scheduleMeta.year, scheduleMeta.month, scheduleMeta.cutoffDay]
-  );
-
-  // Keep selected date bounds & active calendar day aligned when executive or PJP month updates
   useEffect(() => {
-    setFromDate({ year: scheduleMeta.year, month: scheduleMeta.month, day: 1 });
-    setToDate({
-      year: scheduleMeta.year,
-      month: scheduleMeta.month,
-      day: scheduleMeta.cutoffDay
-    });
-    setSelectedDay(scheduleMeta.cutoffDay);
-    setAccountFilter('All');
-    setOutletFilter('All');
-  }, [executive?.name, scheduleMeta.month, scheduleMeta.year, scheduleMeta.cutoffDay]);
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const sync = () => setIsDesktopViewport(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
 
-  // Apply outlet filter automatically when arriving from Map "MORE DETAILS ->"
   useEffect(() => {
-    if (!selectedMapOutlet) return;
-    const targetName = selectedMapOutlet.name.toLowerCase();
-    const matchedOutlet =
-      basePjpData.allOutlets.find((o) => o.id === selectedMapOutlet.id) ||
-      basePjpData.allOutlets.find(
-        (o) =>
-          o.name.toLowerCase().includes(targetName) ||
-          targetName.includes(o.branch.toLowerCase())
-      );
+    if (!isPeriodPopoverOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        periodPopoverRef.current &&
+        !periodPopoverRef.current.contains(e.target as Node)
+      ) {
+        setIsPeriodPopoverOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsPeriodPopoverOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [isPeriodPopoverOpen]);
 
-    if (matchedOutlet) {
-      setAccountFilter(matchedOutlet.account);
-      setOutletFilter(matchedOutlet.id);
-    } else {
-      const matchedAcct = basePjpData.accounts.find((g) =>
-        targetName.includes(g.account.toLowerCase().split(' ')[0])
-      );
-      if (matchedAcct) {
-        setAccountFilter(matchedAcct.account);
-        setOutletFilter('All');
+  const handleSelectWorkspace = (ws: OverviewWorkspaceId) => {
+    if (ws !== 'summary' && activeWorkspace === 'summary' && scrollContainerRef.current) {
+      savedSummaryScrollRef.current = scrollContainerRef.current.scrollTop;
+    }
+    setDrilldown(null);
+    setActiveWorkspace(ws);
+    if (scrollContainerRef.current) {
+      if (ws === 'summary') {
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop = savedSummaryScrollRef.current;
+          }
+        });
+      } else {
+        scrollContainerRef.current.scrollTop = 0;
       }
     }
-  }, [selectedMapOutlet?.nonce, basePjpData.allOutlets, basePjpData.accounts]);
+  };
 
-  // Palette adapted to Deep Navy + Electric Blue + Cyan & Light Glass
-  const tealColor = isDark ? '#00C8FF' : '#0066FF';
-  const tealDarkText = isDark ? '#00C8FF' : '#0052CC';
-  const tealSoftBg = isDark ? 'rgba(0, 102, 255, 0.16)' : '#E5F0FF';
-  const amberColor = isDark ? '#FFB800' : '#D97706';
-  const crimsonColor = isDark ? '#EF4444' : '#DC2626';
-  const neutralBarTrack = isDark ? 'rgba(16, 72, 120, 0.35)' : '#E2E8F0';
-  const competitorColor = isDark ? '#334E73' : '#CBD5E1';
-  const primaryInk = isDark ? '#F1F5FF' : '#0B1D36';
-  const mutedInk = isDark ? '#A5B8D5' : '#647D9E';
-  const gridLineColor = isDark ? 'rgba(16, 72, 120, 0.35)' : '#E2E8F0';
-  const axisLineColor = isDark ? 'rgba(16, 72, 120, 0.65)' : '#CBD5E1';
+  const handleOpenDrilldown = (next: OverviewDrilldown) => {
+    if (!isDesktopViewport && scrollContainerRef.current && !drilldown) {
+      savedSummaryScrollRef.current = scrollContainerRef.current.scrollTop;
+    }
+    setDrilldown(next);
+    if (!isDesktopViewport && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  };
 
-  const accountColorPalette = [
-    isDark ? '#0066FF' : '#0052CC',
-    isDark ? '#00C8FF' : '#0284C7',
-    isDark ? '#FFB800' : '#D97706',
-    isDark ? '#647D9E' : '#94A3B8',
-    isDark ? '#38BDF8' : '#2563EB'
+  const handleCloseDrilldown = () => {
+    setDrilldown(null);
+    if (!isDesktopViewport && scrollContainerRef.current) {
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = savedSummaryScrollRef.current;
+        }
+      });
+    }
+  };
+
+  const { greeting, dateLabel } = getDohaGreetingAndDate();
+  const execName = props.executive?.name || 'Safwan Asif';
+  const execTerritory = props.executive?.territory || 'Qatar Modern Trade';
+
+  const activeFilterCount =
+    (analytics.categoryFilter !== 'All' ? 1 : 0) +
+    (analytics.accountFilter !== 'All' ? 1 : 0) +
+    (analytics.outletFilter !== 'All' ? 1 : 0) +
+    (analytics.periodPreset !== 'mtd' ? 1 : 0);
+
+  const periodPresetLabel =
+    PERIOD_PRESETS.find((p) => p.id === analytics.periodPreset)?.label || 'MTD';
+
+  const compactRangeLabel =
+    compareCalendarDates(analytics.fromDate, analytics.toDate) === 0
+      ? formatCompactCalendarDate(analytics.fromDate)
+      : `${formatCompactCalendarDate(analytics.fromDate)}–${formatCompactCalendarDate(
+          analytics.toDate
+        )}`;
+
+  const isNonMtdRange =
+    analytics.periodPreset !== 'mtd' ||
+    compareCalendarDates(analytics.fromDate, analytics.defaultFromDate) !== 0 ||
+    compareCalendarDates(analytics.toDate, analytics.defaultToDate) !== 0;
+
+  const activeOutletLabel =
+    analytics.outletFilter === 'All'
+      ? 'All outlets'
+      : analytics.scopedOutlets[0]?.branch || '1 outlet';
+
+  const mobileScopeLine = `${periodPresetLabel} · ${compactRangeLabel} · ${
+    analytics.categoryFilter === 'All' ? 'All categories' : analytics.categoryFilter
+  } · ${
+    analytics.accountFilter === 'All'
+      ? activeOutletLabel
+      : `${analytics.accountFilter}${
+          analytics.outletFilter !== 'All' ? ` (${activeOutletLabel})` : ''
+        }`
+  }`;
+
+  const activeWorkspaceLabel =
+    WORKSPACE_TABS.find((t) => t.id === activeWorkspace)?.label || 'Overview';
+
+  const categoryOptions: GlassScopeOption[] = [
+    { value: 'All', label: 'All categories' },
+    { value: 'Flour', label: 'Flour' },
+    { value: 'Edible Oil', label: 'Edible Oil' },
+    { value: 'Pasta', label: 'Pasta' }
   ];
 
-  // Derived period bounds from user's explicit Wheel From / To selection (2025-2027)
-  const totalSelectedDaysCount = diffCalendarDaysInclusive(fromDate, toDate);
-  const isInsidePjpMonth =
-    fromDate.year === scheduleMeta.year &&
-    fromDate.month === scheduleMeta.month &&
-    toDate.year === scheduleMeta.year &&
-    toDate.month === scheduleMeta.month;
+  const accountOptions: GlassScopeOption[] = [
+    {
+      value: 'All',
+      label: 'All accounts',
+      meta: `${analytics.basePjpData.accounts.length} chains`
+    },
+    ...analytics.basePjpData.accounts.map((grp) => ({
+      value: grp.account,
+      label: grp.account,
+      meta: `${grp.outlets.length} outlets`
+    }))
+  ];
 
-  const pjpCycleStart: CalendarDateValue = {
-    year: scheduleMeta.year,
-    month: scheduleMeta.month,
-    day: 1
-  };
-  const pjpCycleEnd: CalendarDateValue = {
-    year: scheduleMeta.year,
-    month: scheduleMeta.month,
-    day: scheduleMeta.cutoffDay
-  };
-  const overlapStart =
-    compareCalendarDates(fromDate, pjpCycleStart) > 0 ? fromDate : pjpCycleStart;
-  const overlapEnd =
-    compareCalendarDates(toDate, pjpCycleEnd) < 0 ? toDate : pjpCycleEnd;
-  const hasPjpOverlap = compareCalendarDates(overlapStart, overlapEnd) <= 0;
+  const outletOptions: GlassScopeOption[] = [
+    {
+      value: 'All',
+      label: 'All outlets',
+      meta: `${analytics.availableOutletsForDropdown.length} in scope`
+    },
+    ...analytics.availableOutletsForDropdown.map((o) => ({
+      value: o.id,
+      label:
+        analytics.accountFilter === 'All' ? `${o.account} — ${o.branch}` : o.branch,
+      meta: o.code ? `SAP ${o.code}` : o.account
+    }))
+  ];
 
-  const observedStartDay = hasPjpOverlap ? overlapStart.day : 1;
-  const observedEndDay = hasPjpOverlap ? overlapEnd.day : scheduleMeta.cutoffDay;
-  const sliceDaysCount = isInsidePjpMonth
-    ? Math.max(1, observedEndDay - observedStartDay + 1)
-    : totalSelectedDaysCount;
-  const periodScale = sliceDaysCount / Math.max(1, scheduleMeta.cutoffDay);
-
-  const pjpData = basePjpData;
-
-  // Cascading Outlets list dependent on selected Account (0B.4)
-  const availableOutletsForDropdown = useMemo(() => {
-    if (accountFilter === 'All') {
-      return pjpData.allOutlets;
-    }
-    const foundGroup = pjpData.accounts.find((g) => g.account === accountFilter);
-    return foundGroup ? foundGroup.outlets : [];
-  }, [pjpData, accountFilter]);
-
-  const handleAccountDropdownChange = (nextAccount: string) => {
-    setAccountFilter(nextAccount);
-    setSelectedOosCell(null);
-    if (nextAccount === 'All') {
-      return;
-    }
-    const stillValid = pjpData.accounts
-      .find((g) => g.account === nextAccount)
-      ?.outlets.some((o) => o.id === outletFilter);
-    if (!stillValid) {
-      setOutletFilter('All');
-    }
-  };
-
-  // Filtered Outlets according to Account + Outlet cascading filters
-  const scopedOutlets = useMemo(() => {
-    let list = pjpData.allOutlets;
-    if (accountFilter !== 'All') {
-      list = list.filter((o) => o.account === accountFilter);
-    }
-    if (outletFilter !== 'All') {
-      list = list.filter((o) => o.id === outletFilter);
-    }
-    return list;
-  }, [pjpData, accountFilter, outletFilter]);
-
-  // --- Global Computed Analytics ---
-  const activeCategories = categoryFilter === 'All' ? CATEGORIES : [categoryFilter];
-
-  const metrics = useMemo(() => {
-    const activeSet = scopedOutlets.length > 0 ? scopedOutlets : pjpData.allOutlets;
-
-    // 1. Account aggregation from executive PJP & active route outlets, filtered when outlet selected
-    const displayAccountGroups = pjpData.accounts
-      .filter((g) => accountFilter === 'All' || g.account === accountFilter)
-      .map((g) => {
-        const childList = g.outlets
-          .filter((o) => outletFilter === 'All' || o.id === outletFilter)
-          .map((o) => {
-            const mton = activeCategories.reduce(
-              (sum, cat) => sum + Number((o.mtonByCategory[cat] * periodScale).toFixed(1)),
-              0
+  const renderDrilldownBody = () => {
+    if (!drilldown) return null;
+    if (drilldown.type === 'account') {
+      const grp = analytics.metrics.displayAccountGroups.find(
+        (g) => g.account === drilldown.account
+      );
+      let resolvedGroup: AccountGroupSummary | undefined = grp;
+      if (!resolvedGroup) {
+        const rawGrp = analytics.basePjpData.accounts.find(
+          (g) => g.account === drilldown.account
+        );
+        if (rawGrp) {
+          const fallbackOutlets = rawGrp.outlets.map((o) => {
+            const filteredMton = Number(
+              (
+                o.mtonByCategory.Flour +
+                o.mtonByCategory['Edible Oil'] +
+                o.mtonByCategory.Pasta
+              ).toFixed(1)
             );
-            const sosAvg = Math.round(
-              activeCategories.reduce((sum, cat) => sum + o.sosByCategory[cat], 0) /
-                activeCategories.length
+            const filteredSos = Math.round(
+              (o.sosByCategory.Flour +
+                o.sosByCategory['Edible Oil'] +
+                o.sosByCategory.Pasta) /
+                3
             );
-            const totalOosSkus = activeCategories.reduce(
-              (sum, cat) => sum + o.oosByCategory[cat],
-              0
-            );
+            const totalOosSkus =
+              o.oosByCategory.Flour +
+              o.oosByCategory['Edible Oil'] +
+              o.oosByCategory.Pasta;
             return {
               ...o,
-              filteredMton: Number(mton.toFixed(1)),
-              filteredSos: sosAvg,
+              filteredMton,
+              filteredSos,
               totalOosSkus
             };
-          })
-          .sort((a, b) => b.filteredMton - a.filteredMton); // Sort descending by MTON
-
-        const accountMton = childList.reduce((sum, o) => sum + o.filteredMton, 0);
-        const accountSos =
-          childList.length > 0
-            ? Math.round(
-                childList.reduce((sum, o) => sum + o.filteredSos, 0) / childList.length
-              )
-            : 0;
-        const oosTotals: Record<CategoryType, number> = {
-          Flour: childList.reduce((s, o) => s + o.oosByCategory.Flour, 0),
-          'Edible Oil': childList.reduce((s, o) => s + o.oosByCategory['Edible Oil'], 0),
-          Pasta: childList.reduce((s, o) => s + o.oosByCategory.Pasta, 0)
-        };
-
-        return {
-          account: g.account,
-          outlets: childList,
-          mton: Number(accountMton.toFixed(1)),
-          sosPct: accountSos,
-          oosTotals
-        };
-      })
-      .filter((g) => g.outlets.length > 0)
-      .sort((a, b) => b.mton - a.mton);
-
-    const totalMton = Number(
-      displayAccountGroups.reduce((sum, g) => sum + g.mton, 0).toFixed(1)
-    );
-
-    // 2. Headline SOS & OOS % across scoped outlets
-    const avgSos =
-      activeSet.length > 0
-        ? Math.round(
-            activeSet.reduce(
-              (sum, o) =>
-                sum +
-                activeCategories.reduce((cs, c) => cs + o.sosByCategory[c], 0) /
-                  activeCategories.length,
-              0
-            ) / activeSet.length
-          )
-        : 33;
-
-    // Total SKU slots tracked = outlets * activeCategories.length * 6 core SKUs
-    const totalSkuSlots = Math.max(1, activeSet.length * activeCategories.length * 6);
-    const totalOosSkus = activeSet.reduce(
-      (sum, o) =>
-        sum + activeCategories.reduce((cs, c) => cs + o.oosByCategory[c], 0),
-      0
-    );
-    const oosPct = Math.min(100, Math.round((totalOosSkus / totalSkuSlots) * 100));
-
-    // PJP % synced directly to signed-in executive's PJP schedule & route progress
-    const targetOutletObj =
-      outletFilter !== 'All'
-        ? pjpData.allOutlets.find((o) => o.id === outletFilter)
-        : null;
-    let pjpPlannedTotal = 0;
-    let pjpCompletedTotal = 0;
-    for (let d = observedStartDay; d <= observedEndDay; d++) {
-      const sched = scheduleMeta.scheduleByDay[d];
-      if (!sched || sched.plannedCount === 0) continue;
-      if (accountFilter === 'All' && outletFilter === 'All') {
-        pjpPlannedTotal += sched.plannedCount;
-        pjpCompletedTotal += sched.completedCount;
-      } else {
-        const matchingStores = sched.outlets.filter((s) => {
-          if (accountFilter !== 'All' && s.account !== accountFilter) return false;
-          if (targetOutletObj) {
-            const codeMatch = Boolean(targetOutletObj.code && s.code === targetOutletObj.code);
-            const branchMatch = s.name
-              .toLowerCase()
-              .includes(targetOutletObj.branch.toLowerCase());
-            return codeMatch || branchMatch;
-          }
-          return true;
-        });
-        if (matchingStores.length > 0) {
-          const dayAdhRatio = sched.completedCount / Math.max(1, sched.plannedCount);
-          pjpPlannedTotal += matchingStores.length;
-          pjpCompletedTotal += Math.round(matchingStores.length * dayAdhRatio);
-        }
-      }
-    }
-    const liveAuditedRouteCount = activeSet.filter(
-      (o) => o.isRouteOutlet && o.hasLiveAudit
-    ).length;
-    const pjpBase =
-      pjpPlannedTotal > 0
-        ? Math.min(
-            100,
-            Math.round(
-              ((pjpCompletedTotal + liveAuditedRouteCount * 0.5) / pjpPlannedTotal) * 100
-            )
-          )
-        : 92;
-
-    // 3. Sales Gauge & Cumulative Curve scaled to active slice
-    const scopeRatio = Math.max(
-      0.08,
-      Math.min(1, totalMton / Math.max(1, pjpData.allOutlets.length * 10.5 * periodScale))
-    );
-    const targetScale = isInsidePjpMonth
-      ? fromDate.day === 1 && toDate.day >= scheduleMeta.cutoffDay - 1
-        ? 1
-        : Math.max(0.1, totalSelectedDaysCount / scheduleMeta.daysInMonth)
-      : Math.max(0.1, totalSelectedDaysCount / 30);
-
-    const baseTarget =
-      300 *
-      (categoryFilter === 'All'
-        ? 1
-        : categoryFilter === 'Flour'
-        ? 0.5
-        : categoryFilter === 'Edible Oil'
-        ? 0.3
-        : 0.2);
-    const scaledTarget = Math.max(
-      10,
-      Math.round(
-        baseTarget *
-          (accountFilter === 'All' && outletFilter === 'All' ? 1 : scopeRatio * 1.45) *
-          targetScale
-      )
-    );
-
-    const dailySlice = isInsidePjpMonth
-      ? DAILY_BASE_SALES.slice(observedStartDay - 1, observedEndDay)
-      : DAILY_BASE_SALES.slice(0, Math.min(31, totalSelectedDaysCount));
-    const multiMonthScale = isInsidePjpMonth
-      ? 1
-      : totalSelectedDaysCount / Math.max(1, dailySlice.length);
-
-    let runningSales = 0;
-    const catFactor =
-      categoryFilter === 'All'
-        ? 1
-        : categoryFilter === 'Flour'
-        ? 0.52
-        : categoryFilter === 'Edible Oil'
-        ? 0.28
-        : 0.22;
-    const accScopeMult =
-      accountFilter === 'All' && outletFilter === 'All'
-        ? 1
-        : Math.max(0.12, scopeRatio * 1.45);
-
-    const cumulative = dailySlice.map((val) => {
-      runningSales += val * 0.82 * catFactor * accScopeMult * multiMonthScale;
-      return runningSales;
-    });
-
-    const mtdMton = Math.round(cumulative[cumulative.length - 1] || 0);
-    const achievementPct = Math.min(140, Math.round((mtdMton / scaledTarget) * 100));
-    const paceDenom = isInsidePjpMonth
-      ? scheduleMeta.daysInMonth
-      : Math.max(30, totalSelectedDaysCount);
-    const pacePct = Math.min(100, Math.round((sliceDaysCount / paceDenom) * 100));
-    const arcLen = Math.PI * 95;
-    const phi = Math.PI * (pacePct / 100);
-    const remainingMton = Math.max(0, scaledTarget - mtdMton);
-    const remainingDays = isInsidePjpMonth
-      ? Math.max(1, scheduleMeta.daysInMonth - observedEndDay)
-      : Math.max(1, Math.round(totalSelectedDaysCount * 0.25));
-
-    const W = 326;
-    const H = 122;
-    const ymax = Math.max(scaledTarget * 1.05, (cumulative[cumulative.length - 1] || 1) * 1.15);
-    const curvePtsCount = Math.max(1, cumulative.length);
-    const totalXSpan =
-      isInsidePjpMonth && toDate.day <= scheduleMeta.cutoffDay && fromDate.day === 1
-        ? scheduleMeta.daysInMonth
-        : curvePtsCount;
-    const xAt = (idx: number) =>
-      ((curvePtsCount === 1 ? 1 : idx / Math.max(1, totalXSpan - 1)) * W).toFixed(1);
-    const yAt = (v: number) => (H - (v / ymax) * H).toFixed(1);
-
-    const actualPath =
-      curvePtsCount === 1
-        ? `M0 ${yAt(0)} L${W} ${yAt(cumulative[0] || 0)}`
-        : `M${cumulative.map((v, i) => `${xAt(i)} ${yAt(v)}`).join(' L')}`;
-    const lastDotX = curvePtsCount === 1 ? String(W) : xAt(cumulative.length - 1);
-
-    // Sub-category breakdown
-    const subCategories = CATEGORIES.map((cat) => {
-      const val = Math.round(
-        ACH_BASE[cat] * (0.7 + 0.3 * periodScale) * (accountFilter === 'All' ? 1 : 0.96)
-      );
-      return {
-        label: cat,
-        pct: val,
-        dimmed: categoryFilter !== 'All' && categoryFilter !== cat,
-        onPace: val >= pacePct * 0.85,
-        widthPct: Math.min(100, (val / 120) * 100)
-      };
-    });
-
-    // Accounts Donut Segments (top 4 groups + "Other accounts" if >4)
-    const donutBuckets: Array<{ label: string; mton: number; color: string }> = [];
-    const top4 = displayAccountGroups.slice(0, 4);
-    top4.forEach((g, idx) => {
-      donutBuckets.push({
-        label: g.account,
-        mton: g.mton,
-        color: accountColorPalette[idx % accountColorPalette.length]
-      });
-    });
-    if (displayAccountGroups.length > 4) {
-      const restMton = displayAccountGroups
-        .slice(4)
-        .reduce((sum, g) => sum + g.mton, 0);
-      donutBuckets.push({
-        label: 'Other accounts',
-        mton: Number(restMton.toFixed(1)),
-        color: accountColorPalette[4]
-      });
-    }
-    const C = 251.327;
-    let cumLen = 0;
-    const donutTotal = Math.max(0.1, donutBuckets.reduce((s, b) => s + b.mton, 0));
-    const accountDonutSegments = donutBuckets.map((b) => {
-      const len = (b.mton / donutTotal) * C;
-      const seg = {
-        ...b,
-        dash: `${len.toFixed(1)} ${(C - len).toFixed(1)}`,
-        off: (-cumLen).toFixed(1)
-      };
-      cumLen += len;
-      return seg;
-    });
-
-    // Shelf SOS rows & Category-Specific Historical Trendline
-    const sosCategoryRows = CATEGORIES.map((cat) => {
-      const avgCatSos =
-        activeSet.length > 0
-          ? Math.round(
-              activeSet.reduce((s, o) => s + o.sosByCategory[cat], 0) / activeSet.length
-            )
-          : CAT_SOS_BASE[cat];
-      return {
-        category: cat,
-        ownPct: avgCatSos,
-        selected: categoryFilter === cat,
-        dimmed: categoryFilter !== 'All' && categoryFilter !== cat
-      };
-    });
-
-    const trendTargetBase =
-      categoryFilter === 'All'
-        ? avgSos
-        : sosCategoryRows.find((r) => r.category === categoryFilter)?.ownPct || avgSos;
-    const ymin = trendTargetBase - 12;
-    const ymx = trendTargetBase + 6;
-    const TH = 80;
-    const trendPtsCount = Math.max(4, sliceDaysCount);
-    const catSeedShift =
-      categoryFilter === 'Flour' ? 2 : categoryFilter === 'Edible Oil' ? -1 : categoryFilter === 'Pasta' ? 4 : 0;
-    const sosTrendPts: Array<[string, string]> = [];
-    for (let i = 0; i < trendPtsCount; i++) {
-      const dayOffset = observedStartDay - 1 + i;
-      const v =
-        trendTargetBase -
-        4.5 +
-        dayOffset * 0.32 +
-        ((((dayOffset + catSeedShift) * 7) % 5) - 2) * 0.6;
-      sosTrendPts.push([
-        ((i * W) / Math.max(1, trendPtsCount - 1)).toFixed(1),
-        (TH - ((v - ymin) / (ymx - ymin)) * TH).toFixed(1)
-      ]);
-    }
-    const sosTrend = {
-      path: `M${sosTrendPts.map((p) => `${p[0]} ${p[1]}`).join(' L')}`,
-      dotX: sosTrendPts[sosTrendPts.length - 1][0],
-      dotY: sosTrendPts[sosTrendPts.length - 1][1],
-      currentPct: trendTargetBase
-    };
-
-    // Execution: Outlet-Linked POSM Compliance
-    const posmDefinitions: Array<{
-      key: 'shelfStrips' | 'wobblers' | 'gondola' | 'priceTag';
-      label: string;
-    }> = [
-      { key: 'shelfStrips', label: 'Shelf strips' },
-      { key: 'wobblers', label: 'Wobblers' },
-      { key: 'gondola', label: 'Gondola' },
-      { key: 'priceTag', label: 'Price tag' }
-    ];
-
-    const posmMetrics = posmDefinitions.map((def) => {
-      const compliantOutlets = activeSet.filter((o) => o.posmStatus[def.key]);
-      const missingOutlets = activeSet.filter((o) => !o.posmStatus[def.key]);
-      const pct =
-        activeSet.length > 0
-          ? Math.round((compliantOutlets.length / activeSet.length) * 100)
-          : 0;
-      return {
-        ...def,
-        pct,
-        compliantCount: compliantOutlets.length,
-        totalCount: activeSet.length,
-        outletPreview: activeSet.slice(0, 12).map((o) => ({
-          id: o.id,
-          name: o.name,
-          present: o.posmStatus[def.key],
-          isLive: o.hasLiveAudit
-        })),
-        missingCount: missingOutlets.length
-      };
-    });
-
-    // Execution: Synced Flyer Promo Status Donut + Account/Outlet Flyer Items
-    const catPromoAdj =
-      categoryFilter === 'Flour' ? 4 : categoryFilter === 'Pasta' ? -3 : 0;
-    const rawActive =
-      activeSet.length > 0
-        ? Math.round(
-            activeSet.reduce((s, o) => s + o.flyerStatus.activePct, 0) / activeSet.length
-          )
-        : 62;
-    const flyerActivePct = Math.max(15, Math.min(90, rawActive + catPromoAdj));
-    const flyerMissingPct = Math.max(5, 90 - flyerActivePct);
-    const flyerNaPct = 10;
-    const pLenA = (flyerActivePct / 100) * C;
-    const pLenM = (flyerMissingPct / 100) * C;
-    const pLenN = (flyerNaPct / 100) * C;
-
-    const flyerDonut = {
-      activePct: flyerActivePct,
-      missingPct: flyerMissingPct,
-      naPct: flyerNaPct,
-      segments: [
-        { dash: `${pLenA.toFixed(1)} ${(C - pLenA).toFixed(1)}`, off: '0', color: tealColor },
-        {
-          dash: `${pLenM.toFixed(1)} ${(C - pLenM).toFixed(1)}`,
-          off: (-pLenA).toFixed(1),
-          color: crimsonColor
-        },
-        {
-          dash: `${pLenN.toFixed(1)} ${(C - pLenN).toFixed(1)}`,
-          off: (-(pLenA + pLenM)).toFixed(1),
-          color: competitorColor
-        }
-      ]
-    };
-
-    const flyerBreakdownRows =
-      outletFilter !== 'All'
-        ? activeSet.map((o) => ({
-            id: o.id,
-            label: o.branch,
-            present: o.flyerStatus.presentItemsPct,
-            missing: o.flyerStatus.missingItemsPct,
-            wrongPrice: o.flyerStatus.wrongPricePct
-          }))
-        : displayAccountGroups.slice(0, 6).map((g) => {
-            const len = Math.max(1, g.outlets.length);
-            const present = Math.round(
-              g.outlets.reduce((s, o) => s + o.flyerStatus.presentItemsPct, 0) / len
-            );
-            const missing = Math.round(
-              g.outlets.reduce((s, o) => s + o.flyerStatus.missingItemsPct, 0) / len
-            );
-            return {
-              id: g.account,
-              label: g.account,
-              present,
-              missing,
-              wrongPrice: Math.max(2, 100 - present - missing)
-            };
           });
-
-    // Execution: Competitor Promos Filtered by Category, Account & Outlet
-    const filteredCompetitorPromos = pjpData.competitorPromos.filter((cp) => {
-      if (categoryFilter !== 'All' && cp.category !== categoryFilter) return false;
-      if (accountFilter !== 'All' && cp.account !== accountFilter) return false;
-      if (outletFilter !== 'All') {
-        const selectedOutletObj = pjpData.allOutlets.find((o) => o.id === outletFilter);
-        if (selectedOutletObj) {
-          return (
-            cp.outletName.toLowerCase().includes(selectedOutletObj.branch.toLowerCase()) ||
-            cp.account === selectedOutletObj.account
+          const grpMton = Number(
+            fallbackOutlets.reduce((s, o) => s + o.filteredMton, 0).toFixed(1)
           );
+          const grpSos =
+            fallbackOutlets.length > 0
+              ? Math.round(
+                  fallbackOutlets.reduce((s, o) => s + o.filteredSos, 0) /
+                    fallbackOutlets.length
+                )
+              : 0;
+          resolvedGroup = {
+            account: rawGrp.account,
+            outlets: fallbackOutlets,
+            mton: grpMton,
+            sharePct: 0,
+            sosPct: grpSos,
+            oosTotals: {
+              Flour: rawGrp.outlets.reduce((s, o) => s + o.oosByCategory.Flour, 0),
+              'Edible Oil': rawGrp.outlets.reduce(
+                (s, o) => s + o.oosByCategory['Edible Oil'],
+                0
+              ),
+              Pasta: rawGrp.outlets.reduce((s, o) => s + o.oosByCategory.Pasta, 0)
+            },
+            oosVerifiedTotals: {
+              Flour: rawGrp.outlets.some((o) => o.oosProvenanceByCategory.Flour !== 'unavailable'),
+              'Edible Oil': rawGrp.outlets.some(
+                (o) => o.oosProvenanceByCategory['Edible Oil'] !== 'unavailable'
+              ),
+              Pasta: rawGrp.outlets.some((o) => o.oosProvenanceByCategory.Pasta !== 'unavailable')
+            }
+          };
         }
       }
-      return true;
-    });
-
-    return {
-      totalMton,
-      avgSos,
-      oosPct,
-      pjpBase,
-      gauge: {
-        pct: achievementPct,
-        mtd: mtdMton,
-        target: scaledTarget,
-        pace: pacePct,
-        remaining: remainingMton,
-        perDay: (remainingMton / remainingDays).toFixed(1),
-        dash: `${(Math.min(achievementPct / 100, 1) * arcLen).toFixed(1)} 400`,
-        tx1: (163 - 83 * Math.cos(phi)).toFixed(1),
-        ty1: (118 - 83 * Math.sin(phi)).toFixed(1),
-        tx2: (163 - 107 * Math.cos(phi)).toFixed(1),
-        ty2: (118 - 107 * Math.sin(phi)).toFixed(1)
-      },
-      salesChart: {
-        actualPath,
-        areaPath: `${actualPath} L${lastDotX} ${H} L0 ${H} Z`,
-        targetPath: `M0 ${H} L${W} ${yAt(scaledTarget)}`,
-        dotX: lastDotX,
-        dotY: yAt(mtdMton),
-        startLabel:
-          fromDate.year === toDate.year
-            ? formatCompactCalendarDate(fromDate)
-            : formatShortCalendarDate(fromDate),
-        midLabel:
-          isInsidePjpMonth &&
-          fromDate.day === 1 &&
-          toDate.day >= scheduleMeta.cutoffDay
-            ? `${scheduleMeta.cutoffDay} ${scheduleMeta.monthShort}`
-            : undefined,
-        endLabel:
-          fromDate.year === toDate.year
-            ? formatCompactCalendarDate(toDate)
-            : formatShortCalendarDate(toDate)
-      },
-      subCategories,
-      displayAccountGroups,
-      accountDonutSegments,
-      sosCategoryRows,
-      sosTrend,
-      posmMetrics,
-      flyerDonut,
-      flyerBreakdownRows,
-      filteredCompetitorPromos
-    };
-  }, [
-    scopedOutlets,
-    pjpData,
-    scheduleMeta,
-    accountFilter,
-    outletFilter,
-    categoryFilter,
-    fromDate,
-    toDate,
-    isInsidePjpMonth,
-    totalSelectedDaysCount,
-    observedStartDay,
-    observedEndDay,
-    sliceDaysCount,
-    periodScale,
-    isDark
-  ]);
-
-  // --- LIVE Planogram Compliance Score ---
-  const livePlanogram = useMemo(() => {
-    const filteredRouteOutlets = outlets.filter((o) => {
-      const acct = normalizeAccountLabel(o.account, o.name);
-      if (accountFilter !== 'All' && acct !== accountFilter) return false;
-      if (outletFilter !== 'All') {
-        const targetOutlet = pjpData.allOutlets.find((m) => m.id === outletFilter);
-        if (targetOutlet) {
-          const matchesId = o.id === targetOutlet.id;
-          const matchesCode = Boolean(o.code && targetOutlet.code && o.code === targetOutlet.code);
-          const matchesBranch = o.branch.toLowerCase() === targetOutlet.branch.toLowerCase();
-          if (!matchesId && !matchesCode && !matchesBranch) return false;
-        }
-      }
-      return true;
-    });
-
-    const matchingAudits: Array<{ outlet: Outlet; audit: CategoryAuditRecord }> = [];
-    filteredRouteOutlets.forEach((outlet) => {
-      activeCategories.forEach((cat) => {
-        const record = audits[`${outlet.id}_${cat}`];
-        if (record?.planogramCompliance?.hasPlanogram) {
-          matchingAudits.push({ outlet, audit: record });
-        }
-      });
-    });
-
-    if (matchingAudits.length === 0) {
-      return {
-        hasData: false,
-        overallScore: 0,
-        compliantCount: 0,
-        partialCount: 0,
-        nonCompliantCount: 0,
-        evaluatedAudits: 0,
-        evaluatedStores: 0,
-        totalPlannedStores: filteredRouteOutlets.length,
-        avgBrandPct: 0,
-        avgCompanyPct: 0,
-        activePlanogramTemplates: planograms.length
-      };
+      if (!resolvedGroup) return null;
+      return (
+        <AccountDetailView
+          accountGroup={resolvedGroup}
+          onBack={handleCloseDrilldown}
+          onSelectOutlet={(outletId) =>
+            setDrilldown({ type: 'outlet', outletId })
+          }
+          onScopeToAccount={(account) => {
+            analytics.handleAccountDropdownChange(account);
+            handleCloseDrilldown();
+          }}
+        />
+      );
     }
-
-    const totalScore = matchingAudits.reduce(
-      (s, x) => s + (x.audit.planogramCompliance?.overallScore || 0),
-      0
-    );
-    const totalBrandPct = matchingAudits.reduce(
-      (s, x) => s + (x.audit.planogramCompliance?.brandWisePct || 0),
-      0
-    );
-    const totalCompanyPct = matchingAudits.reduce(
-      (s, x) => s + (x.audit.planogramCompliance?.companyWisePct || 0),
-      0
-    );
-
-    return {
-      hasData: true,
-      overallScore: Math.round(totalScore / matchingAudits.length),
-      compliantCount: matchingAudits.filter(
-        (x) => x.audit.planogramCompliance?.overallStatus === 'COMPLIANT'
-      ).length,
-      partialCount: matchingAudits.filter(
-        (x) => x.audit.planogramCompliance?.overallStatus === 'PARTIAL'
-      ).length,
-      nonCompliantCount: matchingAudits.filter(
-        (x) => x.audit.planogramCompliance?.overallStatus === 'NON-COMPLIANT'
-      ).length,
-      evaluatedAudits: matchingAudits.length,
-      evaluatedStores: new Set(matchingAudits.map((x) => x.outlet.id)).size,
-      totalPlannedStores: filteredRouteOutlets.length,
-      avgBrandPct: Math.round(totalBrandPct / matchingAudits.length),
-      avgCompanyPct: Math.round(totalCompanyPct / matchingAudits.length),
-      activePlanogramTemplates: planograms.length
-    };
-  }, [outlets, audits, planograms, accountFilter, outletFilter, pjpData.allOutlets, activeCategories]);
-
-  // --- Productivity & Workhours Schedule Sync from Executive PJP ---
-  const scheduleMetrics = useMemo(() => {
-    const workingDaysAll = Object.keys(scheduleMeta.scheduleByDay)
-      .map(Number)
-      .sort((a, b) => a - b);
-
-    const executedDays = workingDaysAll.filter((d) => d <= scheduleMeta.cutoffDay);
-    const activeCalDay = scheduleMeta.scheduleByDay[selectedDay]
-      ? selectedDay
-      : executedDays[executedDays.length - 1] || workingDaysAll[0] || scheduleMeta.cutoffDay;
-
-    const activeDayEntry = scheduleMeta.scheduleByDay[activeCalDay];
-    const activeCount = activeDayEntry ? activeDayEntry.plannedCount : 0;
-    const activeCompleted = activeDayEntry ? activeDayEntry.completedCount : 0;
-    const isFutureDay = activeCalDay > scheduleMeta.cutoffDay;
-    const wdLabel = getWeekdayShort(scheduleMeta.year, scheduleMeta.month, activeCalDay);
-
-    const punches =
-      activeCompleted > 0 ? generateVisitPunches(activeCalDay, activeCompleted) : [];
-    const daySummaryText = activeDayEntry
-      ? isFutureDay
-        ? `${wdLabel} ${activeCalDay} ${scheduleMeta.monthShort} · Planned route: ${activeCount} scheduled outlets`
-        : `${wdLabel} ${activeCalDay} ${scheduleMeta.monthShort} · ${activeCompleted} of ${activeCount} scheduled outlets · ${
-            punches.length > 0
-              ? `${formatHourClock(punches[0][0])} to ${formatHourClock(
-                  punches[punches.length - 1][1]
-                )}`
-              : 'No punches'
-          }`
-      : `${wdLabel} ${activeCalDay} ${scheduleMeta.monthShort} · Day off / no PJP visits scheduled`;
-
-    const ganttAnchorIdx = Math.max(
-      0,
-      executedDays.indexOf(
-        activeCalDay <= scheduleMeta.cutoffDay
-          ? activeCalDay
-          : executedDays[executedDays.length - 1] || 1
-      )
-    );
-    const ganttStartIdx = Math.max(0, ganttAnchorIdx - 4);
-    const ganttDays = executedDays.slice(ganttStartIdx, ganttStartIdx + 5).map((d) => {
-      const entry = scheduleMeta.scheduleByDay[d];
-      const visits = generateVisitPunches(d, Math.max(1, entry?.completedCount || 4));
-      const first = visits[0][0];
-      const last = visits[visits.length - 1][1];
-      return {
-        day: d,
-        label: `${getWeekdayShort(scheduleMeta.year, scheduleMeta.month, d)} ${d}`,
-        isSelected: d === activeCalDay,
-        spanLeftPct: ((first - 7) / 11) * 100,
-        spanWidthPct: ((last - first) / 11) * 100,
-        blocks: visits.map((b) => ({
-          leftPct: ((b[0] - 7) / 11) * 100,
-          widthPct: ((b[1] - b[0]) / 11) * 100,
-          title: `${formatHourClock(b[0])}–${formatHourClock(b[1])}`
-        }))
-      };
-    });
-
-    const startTimeDots = executedDays.map((d, i) => {
-      const entry = scheduleMeta.scheduleByDay[d];
-      const firstStart = generateVisitPunches(d, Math.max(1, entry?.completedCount || 4))[0][0];
-      return {
-        day: d,
-        leftPct: ((firstStart - 7) / 3) * 100,
-        topPx: 5 + (i % 3) * 12,
-        isLate: firstStart > 8.2,
-        isSelected: d === activeCalDay,
-        timeStr: formatHourClock(firstStart)
-      };
-    });
-
-    const maxPlanned = Math.max(
-      6,
-      ...workingDaysAll.map((d) => scheduleMeta.scheduleByDay[d]?.plannedCount || 0)
-    );
-    const avgPlanned =
-      workingDaysAll.length > 0
-        ? Math.round(
-            workingDaysAll.reduce(
-              (s, d) => s + (scheduleMeta.scheduleByDay[d]?.plannedCount || 0),
-              0
-            ) / workingDaysAll.length
-          )
-        : 6;
-
-    return {
-      workingDaysAll,
-      executedDays,
-      activeCalDay,
-      activeDayEntry,
-      daySummaryText,
-      ganttDays,
-      startTimeDots,
-      maxPlanned,
-      targetLow: Math.max(3, avgPlanned - 1)
-    };
-  }, [scheduleMeta, selectedDay]);
-
-  const selectedOosOutletDetail = useMemo(() => {
-    if (!selectedOosCell) return null;
-    const found = pjpData.allOutlets.find((o) => o.id === selectedOosCell.outletId);
-    if (!found) return null;
-    return {
-      outletName: found.name,
-      category: selectedOosCell.category,
-      skuCount: found.oosByCategory[selectedOosCell.category],
-      lastVisit: found.lastVisit,
-      photoUrl: found.shelfPhotoUrl || null
-    };
-  }, [selectedOosCell, pjpData.allOutlets]);
-
-  const hasFilters =
-    compareCalendarDates(fromDate, defaultFromDate) !== 0 ||
-    compareCalendarDates(toDate, defaultToDate) !== 0 ||
-    categoryFilter !== 'All' ||
-    accountFilter !== 'All' ||
-    outletFilter !== 'All';
-
-  const handleResetFilters = () => {
-    setFromDate(defaultFromDate);
-    setToDate(defaultToDate);
-    setCategoryFilter('All');
-    setAccountFilter('All');
-    setOutletFilter('All');
-    setExpandedAccounts({});
-    setExpandedOosAccounts({});
-    setSelectedOosCell(null);
-    setSelectedPosmKey(null);
-    setSelectedPromoId(null);
-    setSelectedDay(scheduleMeta.cutoffDay);
+    if (drilldown.type === 'outlet') {
+      const outlet = analytics.basePjpData.allOutlets.find(
+        (o) => o.id === drilldown.outletId
+      );
+      if (!outlet) return null;
+      return (
+        <OutletDetailView
+          outlet={outlet}
+          initialCategory={
+            drilldown.initialCategory ||
+            (analytics.categoryFilter !== 'All' ? analytics.categoryFilter : 'Flour')
+          }
+          onBack={handleCloseDrilldown}
+          onScopeToOutlet={(target) => {
+            analytics.setAccountFilter(target.account);
+            analytics.setOutletFilter(target.id);
+            handleCloseDrilldown();
+          }}
+          onOpenEvidence={(payload) => setEvidencePayload(payload)}
+        />
+      );
+    }
+    if (drilldown.type === 'availability') {
+      const outlet = analytics.basePjpData.allOutlets.find(
+        (o) => o.id === drilldown.outletId
+      );
+      if (!outlet) return null;
+      return (
+        <AvailabilityDetailView
+          outlet={outlet}
+          category={drilldown.category}
+          onBack={handleCloseDrilldown}
+          onOpenOutlet={() =>
+            setDrilldown({
+              type: 'outlet',
+              outletId: outlet.id,
+              initialCategory: drilldown.category
+            })
+          }
+          onOpenEvidence={(payload) => setEvidencePayload(payload)}
+        />
+      );
+    }
+    if (drilldown.type === 'promotions') {
+      return (
+        <PromotionIntelligenceView
+          analytics={analytics}
+          onBack={handleCloseDrilldown}
+          isDark={isDark}
+        />
+      );
+    }
+    if (drilldown.type === 'journey') {
+      return (
+        <DailyJourneyDetailView
+          analytics={analytics}
+          day={drilldown.day}
+          onBack={handleCloseDrilldown}
+          onSelectOutlet={(outletId) =>
+            setDrilldown({ type: 'outlet', outletId })
+          }
+        />
+      );
+    }
+    return null;
   };
 
-  const selectedPosmObj =
-    selectedPosmKey
-      ? metrics.posmMetrics.find((p) => p.key === selectedPosmKey) || null
-      : null;
-  const selectedPromoObj =
-    selectedPromoId
-      ? metrics.filteredCompetitorPromos.find((p) => p.id === selectedPromoId) || null
-      : null;
+  const renderWorkspaceContent = () => {
+    switch (activeWorkspace) {
+      case 'sales':
+        return <SalesWorkspace analytics={analytics} isDark={isDark} />;
+      case 'accounts':
+        return (
+          <AccountsWorkspace
+            analytics={analytics}
+            onDrilldown={handleOpenDrilldown}
+            isDark={isDark}
+          />
+        );
+      case 'shelf':
+        return (
+          <ShelfWorkspace
+            analytics={analytics}
+            onDrilldown={handleOpenDrilldown}
+            isDark={isDark}
+          />
+        );
+      case 'execution':
+        return (
+          <ExecutionWorkspace
+            analytics={analytics}
+            onDrilldown={handleOpenDrilldown}
+            onNavigateToPendingPjp={props.onNavigateToPendingPjp}
+            isDark={isDark}
+          />
+        );
+      case 'productivity':
+        return (
+          <ProductivityWorkspace
+            analytics={analytics}
+            onDrilldown={handleOpenDrilldown}
+            isDark={isDark}
+          />
+        );
+      case 'workhours':
+        return <WorkhoursWorkspace analytics={analytics} isDark={isDark} />;
+      default:
+        return (
+          <OverviewSummaryView
+            analytics={analytics}
+            onSelectWorkspace={handleSelectWorkspace}
+            onDrilldown={handleOpenDrilldown}
+            isDark={isDark}
+          />
+        );
+    }
+  };
 
   return (
-    <div className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden pb-[calc(84px+env(safe-area-inset-bottom,0px))] md:pb-10 px-4 md:px-6 lg:px-8 pt-4 md:pt-6 animate-fade-in">
-      <div className="max-w-7xl mx-auto space-y-4">
-        {/* 0A. HEADER: Greeting + Sync PJP + Avatar */}
-        <header className="flex items-center justify-between gap-3">
+    <div
+      ref={scrollContainerRef}
+      className="ov-scope flex-1 w-full h-full overflow-y-auto overflow-x-hidden ov-atmospheric-canvas pb-[calc(92px+env(safe-area-inset-bottom,0px))] md:pb-8 px-4 md:px-6 lg:px-8 pt-3 md:pt-5"
+    >
+      <div className="max-w-[1620px] mx-auto space-y-3.5 md:space-y-4">
+        {/* ================================================================
+            A. SINGLE HEADER (Personalized Doha Greeting + Cycle & Sync)
+           ================================================================ */}
+        <header className="flex items-center justify-between gap-3 min-h-[52px]">
           <div className="min-w-0">
-            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-[var(--text-primary)] leading-tight truncate">
-              {getTimeGreeting()}, {executive?.name || 'Safwan Asif'}
-            </h2>
+            {!isDesktopViewport && drilldown ? (
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleCloseDrilldown}
+                  aria-label="Back to Overview"
+                  className="w-10 h-10 rounded-full ov-panel flex items-center justify-center text-[var(--text-primary)] cursor-pointer shrink-0"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-medium text-[var(--text-muted)]">
+                    Overview · {activeWorkspaceLabel}
+                  </div>
+                  <h2 className="font-heading text-2xl font-extrabold text-[var(--text-primary)] leading-none truncate">
+                    Intelligence Detail
+                  </h2>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--text-secondary)]">
+                  <span className="truncate font-semibold text-[#0066FF] dark:text-[#00C8FF]">
+                    {greeting}, {execName}
+                  </span>
+                  <span className="text-[var(--text-muted)]">·</span>
+                  <span className="text-[var(--text-muted)] truncate">
+                    {dateLabel}
+                    <span className="hidden md:inline"> · {execTerritory}</span>
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2.5 mt-0.5">
+                  <h2 className="font-heading text-[30px] md:text-[34px] font-extrabold tracking-tight text-[var(--text-primary)] leading-[0.98]">
+                    Overview
+                  </h2>
+                  <span className="hidden sm:inline text-[11px] font-medium text-[var(--text-muted)] ov-tabular">
+                    {analytics.scheduleMeta.monthLabel} PJP Cycle
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
+
           <div className="flex items-center gap-2 shrink-0">
-            {onSyncPjp && (
+            {/* Desktop Inline Scope Popovers aligned cleanly in header */}
+            {isDesktopViewport && (
+              <div className="hidden lg:flex items-center gap-1.5 mr-1">
+                {/* Period + Date Wheel Popover */}
+                <div ref={periodPopoverRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsPeriodPopoverOpen((prev) => !prev)}
+                    aria-haspopup="dialog"
+                    aria-expanded={isPeriodPopoverOpen}
+                    className={`min-h-[36px] px-3 rounded-[12px] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap border ${
+                      isPeriodPopoverOpen || isNonMtdRange
+                        ? 'ov-panel border-[#0066FF]/40 dark:border-[#00C8FF]/45 text-[var(--text-primary)]'
+                        : 'ov-glass-recessed text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <Calendar size={13} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
+                    <span className="font-semibold text-[var(--text-primary)] ov-tabular">
+                      {periodPresetLabel} · {compactRangeLabel}
+                    </span>
+                    <ChevronDown
+                      size={13}
+                      className={`text-[var(--text-muted)] shrink-0 transition-transform duration-150 ${
+                        isPeriodPopoverOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {isPeriodPopoverOpen && (
+                    <div
+                      role="dialog"
+                      aria-label="Reporting period and custom date range"
+                      className="absolute right-0 top-[calc(100%+8px)] z-50 w-[410px] max-w-[92vw] rounded-[20px] ov-glass-strong p-4 space-y-3 animate-fade-in"
+                    >
+                      <div className="grid grid-cols-4 gap-1 p-1 rounded-[12px] ov-glass-recessed">
+                        {PERIOD_PRESETS.map((p) => {
+                          const active = analytics.periodPreset === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => analytics.applyPeriodPreset(p.id)}
+                              className={`min-h-[34px] rounded-[12px] text-xs font-semibold cursor-pointer transition-all ${
+                                active
+                                  ? 'btn-electric-blue text-white'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <WheelDateRangePicker
+                        fromDate={analytics.fromDate}
+                        toDate={analytics.toDate}
+                        defaultFromDate={analytics.defaultFromDate}
+                        defaultToDate={analytics.defaultToDate}
+                        hasAnyFilters={false}
+                        onChangeRange={(f, t) => {
+                          analytics.applyPeriodPreset('custom');
+                          analytics.setFromDate(f);
+                          analytics.setToDate(t);
+                        }}
+                        onResetAllFilters={analytics.handleResetFilters}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <GlassScopePopover
+                  label="Category"
+                  displayValue={
+                    analytics.categoryFilter === 'All' ? 'All' : analytics.categoryFilter
+                  }
+                  value={analytics.categoryFilter}
+                  options={categoryOptions}
+                  onChange={(val) => analytics.setCategoryFilter(val as CategoryFilter)}
+                />
+
+                <GlassScopePopover
+                  label="Account"
+                  displayValue={
+                    analytics.accountFilter === 'All' ? 'All' : analytics.accountFilter
+                  }
+                  value={analytics.accountFilter}
+                  options={accountOptions}
+                  onChange={(val) => analytics.handleAccountDropdownChange(val)}
+                  searchable
+                  searchPlaceholder="Search chain…"
+                />
+
+                <GlassScopePopover
+                  label="Outlet"
+                  displayValue={activeOutletLabel}
+                  value={analytics.outletFilter}
+                  options={outletOptions}
+                  onChange={(val) => analytics.setOutletFilter(val)}
+                  searchable
+                  searchPlaceholder="Search outlet or SAP…"
+                  align="right"
+                />
+              </div>
+            )}
+
+            {isDesktopViewport && analytics.hasFilters && (
               <button
                 type="button"
-                onClick={onSyncPjp}
-                disabled={isSyncingPjp}
-                title="Sync assigned PJP accounts & outlets"
-                className="min-h-[40px] px-3 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-60 transition-colors"
+                onClick={analytics.handleResetFilters}
+                className="min-h-[36px] px-3 rounded-[12px] ov-glass-recessed text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center gap-1.5 cursor-pointer"
               >
-                <RefreshCw size={13} className={isSyncingPjp ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">
-                  {isSyncingPjp ? 'Syncing PJP' : 'Sync PJP'}
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsFilterSheetOpen(true)}
+              aria-label="Open reporting scope and filters"
+              className="lg:hidden relative w-10 h-10 rounded-[12px] ov-panel flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+            >
+              <SlidersHorizontal size={16} />
+              {activeFilterCount > 0 && (
+                <span
+                  aria-label={`${activeFilterCount} active filters`}
+                  className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-[#0066FF] text-white text-[10px] font-bold flex items-center justify-center ov-tabular"
+                >
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {props.onSyncPjp && (
+              <button
+                type="button"
+                onClick={props.onSyncPjp}
+                disabled={props.isSyncingPjp}
+                aria-label="Sync live PJP and Sheet 2 data"
+                title="Sync live PJP & Sheet 2 data"
+                className="w-10 h-10 md:w-auto md:h-auto md:min-h-[36px] md:px-3.5 rounded-[12px] ov-panel text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                <RefreshCw
+                  size={15}
+                  className={props.isSyncingPjp ? 'animate-spin text-[#00C8FF]' : 'text-[#0066FF] dark:text-[#00C8FF]'}
+                />
+                <span className="hidden md:inline">
+                  {props.isSyncingPjp ? 'Syncing…' : 'Sync PJP'}
                 </span>
               </button>
             )}
           </div>
         </header>
 
-        {selectedMapOutlet && (
-          <div className="glass-panel rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 border border-sky-500/35">
+        {/* ================================================================
+            GEOINTEL CONTEXT BANNER (Only when routed from Map selection)
+           ================================================================ */}
+        {props.selectedMapOutlet && (
+          <div className="ov-panel-elevated rounded-[14px] px-3.5 py-2 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-500">
-                Selected from GeoIntel · {selectedMapOutlet.id}
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#0066FF] dark:text-[#00C8FF]">
+                GeoIntel Context · {props.selectedMapOutlet.id}
               </span>
-              <p className="text-xs font-bold text-[var(--text-primary)] truncate">
-                {selectedMapOutlet.name} · {selectedMapOutlet.area}
+              <p className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                {props.selectedMapOutlet.name} · {props.selectedMapOutlet.area}
               </p>
             </div>
-            {onClearMapOutlet && (
+            {props.onClearMapOutlet && (
               <button
                 type="button"
                 onClick={() => {
-                  onClearMapOutlet();
-                  handleResetFilters();
+                  props.onClearMapOutlet?.();
+                  analytics.handleResetFilters();
                 }}
-                className="min-h-[36px] px-2.5 rounded-xl text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer shrink-0"
+                className="min-h-[32px] px-2.5 rounded-[12px] ov-glass-recessed text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
               >
                 Clear
               </button>
@@ -1096,1993 +689,247 @@ export const HomeAnalyticsScreen: React.FC<HomeAnalyticsScreenProps> = ({
           </div>
         )}
 
-        {/* 0B. GLOBAL FILTERS CARD: Cylindrical Wheel/Drum From/To Date Picker + 3-Col Cascading Filters */}
-        <section className="glass-panel rounded-2xl p-3.5 md:p-4 space-y-3 relative z-20">
-          {/* Row 1: iOS-Style Scroll-Snap Wheel/Drum From & To Picker */}
-          <WheelDateRangePicker
-            fromDate={fromDate}
-            toDate={toDate}
-            defaultFromDate={defaultFromDate}
-            defaultToDate={defaultToDate}
-            hasAnyFilters={hasFilters}
-            onChangeRange={(nextFrom, nextTo) => {
-              setFromDate(nextFrom);
-              setToDate(nextTo);
-            }}
-            onResetAllFilters={handleResetFilters}
-          />
+        {/* ================================================================
+            B. MOBILE COMPACT FILTER STRIP + 7-TAB SCROLLABLE RAIL (< 768px)
+           ================================================================ */}
+        {!isDesktopViewport && !drilldown && (
+          <div className="space-y-2.5">
+            {/* Compact Period Presets + Scope Trigger */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex items-center gap-1 p-1 rounded-[12px] ov-glass-recessed shrink-0">
+                {PERIOD_PRESETS.filter((p) => p.id !== 'custom').map((p) => {
+                  const active = analytics.periodPreset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => analytics.applyPeriodPreset(p.id)}
+                      className={`min-h-[28px] px-2.5 rounded-[9px] text-[11px] font-semibold cursor-pointer transition-colors ${
+                        active
+                          ? 'btn-electric-blue text-white'
+                          : 'text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
 
-          {/* Row 2: 3-Column Cascading Filters on Desktop (Category, Account Name, Outlet Name) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">
-              Category
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
-                className="min-h-[44px] px-3 rounded-xl glass-subtle text-xs sm:text-[13px] font-semibold text-[var(--text-primary)] bg-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] cursor-pointer"
+              <button
+                type="button"
+                onClick={() => setIsFilterSheetOpen(true)}
+                className="flex-1 min-w-0 min-h-[34px] px-2.5 rounded-[12px] ov-panel inline-flex items-center justify-between gap-1.5 text-[11px] font-medium text-[var(--text-secondary)] cursor-pointer"
               >
-                <option value="All" className="text-slate-900">
-                  All categories
-                </option>
-                <option value="Flour" className="text-slate-900">
-                  Flour
-                </option>
-                <option value="Edible Oil" className="text-slate-900">
-                  Edible Oil
-                </option>
-                <option value="Pasta" className="text-slate-900">
-                  Pasta
-                </option>
-              </select>
-            </label>
+                <span className="truncate ov-tabular">{mobileScopeLine}</span>
+                <ChevronDown size={13} className="text-[var(--text-muted)] shrink-0" />
+              </button>
 
-            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">
-              Account Name
-              <select
-                value={accountFilter}
-                onChange={(e) => handleAccountDropdownChange(e.target.value)}
-                className="min-h-[44px] px-3 rounded-xl glass-subtle text-xs sm:text-[13px] font-semibold text-[var(--text-primary)] bg-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] cursor-pointer"
+              {analytics.hasFilters && (
+                <button
+                  type="button"
+                  onClick={analytics.handleResetFilters}
+                  aria-label="Reset filters"
+                  className="min-h-[34px] px-2.5 rounded-[12px] ov-glass-recessed text-[11px] font-semibold text-[#0066FF] dark:text-[#00C8FF] shrink-0 cursor-pointer"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {isNonMtdRange && (
+              <p className="text-[11px] text-[var(--text-muted)] leading-snug px-0.5">
+                Sales &amp; PJP follow selected dates · SOS, Planogram &amp; Availability reflect latest audits
+              </p>
+            )}
+
+            {/* Mobile Horizontally Scrollable 7-Tab Analytical Rail */}
+            <LayoutGroup id="ov-mobile-workspaces">
+              <div
+                className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"
+                role="tablist"
+                aria-label="Overview analytical domains"
               >
-                <option value="All" className="text-slate-900">
-                  All accounts ({pjpData.accounts.length})
-                </option>
-                {pjpData.accounts.map((grp) => (
-                  <option
-                    key={grp.account}
-                    value={grp.account}
-                    className="text-slate-900"
-                  >
-                    {grp.account} ({grp.outlets.length})
-                  </option>
-                ))}
-              </select>
-            </label>
+                {WORKSPACE_TABS.map((tab) => {
+                  const active = activeWorkspace === tab.id;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => handleSelectWorkspace(tab.id)}
+                      className={`relative min-h-[36px] px-3 rounded-[12px] text-xs font-semibold flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors ${
+                        active
+                          ? 'text-white'
+                          : 'ov-panel text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId="ov-mobile-tab-pill"
+                          transition={
+                            shouldReduceMotion
+                              ? { duration: 0 }
+                              : { type: 'spring', stiffness: 460, damping: 34 }
+                          }
+                          className="absolute inset-0 rounded-[12px] btn-electric-blue"
+                        />
+                      )}
+                      <Icon size={13} className="relative z-10 shrink-0" />
+                      <span className="relative z-10 whitespace-nowrap">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </LayoutGroup>
+          </div>
+        )}
 
-            <label className="flex flex-col gap-1 text-[11px] font-semibold text-[var(--text-secondary)]">
-              Outlet Name
-              <select
-                value={outletFilter}
-                onChange={(e) => {
-                  setOutletFilter(e.target.value);
-                  setSelectedOosCell(null);
-                }}
-                className="min-h-[44px] px-3 rounded-xl glass-subtle text-xs sm:text-[13px] font-semibold text-[var(--text-primary)] bg-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] cursor-pointer"
+        {/* ================================================================
+            DESKTOP / TABLET BALANCED 7-TAB SEGMENTED BAR (md+)
+           ================================================================ */}
+        <div className="hidden md:block space-y-1.5 relative z-20">
+          <div className="ov-panel rounded-[16px] p-1.5">
+            <LayoutGroup id="ov-desktop-workspaces">
+              <div
+                className="grid grid-cols-7 gap-1"
+                role="tablist"
+                aria-label="Overview analytical domains"
               >
-                <option value="All" className="text-slate-900">
-                  All outlets ({availableOutletsForDropdown.length})
-                </option>
-                {availableOutletsForDropdown.map((o) => (
-                  <option key={o.id} value={o.id} className="text-slate-900">
-                    {accountFilter === 'All' ? `${o.account} — ${o.branch}` : o.branch}
-                    {o.code ? ` · ${o.code}` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </section>
-
-        {/* 0C. SYMMETRICAL 5-TILE KPI STRIP (3+2 Balanced Mobile Grid -> 5 Equal Columns Desktop) */}
-        <div className="grid grid-cols-6 md:grid-cols-5 gap-2.5 md:gap-3">
-          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-              Achievement
-            </div>
-            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
-              {metrics.gauge.pct}%
-            </div>
-          </div>
-
-          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-              SOS
-            </div>
-            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
-              {metrics.avgSos}%
-            </div>
-          </div>
-
-          <div className="col-span-2 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-              PJP
-            </div>
-            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
-              {metrics.pjpBase}%
-            </div>
+                {WORKSPACE_TABS.map((tab) => {
+                  const active = activeWorkspace === tab.id;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => handleSelectWorkspace(tab.id)}
+                      className={`relative min-h-[36px] px-2 rounded-[11px] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        active
+                          ? 'text-white'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
+                      }`}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId="ov-desktop-tab-pill"
+                          transition={
+                            shouldReduceMotion
+                              ? { duration: 0 }
+                              : { type: 'spring', stiffness: 460, damping: 34 }
+                          }
+                          className="absolute inset-0 rounded-[11px] btn-electric-blue"
+                        />
+                      )}
+                      <Icon size={13} className="relative z-10 shrink-0" />
+                      <span className="relative z-10 truncate">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </LayoutGroup>
           </div>
 
-          <div className="col-span-3 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-              OOS
-            </div>
-            <div
-              className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums mt-1"
-              style={{ color: metrics.oosPct >= 15 ? crimsonColor : 'var(--text-primary)' }}
-            >
-              {metrics.oosPct}%
-            </div>
-          </div>
-
-          <div className="col-span-3 md:col-span-1 glass-panel rounded-2xl p-3 md:p-3.5 flex flex-col justify-between">
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[11px] font-semibold text-[var(--text-secondary)] truncate">
-                Planogram
-              </span>
-              <span className="text-[10px] font-bold text-[var(--accent-primary)] shrink-0">
-                Live
-              </span>
-            </div>
-            <div className="text-xl sm:text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)] mt-1">
-              {livePlanogram.hasData ? `${livePlanogram.overallScore}%` : '—'}
-            </div>
-          </div>
+          {isNonMtdRange && (
+            <p className="text-[11px] text-[var(--text-muted)] px-1">
+              Sales pace &amp; PJP follow selected dates · SOS, Planogram &amp; Availability reflect latest outlet audits
+            </p>
+          )}
         </div>
 
-        {/* 0D. UNIFIED SINGLE-DASHBOARD TABBED WORKSPACE */}
-        <section
-          aria-label="Analytics Dashboard"
-          className="glass-panel rounded-[22px] overflow-hidden"
-        >
-          {/* Full-Width Symmetrical 7-Column Segmented Tab Bar (Zero-Scroll Mobile Icon Row + Equal Desktop Bar) */}
-          <div
-            role="tablist"
-            aria-label="Analytics section view tabs"
-            className={`grid grid-cols-7 gap-0.5 sm:gap-1 md:gap-1.5 p-1.5 md:p-2 border-b border-[var(--border-glass)] ${
-              isDark ? 'bg-white/[0.025]' : 'bg-black/[0.02]'
-            }`}
-          >
-            {VIEW_TABS.map((tab) => {
-              const active = activeTab === tab.id;
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  id={`dashboard-tab-${tab.id}`}
-                  role="tab"
-                  type="button"
-                  aria-selected={active}
-                  aria-controls={`dashboard-panel-${activeTab}`}
-                  onClick={() =>
-                    setActiveTab((prev) =>
-                      tab.id !== 'all' && prev === tab.id ? 'all' : tab.id
-                    )
-                  }
-                  className={`min-h-[50px] md:min-h-[44px] px-0.5 sm:px-2 md:px-3 py-1.5 rounded-xl md:rounded-2xl flex flex-col md:flex-row items-center justify-center gap-1 md:gap-1.5 transition-all duration-150 cursor-pointer active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)] ${
-                    active
-                      ? 'btn-electric-blue text-white font-bold'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-black/[0.04] dark:hover:bg-[#0B2542]/60 font-semibold'
-                  }`}
-                >
-                  <Icon size={16} strokeWidth={active ? 2.25 : 1.85} className="shrink-0" />
-                  <span className="md:hidden text-[9.5px] sm:text-[10px] leading-none whitespace-nowrap tracking-tight">
-                    {tab.mobileLabel}
-                  </span>
-                  <span className="hidden md:inline text-xs leading-none whitespace-nowrap truncate">
-                    {tab.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Dashboard Content Viewport (All 6 Sections by Default, or Focused Single Section) */}
-          <div
-            key={activeTab}
-            id={`dashboard-panel-${activeTab}`}
-            role="tabpanel"
-            aria-labelledby={`dashboard-tab-${activeTab}`}
-            className="p-3 sm:p-4 md:p-5 animate-fade-in"
-          >
-            <div
-              className={
-                activeTab === 'all'
-                  ? 'grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-5 items-stretch'
-                  : 'grid grid-cols-1 gap-4'
-              }
+        {/* ================================================================
+            VIEWPORT: Mobile Drilldown vs Active Workspace
+           ================================================================ */}
+        <AnimatePresence mode="wait">
+          {!isDesktopViewport && drilldown ? (
+            <motion.div
+              key={`mobile-drilldown-${drilldown.type}`}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
             >
-        {/* ============================================================
-            TAB 1: SALES
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'sales') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Sales
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                  Target vs achievement · MTON ({formatShortCalendarDate(fromDate)} –{' '}
-                  {formatShortCalendarDate(toDate)})
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('sales')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-stretch">
-              {/* 1.1 Achievement Gauge */}
-              <div className="flex flex-col items-center">
-                <svg
-                  viewBox="0 0 326 130"
-                  className="w-full max-w-[340px] h-auto"
-                  role="img"
-                  aria-label="Achievement gauge"
-                >
-                  <path
-                    d="M 68 118 A 95 95 0 0 1 258 118"
-                    fill="none"
-                    stroke={neutralBarTrack}
-                    strokeWidth="16"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="M 68 118 A 95 95 0 0 1 258 118"
-                    fill="none"
-                    stroke={tealColor}
-                    strokeWidth="16"
-                    strokeLinecap="round"
-                    strokeDasharray={metrics.gauge.dash}
-                  />
-                  <line
-                    x1={metrics.gauge.tx1}
-                    y1={metrics.gauge.ty1}
-                    x2={metrics.gauge.tx2}
-                    y2={metrics.gauge.ty2}
-                    stroke={primaryInk}
-                    strokeWidth="2.2"
-                  />
-                  <text
-                    x="163"
-                    y="98"
-                    textAnchor="middle"
-                    fontSize="30"
-                    fontWeight="800"
-                    fill={primaryInk}
-                    style={{ fontVariantNumeric: 'tabular-nums' }}
-                  >
-                    {metrics.gauge.pct}%
-                  </text>
-                  <text
-                    x="163"
-                    y="116"
-                    textAnchor="middle"
-                    fontSize="11"
-                    fontWeight="600"
-                    fill={mutedInk}
-                    style={{ fontVariantNumeric: 'tabular-nums' }}
-                  >
-                    {metrics.gauge.mtd} of {metrics.gauge.target} MTON
-                  </text>
-                </svg>
-
-                <div className="w-full max-w-[340px] flex items-center justify-between text-xs text-[var(--text-secondary)] mt-2 tabular-nums">
-                  <span>Tick = pace ({metrics.gauge.pace}%)</span>
-                  <span>
-                    <strong className="text-[var(--text-primary)] font-bold">
-                      {metrics.gauge.remaining}
-                    </strong>{' '}
-                    left ·{' '}
-                    <strong className="text-[var(--text-primary)] font-bold">
-                      {metrics.gauge.perDay}
-                    </strong>
-                    /day needed
-                  </span>
-                </div>
-              </div>
-
-              {/* 1.2 Daily Sales vs Target Pace */}
-              <div>
-                <div className="text-xs font-bold text-[var(--text-primary)] mb-2">
-                  Daily sales vs target pace
-                </div>
-                <svg
-                  viewBox="0 0 326 126"
-                  className="w-full h-auto block"
-                  role="img"
-                  aria-label="Cumulative sales against target pace"
-                >
-                  <line x1="0" y1="125" x2="326" y2="125" stroke={axisLineColor} />
-                  <line x1="0" y1="63" x2="326" y2="63" stroke={gridLineColor} />
-                  <path d={metrics.salesChart.areaPath} fill={tealColor} opacity="0.14" />
-                  <path
-                    d={metrics.salesChart.targetPath}
-                    fill="none"
-                    stroke={mutedInk}
-                    strokeWidth="1.5"
-                    strokeDasharray="4 4"
-                  />
-                  <path
-                    d={metrics.salesChart.actualPath}
-                    fill="none"
-                    stroke={tealColor}
-                    strokeWidth="2.5"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
-                  <circle
-                    cx={metrics.salesChart.dotX}
-                    cy={metrics.salesChart.dotY}
-                    r="4.5"
-                    fill={tealColor}
-                    stroke={isDark ? '#020D1F' : '#FFFFFF'}
-                    strokeWidth="2"
-                  />
-                </svg>
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)] mt-1 tabular-nums">
-                  <span>{metrics.salesChart.startLabel}</span>
-                  {metrics.salesChart.midLabel && <span>{metrics.salesChart.midLabel}</span>}
-                  <span>{metrics.salesChart.endLabel}</span>
-                </div>
-                <div className="flex items-center gap-4 text-[11px] text-[var(--text-secondary)] mt-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3.5 h-0.5 rounded-full inline-block"
-                      style={{ backgroundColor: tealColor }}
-                    />
-                    Actual
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3.5 h-0 border-t-2 border-dashed inline-block"
-                      style={{ borderColor: mutedInk }}
-                    />
-                    Target pace
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 1.3 Achievement by Sub-Category */}
-            <div className="pt-4 border-t border-[var(--border-glass)]">
-              <div className="text-xs font-bold text-[var(--text-primary)] mb-2.5">
-                Achievement by sub-category
-              </div>
-              <div className="space-y-2.5">
-                {metrics.subCategories.map((row) => (
-                  <div
-                    key={row.label}
-                    className={`flex items-center gap-2.5 transition-opacity ${
-                      row.dimmed ? 'opacity-35' : 'opacity-100'
-                    }`}
-                  >
-                    <span className="w-20 text-xs font-medium text-[var(--text-primary)] shrink-0">
-                      {row.label}
-                    </span>
-                    <div
-                      className="flex-1 h-3 rounded-md relative overflow-visible"
-                      style={{ backgroundColor: neutralBarTrack }}
-                    >
-                      <div
-                        className="h-full rounded-md transition-all duration-300"
-                        style={{
-                          width: `${row.widthPct}%`,
-                          backgroundColor: row.onPace ? tealColor : amberColor
-                        }}
-                      />
-                      <div
-                        className="absolute top-[-3px] w-0.5 h-[18px]"
-                        style={{ left: '83.3%', backgroundColor: primaryInk }}
-                        aria-hidden="true"
-                      />
-                    </div>
-                    <span className="w-10 text-right text-xs font-bold tabular-nums text-[var(--text-primary)]">
-                      {row.pct}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] text-[var(--text-muted)] mt-2">
-                Vertical marker = 100% of monthly target
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================
-            TAB 2: ACCOUNT (MTON Donut + Account-to-Outlet Drilldown)
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'account') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Accounts
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                  Tap an account row to drill down into child outlets ranked by MTON contribution
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('account')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            {/* 2.1 Overall MTON Donut Chart */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-5 pb-5 border-b border-[var(--border-glass)]">
-              <svg
-                viewBox="0 0 120 120"
-                className="w-[124px] h-[124px] shrink-0 mx-auto sm:mx-0"
-                role="img"
-                aria-label="MTON sales share by account"
-              >
-                {metrics.accountDonutSegments.map((seg) => (
-                  <circle
-                    key={seg.label}
-                    cx="60"
-                    cy="60"
-                    r="40"
-                    fill="none"
-                    stroke={seg.color}
-                    strokeWidth="18"
-                    strokeDasharray={seg.dash}
-                    strokeDashoffset={seg.off}
-                    transform="rotate(-90 60 60)"
-                  />
-                ))}
-                <text
-                  x="60"
-                  y="58"
-                  textAnchor="middle"
-                  fontSize="17"
-                  fontWeight="800"
-                  fill={primaryInk}
-                  style={{ fontVariantNumeric: 'tabular-nums' }}
-                >
-                  {Math.round(metrics.totalMton)}
-                </text>
-                <text
-                  x="60"
-                  y="73"
-                  textAnchor="middle"
-                  fontSize="10"
-                  fontWeight="600"
-                  fill={mutedInk}
-                >
-                  MTON
-                </text>
-              </svg>
-
-              <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {metrics.accountDonutSegments.map((seg) => (
-                  <div key={seg.label} className="flex items-center gap-2 text-xs">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: seg.color }}
-                    />
-                    <div className="min-w-0">
-                      <div className="font-bold text-[var(--text-primary)] truncate">
-                        {seg.label}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-secondary)] tabular-nums">
-                        {seg.mton} MTON
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 2.2 Interactive Account-to-Outlet Accordion Drilldown Rows */}
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-bold text-[var(--text-primary)]">
-                <span>
-                  Account vs account ({metrics.displayAccountGroups.length})
-                </span>
-                <span className="text-[11px] font-medium text-[var(--text-muted)]">
-                  Category: {categoryFilter}
-                </span>
-              </div>
-
-              {metrics.displayAccountGroups.map((grp, idx) => {
-                const isExpanded = Boolean(expandedAccounts[grp.account]);
-                const maxAccMton = Math.max(
-                  1,
-                  metrics.displayAccountGroups[0]?.mton || 1
-                );
-                const accColor =
-                  accountColorPalette[idx % accountColorPalette.length];
-
-                return (
-                  <div
-                    key={grp.account}
-                    className="glass-subtle rounded-2xl overflow-hidden transition-all"
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedAccounts((prev) => ({
-                          ...prev,
-                          [grp.account]: !prev[grp.account]
-                        }))
-                      }
-                      aria-expanded={isExpanded}
-                      className="w-full min-h-[54px] p-3 sm:p-3.5 text-left cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors"
-                    >
-                      <div className="flex items-center gap-2.5 mb-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: accColor }}
-                        />
-                        <span className="flex-1 text-sm font-bold text-[var(--text-primary)] truncate">
-                          {grp.account}
-                        </span>
-                        <span className="text-xs font-semibold tabular-nums text-[var(--text-secondary)] shrink-0">
-                          {grp.mton} MTON · {grp.sosPct}% SOS · {grp.outlets.length} outlets
-                        </span>
-                        {isExpanded ? (
-                          <ChevronDown size={16} className="text-[var(--text-muted)] shrink-0" />
-                        ) : (
-                          <ChevronRight size={16} className="text-[var(--text-muted)] shrink-0" />
-                        )}
-                      </div>
-
-                      <div
-                        className="h-2 rounded mb-1 overflow-hidden"
-                        style={{ backgroundColor: neutralBarTrack }}
-                      >
-                        <div
-                          className="h-full rounded transition-all duration-300"
-                          style={{
-                            width: `${((grp.mton / maxAccMton) * 100).toFixed(1)}%`,
-                            backgroundColor: tealColor
-                          }}
-                        />
-                      </div>
-                      <div
-                        className="h-2 rounded overflow-hidden"
-                        style={{ backgroundColor: neutralBarTrack }}
-                      >
-                        <div
-                          className="h-full rounded transition-all duration-300"
-                          style={{
-                            width: `${Math.min(100, (grp.sosPct / 65) * 100).toFixed(1)}%`,
-                            backgroundColor: primaryInk
-                          }}
-                        />
-                      </div>
-                    </button>
-
-                    {/* Expanded Inline Child Outlets Sorted Descending by MTON */}
-                    {isExpanded && (
-                      <div className="border-t border-[var(--border-glass)] px-3.5 py-2.5 space-y-1.5 animate-fade-in">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--text-muted)] pb-1">
-                          <span>Child outlets (sorted by highest MTON)</span>
-                          <span>MTON · SOS %</span>
-                        </div>
-
-                        {grp.outlets.map((child, cIdx) => {
-                          const maxChildMton = Math.max(
-                            1,
-                            ...grp.outlets.map((o) => o.filteredMton)
-                          );
-                          return (
-                            <button
-                              key={child.id}
-                              type="button"
-                              onClick={() => {
-                                setAccountFilter(grp.account);
-                                setOutletFilter(child.id);
-                              }}
-                              className="w-full px-2.5 py-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-left space-y-1.5"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0 flex items-center gap-2">
-                                  <span className="text-[11px] font-mono tabular-nums text-[var(--text-muted)] w-5">
-                                    {cIdx + 1}.
-                                  </span>
-                                  <div className="min-w-0">
-                                    <div className="text-xs font-bold text-[var(--text-primary)] truncate">
-                                      {child.branch}
-                                    </div>
-                                    <div className="text-[10px] text-[var(--text-muted)] tabular-nums truncate">
-                                      {child.code ? `SAP ${child.code}` : child.account}
-                                      {child.hasLiveAudit ? ' · Live audit recorded' : ''}
-                                    </div>
-                                  </div>
-                                </div>
-                                <span className="text-xs font-bold tabular-nums text-[var(--text-primary)] shrink-0">
-                                  {child.filteredMton} MTON · {child.filteredSos}% SOS
-                                </span>
-                              </div>
-
-                              <div
-                                className="h-1.5 rounded overflow-hidden"
-                                style={{ backgroundColor: neutralBarTrack }}
-                              >
-                                <div
-                                  className="h-full rounded transition-all duration-300"
-                                  style={{
-                                    width: `${Math.min(100, (child.filteredMton / maxChildMton) * 100).toFixed(1)}%`,
-                                    backgroundColor: tealColor
-                                  }}
-                                />
-                              </div>
-                              <div
-                                className="h-1.5 rounded overflow-hidden"
-                                style={{ backgroundColor: neutralBarTrack }}
-                              >
-                                <div
-                                  className="h-full rounded transition-all duration-300"
-                                  style={{
-                                    width: `${Math.min(100, (child.filteredSos / 65) * 100).toFixed(1)}%`,
-                                    backgroundColor: primaryInk
-                                  }}
-                                />
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              <div className="flex items-center gap-4 text-[11px] text-[var(--text-secondary)] pt-1">
-                <span className="flex items-center gap-1.5">
-                  <span
-                    className="w-3.5 h-1.5 rounded-full inline-block"
-                    style={{ backgroundColor: tealColor }}
-                  />
-                  MTON Sold
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span
-                    className="w-3.5 h-1.5 rounded-full inline-block"
-                    style={{ backgroundColor: primaryInk }}
-                  />
-                  SOS %
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================
-            TAB 3: SHELF (Interactive Category SOS + Trendline + Account->Outlet OOS Heatmap)
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'shelf') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'xl:col-span-2 glass-subtle rounded-[18px] p-4 md:p-5 space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Shelf
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                  Tap a category bar to isolate its SOS trend · expand an account to inspect outlet OOS counts
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('shelf')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-              {/* 3.1 Interactive Category SOS Tiles synced with Global Filter */}
-              <div>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-xs font-bold text-[var(--text-primary)]">
-                    SOS by category: own vs competitors
-                  </span>
-                  {categoryFilter !== 'All' && (
-                    <button
-                      type="button"
-                      onClick={() => setCategoryFilter('All')}
-                      className="text-[11px] font-semibold text-[var(--accent-primary)] hover:underline cursor-pointer"
-                    >
-                      Show all categories
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  {metrics.sosCategoryRows.map((row) => (
-                    <button
-                      key={row.category}
-                      type="button"
-                      onClick={() =>
-                        setCategoryFilter((prev) =>
-                          prev === row.category ? 'All' : row.category
-                        )
-                      }
-                      aria-pressed={row.selected}
-                      className={`w-full min-h-[46px] px-3 py-2 rounded-xl glass-subtle flex items-center gap-3 text-left cursor-pointer transition-all ${
-                        row.dimmed ? 'opacity-45' : 'opacity-100'
-                      } ${
-                        row.selected
-                          ? isDark
-                            ? 'ring-2 ring-[#008DFF]'
-                            : 'ring-2 ring-[#0066FF]'
-                          : 'hover:brightness-95'
-                      }`}
-                    >
-                      <span className="w-[74px] text-xs font-bold text-[var(--text-primary)] shrink-0">
-                        {row.category}
-                      </span>
-                      <div className="flex-1 h-5 rounded-md overflow-hidden flex">
-                        <div
-                          className="h-full flex items-center pl-2 transition-all duration-300"
-                          style={{
-                            width: `${row.ownPct}%`,
-                            backgroundColor: tealColor
-                          }}
-                        >
-                          <span className="text-[11px] font-bold text-white tabular-nums">
-                            {row.ownPct}%
-                          </span>
-                        </div>
-                        <div
-                          className="h-full transition-all duration-300"
-                          style={{
-                            width: `${100 - row.ownPct}%`,
-                            backgroundColor: competitorColor
-                          }}
-                        />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-4 text-[11px] text-[var(--text-secondary)] mt-2.5">
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: tealColor }}
-                    />
-                    Own brands
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: competitorColor }}
-                    />
-                    Competitors / other
-                  </span>
-                </div>
-              </div>
-
-              {/* 3.2 Dynamic Category-Isolated SOS Trendline */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[var(--text-primary)]">
-                    SOS historical trend ({categoryFilter === 'All' ? 'All categories' : categoryFilter})
-                  </span>
-                  <span className="text-xs font-extrabold tabular-nums text-[var(--accent-primary)]">
-                    {metrics.sosTrend.currentPct}% current
-                  </span>
-                </div>
-                <svg
-                  viewBox="0 0 326 84"
-                  className="w-full h-auto block"
-                  role="img"
-                  aria-label="SOS trendline"
-                >
-                  <line x1="0" y1="83" x2="326" y2="83" stroke={axisLineColor} />
-                  <line x1="0" y1="42" x2="326" y2="42" stroke={gridLineColor} />
-                  <path
-                    d={metrics.sosTrend.path}
-                    fill="none"
-                    stroke={tealColor}
-                    strokeWidth="2.5"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
-                  <circle
-                    cx={metrics.sosTrend.dotX}
-                    cy={metrics.sosTrend.dotY}
-                    r="4.5"
-                    fill={tealColor}
-                    stroke={isDark ? '#020D1F' : '#FFFFFF'}
-                    strokeWidth="2"
-                  />
-                </svg>
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)] mt-1 tabular-nums">
-                  <span>{formatShortCalendarDate(fromDate)}</span>
-                  <span>{formatShortCalendarDate(toDate)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* 3.3 Account-to-Outlet OOS Heatmap */}
-            <div className="pt-4 border-t border-[var(--border-glass)]">
-              <div className="flex items-center justify-between mb-2.5">
-                <span className="text-xs font-bold text-[var(--text-primary)]">
-                  Account-to-outlet OOS heatmap · SKUs out of stock
-                </span>
-                <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)]">
-                  <span className="flex items-center gap-1">
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm inline-block"
-                      style={{ backgroundColor: tealSoftBg }}
-                    />
-                    0
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm inline-block"
-                      style={{ backgroundColor: '#F3D27A' }}
-                    />
-                    1-2
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm inline-block"
-                      style={{ backgroundColor: crimsonColor }}
-                    />
-                    3+
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-[1fr_56px_56px_56px] sm:grid-cols-[1fr_76px_76px_76px] gap-1.5 mb-1.5 items-center px-2">
-                <span className="text-[11px] font-semibold text-[var(--text-muted)]">
-                  Account / Outlet
-                </span>
-                <span className="text-[11px] font-semibold text-center text-[var(--text-secondary)]">
-                  Flour
-                </span>
-                <span className="text-[11px] font-semibold text-center text-[var(--text-secondary)]">
-                  Oil
-                </span>
-                <span className="text-[11px] font-semibold text-center text-[var(--text-secondary)]">
-                  Pasta
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {metrics.displayAccountGroups.slice(0, 10).map((grp) => {
-                  const isExpanded =
-                    Boolean(expandedOosAccounts[grp.account]) ||
-                    accountFilter === grp.account ||
-                    outletFilter !== 'All';
-
-                  return (
-                    <div key={grp.account} className="glass-subtle rounded-2xl overflow-hidden">
-                      {/* Account Summary Row */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedOosAccounts((prev) => ({
-                            ...prev,
-                            [grp.account]: !prev[grp.account]
-                          }))
-                        }
-                        className="w-full min-h-[48px] grid grid-cols-[1fr_56px_56px_56px] sm:grid-cols-[1fr_76px_76px_76px] gap-1.5 items-center px-2.5 py-2 text-left cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.03]"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 pr-1">
-                          {isExpanded ? (
-                            <ChevronDown size={15} className="text-[var(--text-muted)] shrink-0" />
-                          ) : (
-                            <ChevronRight size={15} className="text-[var(--text-muted)] shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-[var(--text-primary)] truncate">
-                              {grp.account}
-                            </div>
-                            <div className="text-[10px] text-[var(--text-muted)]">
-                              {grp.outlets.length} outlets
-                            </div>
-                          </div>
-                        </div>
-
-                        {(['Flour', 'Edible Oil', 'Pasta'] as CategoryType[]).map((cat) => {
-                          const totalCatOos = grp.oosTotals[cat];
-                          const isDimmed =
-                            categoryFilter !== 'All' && categoryFilter !== cat;
-
-                          let bg = tealSoftBg;
-                          let fg = tealDarkText;
-                          if (totalCatOos >= 3) {
-                            bg = crimsonColor;
-                            fg = '#FFFFFF';
-                          } else if (totalCatOos >= 1) {
-                            bg = isDark ? 'rgba(245, 158, 11, 0.85)' : '#F3D27A';
-                            fg = '#16181D';
-                          }
-
-                          return (
-                            <div
-                              key={cat}
-                              className={`h-9 rounded-lg flex items-center justify-center text-xs font-extrabold tabular-nums transition-opacity ${
-                                isDimmed ? 'opacity-35' : 'opacity-100'
-                              }`}
-                              style={{
-                                backgroundColor: bg,
-                                color: fg
-                              }}
-                            >
-                              {totalCatOos}
-                            </div>
-                          );
-                        })}
-                      </button>
-
-                      {/* Expanded Individual Child Outlet Matrix Cells */}
-                      {isExpanded && (
-                        <div className="border-t border-[var(--border-glass)] px-2.5 py-2 space-y-1.5 animate-fade-in">
-                          {grp.outlets.slice(0, 8).map((o) => (
-                            <div
-                              key={o.id}
-                              className="grid grid-cols-[1fr_56px_56px_56px] sm:grid-cols-[1fr_76px_76px_76px] gap-1.5 items-center"
-                            >
-                              <span className="text-xs font-medium text-[var(--text-primary)] truncate pl-5 pr-1">
-                                {o.branch}
-                              </span>
-
-                              {(['Flour', 'Edible Oil', 'Pasta'] as CategoryType[]).map((cat) => {
-                                const n = o.oosByCategory[cat];
-                                const isDimmed =
-                                  categoryFilter !== 'All' && categoryFilter !== cat;
-                                const isCellSelected =
-                                  selectedOosCell?.outletId === o.id &&
-                                  selectedOosCell?.category === cat;
-
-                                let bg = tealSoftBg;
-                                let fg = tealDarkText;
-                                if (n >= 3) {
-                                  bg = crimsonColor;
-                                  fg = '#FFFFFF';
-                                } else if (n >= 1) {
-                                  bg = isDark ? 'rgba(245, 158, 11, 0.85)' : '#F3D27A';
-                                  fg = '#16181D';
-                                }
-
-                                return (
-                                  <button
-                                    key={cat}
-                                    type="button"
-                                    onClick={() =>
-                                      setSelectedOosCell((prev) =>
-                                        prev?.outletId === o.id && prev?.category === cat
-                                          ? null
-                                          : { outletId: o.id, category: cat }
-                                      )
-                                    }
-                                    style={{ backgroundColor: bg, color: fg }}
-                                    className={`h-11 rounded-[10px] text-sm font-bold tabular-nums cursor-pointer transition-all ${
-                                      isDimmed ? 'opacity-35' : 'opacity-100'
-                                    } ${
-                                      isCellSelected
-                                        ? isDark
-                                          ? 'ring-2 ring-[#00C8FF]'
-                                          : 'ring-2 ring-[#0066FF]'
-                                        : 'hover:brightness-95'
-                                    }`}
-                                  >
-                                    {n}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Outlet OOS Cell Detail + Shelf Photo Box */}
-              {selectedOosOutletDetail && (
-                <div className="mt-3 glass-subtle rounded-2xl p-3.5 animate-fade-in">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-[13px] font-bold text-[var(--text-primary)]">
-                        {selectedOosOutletDetail.outletName} · {selectedOosOutletDetail.category}
-                      </div>
-                      <div className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                        {selectedOosOutletDetail.skuCount} SKUs out of stock · last visit{' '}
-                        {selectedOosOutletDetail.lastVisit}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedOosCell(null)}
-                      className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] px-2 py-1 cursor-pointer"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  {selectedOosOutletDetail.photoUrl ? (
-                    <div className="mt-2.5 rounded-xl overflow-hidden h-32 border border-[var(--border-glass)]">
-                      <img
-                        src={selectedOosOutletDetail.photoUrl}
-                        alt={`${selectedOosOutletDetail.outletName} shelf`}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      className="mt-2.5 h-24 rounded-xl flex items-center justify-center gap-2 text-xs font-medium text-[var(--text-secondary)] border border-[var(--border-glass)]"
-                      style={{
-                        background: isDark
-                          ? 'repeating-linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03) 8px, rgba(255,255,255,0.06) 8px, rgba(255,255,255,0.06) 16px)'
-                          : 'repeating-linear-gradient(135deg, #ECEAE3, #ECEAE3 8px, #E3E0D7 8px, #E3E0D7 16px)'
-                      }}
-                    >
-                      <Camera size={15} className="opacity-70" />
-                      <span>Latest shelf photo (view only)</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================
-            TAB 4: EXECUTION (Live Planogram + Expiry/Freshness + POSM + Flyers + Comp Promos)
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'execution') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'xl:col-span-2 glass-subtle rounded-[18px] p-4 md:p-5 space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Execution
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                  Live planogram, outlet-linked POSM, flyers and competitor intelligence
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('execution')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            {/* 4.1 Planogram Compliance */}
-            <div>
-              {/* Live Planogram Compliance */}
-              <div className="glass-subtle rounded-2xl p-4 flex flex-col justify-between space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-[var(--text-primary)]">
-                    Gondola & Planogram compliance · Live
-                  </span>
-                  {livePlanogram.hasData && (
-                    <span className="text-xs font-semibold tabular-nums text-[var(--text-secondary)]">
-                      {livePlanogram.evaluatedStores}/{livePlanogram.totalPlannedStores} stores
-                    </span>
-                  )}
-                </div>
-
-                {livePlanogram.hasData ? (
-                  <div className="space-y-3">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div>
-                        <div className="text-2xl font-extrabold tabular-nums text-[var(--text-primary)] leading-none">
-                          {livePlanogram.overallScore}%
-                        </div>
-                        <div className="text-[11px] text-[var(--text-secondary)] mt-1 tabular-nums">
-                          Mean score across {livePlanogram.evaluatedAudits} live shelf audits
-                        </div>
-                      </div>
-                      <div className="text-right text-xs tabular-nums">
-                        <div className="font-bold text-[var(--text-primary)]">
-                          Brand {livePlanogram.avgBrandPct}%
-                        </div>
-                        <div className="text-[11px] text-[var(--text-secondary)]">
-                          Company {livePlanogram.avgCompanyPct}%
-                        </div>
-                      </div>
-                    </div>
-
-                    <div
-                      className="h-2.5 rounded-md overflow-hidden"
-                      style={{ backgroundColor: neutralBarTrack }}
-                    >
-                      <div
-                        className="h-full rounded-md transition-all duration-300"
-                        style={{
-                          width: `${Math.min(100, livePlanogram.overallScore)}%`,
-                          backgroundColor:
-                            livePlanogram.overallScore >= 80
-                              ? tealColor
-                              : livePlanogram.overallScore >= 60
-                              ? amberColor
-                              : crimsonColor
-                        }}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-xs tabular-nums pt-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 size={14} style={{ color: tealColor }} />
-                        <span className="font-bold">{livePlanogram.compliantCount}</span>
-                        <span className="text-[11px] text-[var(--text-secondary)]">Compliant</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <AlertTriangle size={14} style={{ color: amberColor }} />
-                        <span className="font-bold">{livePlanogram.partialCount}</span>
-                        <span className="text-[11px] text-[var(--text-secondary)]">Partial</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <ShieldAlert size={14} style={{ color: crimsonColor }} />
-                        <span className="font-bold">{livePlanogram.nonCompliantCount}</span>
-                        <span className="text-[11px] text-[var(--text-secondary)]">Below</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-1">
-                    <div>
-                      <div className="text-xs font-bold text-[var(--text-primary)]">
-                        No live Planogram audits yet
-                      </div>
-                      <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                        Complete an outlet audit to stream live Planogram scores (
-                        {livePlanogram.activePlanogramTemplates} templates active).
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={onNavigateToPendingPjp}
-                      className="min-h-[38px] px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer btn-electric-blue text-white"
-                    >
-                      <span>Start audit</span>
-                      <ArrowRight size={13} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 4.2 Outlet-Linked POSM Compliance */}
-            <div className="pt-4 border-t border-[var(--border-glass)] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[var(--text-primary)]">
-                  POSM compliance · tap bar to inspect outlets
-                </span>
-                <span className="text-[11px] text-[var(--text-muted)]">
-                  Scoped to {scopedOutlets.length} outlets
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {metrics.posmMetrics.map((row) => {
-                  const isSelected = selectedPosmKey === row.key;
-                  return (
-                    <button
-                      key={row.key}
-                      type="button"
-                      onClick={() =>
-                        setSelectedPosmKey((prev) => (prev === row.key ? null : row.key))
-                      }
-                      aria-expanded={isSelected}
-                      className={`w-full min-h-[42px] px-3 py-2 rounded-xl glass-subtle flex items-center gap-3 text-left cursor-pointer transition-all ${
-                        isSelected
-                          ? isDark
-                            ? 'ring-2 ring-[#008DFF]'
-                            : 'ring-2 ring-[#0066FF]'
-                          : 'hover:brightness-95'
-                      }`}
-                    >
-                      <span className="w-20 text-xs font-semibold text-[var(--text-primary)] shrink-0">
-                        {row.label}
-                      </span>
-                      <div
-                        className="flex-1 h-3 rounded-md overflow-hidden"
-                        style={{ backgroundColor: neutralBarTrack }}
-                      >
-                        <div
-                          className="h-full rounded-md transition-all duration-300"
-                          style={{
-                            width: `${row.pct}%`,
-                            backgroundColor: row.pct >= 80 ? tealColor : amberColor
-                          }}
-                        />
-                      </div>
-                      <span className="w-24 text-right text-xs font-bold tabular-nums text-[var(--text-primary)] shrink-0">
-                        {row.pct}% ({row.compliantCount}/{row.totalCount})
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedPosmObj && (
-                <div className="glass-subtle rounded-2xl p-3.5 space-y-2 animate-fade-in">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-[var(--text-primary)]">
-                      {selectedPosmObj.label} breakdown · {selectedPosmObj.compliantCount} present,{' '}
-                      {selectedPosmObj.missingCount} missing
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPosmKey(null)}
-                      className="font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
-                    {selectedPosmObj.outletPreview.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-black/[0.03] dark:bg-white/[0.04]"
-                      >
-                        <span className="truncate text-[var(--text-primary)] font-medium">
-                          {item.name}
-                        </span>
-                        <span
-                          className="font-bold shrink-0 text-[11px]"
-                          style={{ color: item.present ? tealDarkText : crimsonColor }}
-                        >
-                          {item.present ? 'Present' : 'Missing'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 4.3 & 4.4 Synced Internal Flyer Promo Charts */}
-            <div className="pt-4 border-t border-[var(--border-glass)] grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* 4.3 Flyer Promo Status Donut */}
-              <div>
-                <div className="text-xs font-bold text-[var(--text-primary)] mb-2.5">
-                  Flyer promo status ({categoryFilter} · {accountFilter})
-                </div>
-                <div className="flex items-center gap-4">
-                  <svg
-                    viewBox="0 0 120 120"
-                    className="w-[104px] h-[104px] shrink-0"
-                    role="img"
-                    aria-label="Flyer promo status"
-                  >
-                    {metrics.flyerDonut.segments.map((seg, idx) => (
-                      <circle
-                        key={idx}
-                        cx="60"
-                        cy="60"
-                        r="40"
-                        fill="none"
-                        stroke={seg.color}
-                        strokeWidth="18"
-                        strokeDasharray={seg.dash}
-                        strokeDashoffset={seg.off}
-                        transform="rotate(-90 60 60)"
-                      />
-                    ))}
-                  </svg>
-                  <div className="flex-1 space-y-2 text-xs text-[var(--text-primary)] tabular-nums">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-sm shrink-0"
-                        style={{ backgroundColor: tealColor }}
-                      />
-                      <span>Promo active · {metrics.flyerDonut.activePct}%</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-sm shrink-0"
-                        style={{ backgroundColor: crimsonColor }}
-                      />
-                      <span>Promo missing · {metrics.flyerDonut.missingPct}%</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-sm shrink-0"
-                        style={{ backgroundColor: competitorColor }}
-                      />
-                      <span>Not applicable · {metrics.flyerDonut.naPct}%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 4.4 Flyer Items by Account / Outlet */}
-              <div>
-                <div className="text-xs font-bold text-[var(--text-primary)] mb-2.5">
-                  Flyer items by {outletFilter !== 'All' ? 'outlet' : 'account'}
-                </div>
-                <div className="space-y-2.5">
-                  {metrics.flyerBreakdownRows.map((row) => (
-                    <div key={row.id} className="flex items-center gap-2.5">
-                      <span className="w-24 text-xs font-medium text-[var(--text-primary)] truncate shrink-0">
-                        {row.label}
-                      </span>
-                      <div
-                        className="flex-1 h-3.5 rounded-md overflow-hidden flex"
-                        style={{ backgroundColor: neutralBarTrack }}
-                      >
-                        <div
-                          className="h-full"
-                          style={{ width: `${row.present}%`, backgroundColor: tealColor }}
-                        />
-                        <div
-                          className="h-full"
-                          style={{ width: `${row.missing}%`, backgroundColor: crimsonColor }}
-                        />
-                        <div
-                          className="h-full"
-                          style={{ width: `${row.wrongPrice}%`, backgroundColor: amberColor }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)] mt-2">
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: tealColor }}
-                    />
-                    Present
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: crimsonColor }}
-                    />
-                    Missing
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: amberColor }}
-                    />
-                    Wrong price
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 4.5 Interactive Competitor Promos Spotted (Account | Category | Brand) */}
-            <div className="pt-4 border-t border-[var(--border-glass)] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[var(--text-primary)]">
-                  Competitor promos spotted (Account | Category | Brand)
-                </span>
-                <span className="text-[11px] text-[var(--text-muted)]">
-                  Tap bar for outlet & offer details
-                </span>
-              </div>
-
-              {metrics.filteredCompetitorPromos.length === 0 ? (
-                <p className="text-xs text-[var(--text-secondary)] py-2">
-                  No competitor promotions recorded for the current filter selection.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {metrics.filteredCompetitorPromos.map((cp) => {
-                    const isSelected = selectedPromoId === cp.id;
-                    return (
-                      <div key={cp.id} className="space-y-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSelectedPromoId((prev) => (prev === cp.id ? null : cp.id))
-                          }
-                          aria-expanded={isSelected}
-                          className={`w-full min-h-[44px] px-3 py-2 rounded-xl glass-subtle flex items-center gap-3 text-left cursor-pointer transition-all ${
-                            isSelected
-                              ? isDark
-                                ? 'ring-2 ring-[#008DFF]'
-                                : 'ring-2 ring-[#0066FF]'
-                              : 'hover:brightness-95'
-                          }`}
-                        >
-                          <span className="w-44 sm:w-56 text-xs font-semibold text-[var(--text-primary)] truncate shrink-0">
-                            {cp.account} | {cp.category} | {cp.brand}
-                          </span>
-                          <div
-                            className="flex-1 h-3 rounded-md overflow-hidden"
-                            style={{ backgroundColor: neutralBarTrack }}
-                          >
-                            <div
-                              className="h-full rounded-md"
-                              style={{
-                                width: `${Math.min(100, (cp.count / 8) * 100).toFixed(1)}%`,
-                                backgroundColor: cp.isLive ? tealColor : primaryInk
-                              }}
-                            />
-                          </div>
-                          <span className="w-7 text-right text-xs font-bold tabular-nums text-[var(--text-primary)] shrink-0">
-                            {cp.count}
-                          </span>
-                        </button>
-
-                        {isSelected && selectedPromoObj && (
-                          <div className="glass-subtle rounded-2xl p-3.5 text-xs space-y-1.5 animate-fade-in">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <div className="font-bold text-[var(--text-primary)]">
-                                  {selectedPromoObj.outletName}
-                                </div>
-                                <div className="text-[11px] text-[var(--text-secondary)]">
-                                  {selectedPromoObj.account} · {selectedPromoObj.category} · Brand:{' '}
-                                  {selectedPromoObj.brand}
-                                </div>
-                              </div>
-                              <span className="text-[11px] font-medium text-[var(--text-muted)] tabular-nums shrink-0">
-                                {selectedPromoObj.spottedDate}
-                              </span>
-                            </div>
-                            <div className="text-[var(--text-primary)] font-medium pt-0.5">
-                              {selectedPromoObj.offerDetails}
-                            </div>
-                            {selectedPromoObj.photoUrl && (
-                              <div className="mt-2 h-28 rounded-xl overflow-hidden border border-[var(--border-glass)]">
-                                <img
-                                  src={selectedPromoObj.photoUrl}
-                                  alt={`${selectedPromoObj.brand} competitor promo`}
-                                  className="w-full h-full object-cover"
-                                  referrerPolicy="no-referrer"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================
-            TAB 5: PRODUCTIVITY (Synced Executive PJP Calendar + Route Roster)
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'productivity') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Productivity · {scheduleMeta.monthLabel} PJP
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                  Assigned PJP schedule for {executive?.name || 'Safwan Asif'} ·{' '}
-                  {scheduleMetrics.workingDaysAll.length} working days · tap any scheduled day
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('productivity')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            <div
-              className={
-                activeTab === 'all'
-                  ? 'grid grid-cols-1 gap-5'
-                  : 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch'
-              }
+              {renderDrilldownBody()}
+            </motion.div>
+          ) : (
+            <motion.div
+              key={`workspace-${activeWorkspace}`}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
             >
-              {/* 5.1 Synced Executive Monthly Calendar + 5.2 Banner + Scheduled Outlets */}
-              <div>
-                <div className="grid grid-cols-7 gap-1 mb-1">
-                  {DAY_NAMES.map((dn) => (
-                    <span
-                      key={dn}
-                      className="text-center text-[11px] font-semibold text-[var(--text-muted)]"
-                    >
-                      {dn}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {Array.from({ length: scheduleMeta.firstWeekdayOffset }, (_, i) => (
-                    <span key={`cal-blank-${i}`} className="h-12" />
-                  ))}
-
-                  {Array.from({ length: scheduleMeta.daysInMonth }, (_, idx) => idx + 1).map(
-                    (d) => {
-                      const sched = scheduleMeta.scheduleByDay[d];
-                      const isFuture = d > scheduleMeta.cutoffDay;
-                      const cellDate: CalendarDateValue = {
-                        year: scheduleMeta.year,
-                        month: scheduleMeta.month,
-                        day: d
-                      };
-                      const inRange =
-                        compareCalendarDates(cellDate, fromDate) >= 0 &&
-                        compareCalendarDates(cellDate, toDate) <= 0;
-                      const isSelected = scheduleMetrics.activeCalDay === d;
-
-                      let bg = isDark ? 'rgba(11, 37, 66, 0.55)' : '#E2E8F0';
-                      let fg = mutedInk;
-                      let border = '1px solid transparent';
-
-                      if (sched && !isFuture) {
-                        const ratio =
-                          sched.completedCount / Math.max(1, sched.plannedCount);
-                        if (ratio >= 1) {
-                          bg = tealColor;
-                          fg = isDark ? '#020D1F' : '#FFFFFF';
-                        } else if (ratio >= 0.75) {
-                          bg = isDark ? 'rgba(0, 102, 255, 0.45)' : '#93C5FD';
-                          fg = isDark ? '#F1F5FF' : '#0B1D36';
-                        } else {
-                          bg = amberColor;
-                          fg = '#0B1D36';
-                        }
-                      } else if (sched && isFuture) {
-                        bg = isDark ? 'rgba(0, 102, 255, 0.14)' : 'rgba(0, 102, 255, 0.08)';
-                        fg = tealDarkText;
-                        border = `1px dashed ${tealColor}`;
-                      } else if (isFuture) {
-                        bg = 'transparent';
-                        border = `1px dashed ${axisLineColor}`;
-                      }
-
-                      return (
-                        <button
-                          key={d}
-                          type="button"
-                          disabled={!sched}
-                          onClick={() => setSelectedDay(d)}
-                          style={{ backgroundColor: bg, color: fg, border }}
-                          className={`h-12 rounded-[10px] flex flex-col items-center justify-center leading-tight tabular-nums transition-all ${
-                            sched ? 'cursor-pointer hover:brightness-95' : 'cursor-default'
-                          } ${!inRange && sched ? 'opacity-45' : 'opacity-100'} ${
-                            isSelected
-                              ? isDark
-                                ? 'ring-2 ring-[#00C8FF]'
-                                : 'ring-2 ring-[#0066FF]'
-                              : ''
-                          }`}
-                        >
-                          <span className="text-xs font-bold">{d}</span>
-                          {sched && (
-                            <span className="text-[9px] font-semibold opacity-90">
-                              {isFuture
-                                ? `${sched.plannedCount}p`
-                                : `${sched.completedCount}/${sched.plannedCount}`}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-secondary)] mt-2.5">
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: tealColor }}
-                    />
-                    All visited
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{
-                        backgroundColor: isDark ? 'rgba(16, 185, 129, 0.45)' : '#9CCFC7'
-                      }}
-                    />
-                    Most
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block"
-                      style={{ backgroundColor: amberColor }}
-                    />
-                    Few
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="w-3 h-3 rounded-sm inline-block border border-dashed"
-                      style={{ borderColor: tealColor }}
-                    />
-                    Upcoming PJP
-                  </span>
-                </div>
-
-                {/* 5.2 Selected-Day Banner + Assigned Route Outlet List */}
-                <div
-                  className="mt-3 px-3 py-2.5 rounded-xl text-[13px] font-bold tabular-nums"
-                  style={{ backgroundColor: tealSoftBg, color: tealDarkText }}
-                >
-                  {scheduleMetrics.daySummaryText}
-                </div>
-
-                {scheduleMetrics.activeDayEntry &&
-                  scheduleMetrics.activeDayEntry.outlets.length > 0 && (
-                    <div className="mt-2.5 glass-subtle rounded-xl p-3 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] font-bold text-[var(--text-secondary)]">
-                        <span>
-                          Assigned outlets for {scheduleMetrics.activeDayEntry.dateStr}
-                        </span>
-                        <span className="tabular-nums">
-                          {scheduleMetrics.activeDayEntry.outlets.length} stops
-                        </span>
-                      </div>
-                      <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                        {scheduleMetrics.activeDayEntry.outlets.map((st, idx) => (
-                          <div
-                            key={`${st.name}-${idx}`}
-                            className="flex items-center justify-between gap-2 py-1 border-b border-[var(--border-glass)] last:border-b-0 text-xs"
-                          >
-                            <div className="min-w-0">
-                              <div className="font-semibold text-[var(--text-primary)] truncate">
-                                {st.name}
-                              </div>
-                              <div className="text-[10px] text-[var(--text-muted)] truncate">
-                                {st.account} · {st.area}
-                              </div>
-                            </div>
-                            {st.code && (
-                              <span className="text-[10px] font-mono tabular-nums text-[var(--text-muted)] shrink-0">
-                                {st.code}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-              </div>
-
-              {/* 5.3 Visits per Day vs Planned Target Band */}
-              <div>
-                <div className="text-xs font-bold text-[var(--text-primary)] mb-2.5">
-                  Visits per day vs {scheduleMetrics.targetLow}-{scheduleMetrics.targetLow + 1} target
-                </div>
-                <div className="relative h-28 flex items-end gap-1">
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-x-0 rounded"
-                    style={{
-                      bottom: `${(
-                        (scheduleMetrics.targetLow / scheduleMetrics.maxPlanned) *
-                        112
-                      ).toFixed(1)}px`,
-                      height: `${(112 / scheduleMetrics.maxPlanned).toFixed(1)}px`,
-                      backgroundColor: tealSoftBg
-                    }}
-                  />
-                  {scheduleMetrics.executedDays.map((d) => {
-                    const entry = scheduleMeta.scheduleByDay[d];
-                    const v = entry ? entry.completedCount : 0;
-                    const planned = entry ? entry.plannedCount : 1;
-                    const isActive = d === scheduleMetrics.activeCalDay;
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => setSelectedDay(d)}
-                        title={`${d} ${scheduleMeta.monthShort}: ${v}/${planned} visits`}
-                        className="flex-1 h-28 relative flex items-end cursor-pointer group"
-                      >
-                        <div
-                          className={`w-full rounded-t transition-all ${
-                            isActive
-                              ? isDark
-                                ? 'ring-2 ring-[#00C8FF]'
-                                : 'ring-2 ring-[#0066FF]'
-                              : 'group-hover:brightness-95'
-                          }`}
-                          style={{
-                            height: `${((v / scheduleMetrics.maxPlanned) * 112).toFixed(
-                              1
-                            )}px`,
-                            backgroundColor:
-                              v >= scheduleMetrics.targetLow ? tealColor : amberColor
-                          }}
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex gap-1 mt-1">
-                  {scheduleMetrics.executedDays.map((d) => (
-                    <span
-                      key={d}
-                      className={`flex-1 text-center text-[10px] tabular-nums ${
-                        d === scheduleMetrics.activeCalDay
-                          ? 'font-bold text-[var(--text-primary)]'
-                          : 'text-[var(--text-muted)]'
-                      }`}
-                    >
-                      {d}
-                    </span>
-                  ))}
-                </div>
-                <p className="text-[11px] text-[var(--text-muted)] mt-2">
-                  Shaded band = {scheduleMetrics.targetLow}-{scheduleMetrics.targetLow + 1}{' '}
-                  visits target across {scheduleMetrics.executedDays.length} completed working days
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================
-            TAB 6: WORKHOURS
-           ============================================================ */}
-        {(activeTab === 'all' || activeTab === 'workhours') && (
-          <div
-            className={
-              activeTab === 'all'
-                ? 'glass-subtle rounded-[18px] p-4 md:p-5 flex flex-col justify-between space-y-5'
-                : 'space-y-6'
-            }
-          >
-            <div className="flex items-start justify-between gap-2 pb-3.5 border-b border-[var(--border-glass)]">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold text-[var(--text-primary)]">
-                  Work hours and discipline
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
-                  Each block is one outlet visit, by photo punch time · {scheduleMetrics.daySummaryText}
-                </p>
-              </div>
-              {activeTab === 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('workhours')}
-                  className="text-[11px] font-bold text-[var(--accent-primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 py-1"
-                >
-                  <span>View only</span>
-                  <ChevronRight size={13} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('all')}
-                  className="min-h-[34px] px-2.5 rounded-xl glass-subtle text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1"
-                >
-                  <ArrowLeft size={13} />
-                  <span>All tabs</span>
-                </button>
-              )}
-            </div>
-
-            <div
-              className={
-                activeTab === 'all'
-                  ? 'grid grid-cols-1 gap-5'
-                  : 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch'
-              }
-            >
-              {/* 6.1 5-Day Punch Gantt Timeline */}
-              <div>
-                <div className="relative h-4 ml-12 mb-1">
-                  {[8, 10, 12, 14, 16, 18].map((h) => (
-                    <span
-                      key={h}
-                      className="absolute top-0 text-[10px] tabular-nums text-[var(--text-muted)] -translate-x-1/2"
-                      style={{ left: `${((h - 7) / 11) * 100}%` }}
-                    >
-                      {h}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="space-y-2.5">
-                  {scheduleMetrics.ganttDays.map((row) => (
-                    <div key={row.day} className="flex items-center gap-2">
-                      <span
-                        className={`w-10 text-[11px] tabular-nums shrink-0 ${
-                          row.isSelected
-                            ? 'font-extrabold text-[var(--text-primary)]'
-                            : 'font-medium text-[var(--text-secondary)]'
-                        }`}
-                      >
-                        {row.label}
-                      </span>
-                      <div
-                        className="flex-1 relative h-6 rounded-md glass-subtle cursor-pointer"
-                        onClick={() => setSelectedDay(row.day)}
-                      >
-                        <div
-                          className="absolute top-[11px] h-0.5 rounded-full"
-                          style={{
-                            left: `${row.spanLeftPct.toFixed(2)}%`,
-                            width: `${row.spanWidthPct.toFixed(2)}%`,
-                            backgroundColor: competitorColor
-                          }}
-                        />
-                        {row.blocks.map((block, bIdx) => (
-                          <div
-                            key={bIdx}
-                            title={block.title}
-                            className="absolute top-1 h-4 rounded"
-                            style={{
-                              left: `${block.leftPct.toFixed(2)}%`,
-                              width: `${block.widthPct.toFixed(2)}%`,
-                              backgroundColor: tealColor
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-[11px] text-[var(--text-muted)] mt-2.5 leading-relaxed">
-                  Empty gaps between blocks = travel or idle time. Tap any day row above or inside
-                  Productivity to move this 5-day window.
-                </p>
-              </div>
-
-              {/* 6.2 Start-Time Consistency Scatter Strip */}
-              <div>
-                <div className="text-xs font-bold text-[var(--text-primary)] mb-2">
-                  Start-time consistency
-                </div>
-                <div className="relative h-12 rounded-xl glass-subtle overflow-hidden">
-                  <div
-                    aria-hidden="true"
-                    className="absolute top-0 bottom-0 rounded-xl"
-                    style={{
-                      left: '16.7%',
-                      width: '33.3%',
-                      backgroundColor: tealSoftBg
-                    }}
-                  />
-                  {scheduleMetrics.startTimeDots.map((dot) => (
-                    <button
-                      key={dot.day}
-                      type="button"
-                      onClick={() => setSelectedDay(dot.day)}
-                      title={`${dot.day} ${scheduleMeta.monthShort} · First punch ${dot.timeStr}`}
-                      className="absolute w-2.5 h-2.5 rounded-full cursor-pointer transition-transform hover:scale-125"
-                      style={{
-                        left: `calc(${dot.leftPct.toFixed(2)}% - 6px)`,
-                        top: `${dot.topPx}px`,
-                        backgroundColor: dot.isLate ? amberColor : tealColor,
-                        border: dot.isSelected
-                          ? `2px solid ${primaryInk}`
-                          : `2px solid ${isDark ? '#020D1F' : '#FFFFFF'}`,
-                        boxSizing: 'content-box'
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="relative h-4 mt-1 text-[10px] tabular-nums text-[var(--text-muted)]">
-                  <span className="absolute left-0">7:00</span>
-                  <span className="absolute left-[33.3%] -translate-x-1/2">8:00</span>
-                  <span className="absolute left-[66.6%] -translate-x-1/2">9:00</span>
-                  <span className="absolute right-0">10:00</span>
-                </div>
-                <p className="text-[11px] text-[var(--text-muted)] mt-2">
-                  Each dot is one working day&apos;s first punch. Shaded = 7:30 to 8:30 usual window.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-            </div>
-          </div>
-        </section>
+              {renderWorkspaceContent()}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      {/* ================================================================
+          DESKTOP CONTEXTUAL RIGHT SIDE DRAWER (md+)
+         ================================================================ */}
+      {isDesktopViewport &&
+        drilldown &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="ov-scope fixed inset-0 z-[65] flex justify-end"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Intelligence Detail Drawer"
+          >
+            <div
+              className="fixed inset-0 bg-black/45 backdrop-blur-xs"
+              onClick={handleCloseDrilldown}
+              aria-hidden="true"
+            />
+            <aside
+              className={`relative z-10 w-full max-w-xl h-full overflow-y-auto p-5 border-l shadow-2xl backdrop-blur-2xl animate-fade-in ${
+                isDark
+                  ? 'bg-[#04152B]/96 border-[#00C8FF]/22'
+                  : 'bg-[#F4F7FB]/98 border-[#0066FF]/18'
+              }`}
+            >
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-black/[0.06] dark:border-white/[0.08]">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#0066FF] dark:text-[#00C8FF]">
+                  Contextual Drilldown
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCloseDrilldown}
+                  aria-label="Close side drawer"
+                  className="w-9 h-9 rounded-full ov-glass-recessed flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              {renderDrilldownBody()}
+            </aside>
+          </div>,
+          document.body
+        )}
+
+      {/* ================================================================
+          MOBILE LIQUID GLASS FILTER SHEET & EVIDENCE VIEWER MODAL
+         ================================================================ */}
+      <GlobalFilterSheet
+        isOpen={isFilterSheetOpen}
+        onClose={() => setIsFilterSheetOpen(false)}
+        analytics={analytics}
+        isDark={isDark}
+      />
+
+      <ShelfEvidenceViewerModal
+        payload={evidencePayload}
+        onClose={() => setEvidencePayload(null)}
+        isDark={isDark}
+      />
     </div>
   );
 };
+
+export type _KeepHelper = typeof normalizeAccountLabel;

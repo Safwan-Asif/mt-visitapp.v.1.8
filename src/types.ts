@@ -284,3 +284,95 @@ export interface PlanogramComplianceResult {
   executiveNote?: string;
 }
 
+export type TextScaleOption = 0.9 | 1.0 | 1.1 | 1.2;
+
+export type FieldRequestType =
+  | 'Manager Visit'
+  | 'Planogram Change'
+  | 'PJP Modification'
+  | 'POSM Requirement'
+  | 'Outlet Information Correction'
+  | 'Other';
+
+export type FieldRequestPriority = 'Normal' | 'High' | 'Urgent';
+
+export type FieldRequestStatus = 'Pending' | 'Approved' | 'Rejected' | 'Completed';
+
+export interface FieldRequestHistoryEntry {
+  status: FieldRequestStatus;
+  actor: string;
+  actorRole: string;
+  timestamp: string;
+  note?: string;
+}
+
+export interface FieldRequest {
+  id: string;
+  referenceCode: string;
+  type: FieldRequestType;
+  outletId?: string;
+  outletSapCode?: string;
+  outletName: string;
+  priority: FieldRequestPriority;
+  description: string;
+  attachmentDataUrl?: string;
+  planogramRef?: {
+    planogramId?: string;
+    version?: number;
+    category?: string;
+  };
+  status: FieldRequestStatus;
+  createdByName: string;
+  createdByRepId: string;
+  createdByRole: string;
+  createdAt: string;
+  updatedAt: string;
+  managerRemarks?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  statusHistory: FieldRequestHistoryEntry[];
+  syncState?: 'synced' | 'queued';
+}
+
+export interface FieldRequestPrefill {
+  type?: FieldRequestType;
+  outletId?: string;
+  outletSapCode?: string;
+  outletName?: string;
+  priority?: FieldRequestPriority;
+  description?: string;
+  planogramRef?: {
+    planogramId?: string;
+    version?: number;
+    category?: string;
+  };
+  nonce: number;
+}
+
+export interface CatalogSku {
+  skuCode: string;
+  sapItemCode: string;
+  barcode: string;
+  name: string;
+  brand: string;
+  brandColor: string;
+  category: CategoryType;
+  packSize: string;
+  packagingConfig: string;
+  description: string;
+}
+
+export function isSupervisorRole(role?: string): boolean {
+  const clean = String(role || '').trim().toLowerCase();
+  if (!clean) return false;
+  return (
+    clean.includes('senior') ||
+    clean.includes('supervisor') ||
+    clean.includes('manager') ||
+    clean.includes('admin') ||
+    clean.includes('lead') ||
+    clean.includes('head')
+  );
+}
+
+

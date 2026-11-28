@@ -152,6 +152,215 @@
   scrollbar-width: none;
 }
 
+/* =========================================================
+   MARVIZ AI — Overview Visual Intelligence Scoped Surfaces
+   ========================================================= */
+.ov-scope {
+  font-family: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --text-primary: #0B1D36;
+  --text-secondary: #475E7D;
+  --text-muted: #647D9E;
+}
+
+.dark .ov-scope {
+  --text-primary: #F5F7FA;
+  --text-secondary: #A4B9D1;
+  --text-muted: #7289A6;
+}
+
+.ov-scope .font-heading {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.015em;
+}
+
+.ov-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes ovHorizonDrift {
+  0% {
+    background-position: 0px 0px, 0 0, 0 0, 0 0;
+  }
+  50% {
+    background-position: 120px 36px, 0 0, 0 0, 0 0;
+  }
+  100% {
+    background-position: 240px 0px, 0 0, 0 0, 0 0;
+  }
+}
+
+.ov-atmospheric-canvas {
+  background-color: #EEF3FA;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none'%3E%3Cpath d='M0 120 L120 0 M120 240 L240 120 M0 240 L240 0' stroke='rgba(0,102,255,0.055)' stroke-width='0.75'/%3E%3Cpath d='M0 48 Q60 22 120 48 T240 48' stroke='rgba(0,102,255,0.10)' stroke-width='0.95'/%3E%3Cpath d='M0 108 Q60 134 120 108 T240 108' stroke='rgba(13,148,136,0.085)' stroke-width='0.85'/%3E%3Cpath d='M0 168 Q60 144 120 168 T240 168' stroke='rgba(99,102,241,0.075)' stroke-width='0.85'/%3E%3Cpath d='M0 222 Q60 244 120 222 T240 222' stroke='rgba(0,102,255,0.07)' stroke-width='0.75'/%3E%3Cpath d='M116 120 H124 M120 116 V124' stroke='rgba(0,102,255,0.20)' stroke-width='0.9'/%3E%3Ccircle cx='60' cy='35' r='1.35' fill='rgba(0,102,255,0.24)'/%3E%3Ccircle cx='180' cy='180' r='1.35' fill='rgba(13,148,136,0.22)'/%3E%3C/svg%3E"),
+    repeating-radial-gradient(
+      circle at 88% 12%,
+      transparent 0,
+      transparent 62px,
+      rgba(0, 102, 255, 0.045) 62px,
+      rgba(0, 102, 255, 0.045) 63px
+    ),
+    linear-gradient(
+      126deg,
+      transparent 22%,
+      rgba(0, 141, 255, 0.07) 40%,
+      rgba(13, 148, 136, 0.055) 47%,
+      rgba(99, 102, 241, 0.04) 53%,
+      transparent 68%
+    ),
+    linear-gradient(160deg, #F8FAFE 0%, #EEF3FB 48%, #E4EDF8 100%);
+  background-size: 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+  background-attachment: fixed;
+  animation: ovHorizonDrift 32s linear infinite;
+}
+
+.dark .ov-atmospheric-canvas {
+  background-color: #020813;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none'%3E%3Cpath d='M0 120 L120 0 M120 240 L240 120 M0 240 L240 0' stroke='rgba(56,189,248,0.065)' stroke-width='0.75'/%3E%3Cpath d='M0 48 Q60 22 120 48 T240 48' stroke='rgba(0,212,255,0.14)' stroke-width='1'/%3E%3Cpath d='M0 108 Q60 134 120 108 T240 108' stroke='rgba(20,184,166,0.12)' stroke-width='0.9'/%3E%3Cpath d='M0 168 Q60 144 120 168 T240 168' stroke='rgba(129,140,248,0.11)' stroke-width='0.9'/%3E%3Cpath d='M0 222 Q60 244 120 222 T240 222' stroke='rgba(0,212,255,0.09)' stroke-width='0.8'/%3E%3Cpath d='M116 120 H124 M120 116 V124' stroke='rgba(0,212,255,0.28)' stroke-width='1'/%3E%3Ccircle cx='60' cy='35' r='1.4' fill='rgba(0,212,255,0.34)'/%3E%3Ccircle cx='180' cy='180' r='1.4' fill='rgba(20,184,166,0.30)'/%3E%3C/svg%3E"),
+    repeating-radial-gradient(
+      circle at 88% 12%,
+      transparent 0,
+      transparent 62px,
+      rgba(0, 212, 255, 0.06) 62px,
+      rgba(0, 212, 255, 0.06) 63px
+    ),
+    linear-gradient(
+      126deg,
+      transparent 20%,
+      rgba(0, 200, 255, 0.10) 39%,
+      rgba(16, 185, 129, 0.07) 45%,
+      rgba(99, 102, 241, 0.06) 51%,
+      transparent 66%
+    ),
+    linear-gradient(160deg, #020813 0%, #051225 46%, #031B30 78%, #020916 100%);
+  background-size: 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+  background-attachment: fixed;
+  animation: ovHorizonDrift 32s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-atmospheric-canvas,
+  .dark .ov-atmospheric-canvas {
+    animation: none;
+  }
+}
+
+.ov-panel {
+  background: rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(20px) saturate(155%);
+  -webkit-backdrop-filter: blur(20px) saturate(155%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 30px -16px rgba(2, 13, 31, 0.10), 0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
+}
+.dark .ov-panel {
+  background: linear-gradient(180deg, rgba(8, 30, 58, 0.84) 0%, rgba(5, 21, 44, 0.88) 100%);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(148, 185, 232, 0.14);
+  box-shadow: 0 18px 40px -18px rgba(1, 7, 19, 0.92), 0 1px 0 0 rgba(0, 200, 255, 0.08) inset;
+}
+
+.ov-panel-elevated {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F7FAFF 100%);
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  border: 1px solid rgba(0, 102, 255, 0.18);
+  box-shadow: 0 18px 42px -18px rgba(0, 82, 204, 0.16), 0 1px 0 0 #FFFFFF inset;
+}
+.dark .ov-panel-elevated {
+  background: linear-gradient(165deg, rgba(11, 39, 72, 0.92) 0%, rgba(5, 22, 46, 0.94) 100%);
+  backdrop-filter: blur(26px) saturate(170%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  border: 1px solid rgba(0, 200, 255, 0.24);
+  box-shadow: 0 22px 48px -18px rgba(0, 8, 24, 0.96), 0 1px 0 0 rgba(0, 200, 255, 0.14) inset;
+}
+
+.ov-chart-well {
+  background: rgba(235, 242, 252, 0.65);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+.dark .ov-chart-well {
+  background: rgba(2, 13, 31, 0.56);
+  border: 1px solid rgba(148, 185, 232, 0.09);
+}
+
+.ov-glass {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 8px 24px -14px rgba(2, 13, 31, 0.08), 0 1px 0 0 rgba(255, 255, 255, 0.85) inset;
+}
+.dark .ov-glass {
+  background: rgba(7, 28, 53, 0.72);
+  backdrop-filter: blur(20px) saturate(155%);
+  -webkit-backdrop-filter: blur(20px) saturate(155%);
+  border: 1px solid rgba(148, 185, 232, 0.12);
+  box-shadow: 0 14px 34px -18px rgba(2, 13, 31, 0.86), 0 1px 0 0 rgba(0, 200, 255, 0.06) inset;
+}
+
+.ov-glass-strong {
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  border: 1px solid rgba(0, 102, 255, 0.18);
+  box-shadow: 0 18px 42px -14px rgba(2, 13, 31, 0.16), 0 1px 0 0 rgba(255, 255, 255, 0.95) inset;
+}
+.dark .ov-glass-strong {
+  background: rgba(8, 28, 54, 0.94);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  border: 1px solid rgba(0, 200, 255, 0.24);
+  box-shadow: 0 22px 48px -16px rgba(0, 8, 24, 0.94), 0 1px 0 0 rgba(0, 200, 255, 0.12) inset;
+}
+
+.ov-glass-recessed {
+  background: rgba(235, 241, 250, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+.dark .ov-glass-recessed {
+  background: rgba(4, 17, 36, 0.76);
+  border: 1px solid rgba(148, 185, 232, 0.09);
+}
+
+/* More Workspace — Premium Enterprise Digital Cockpit Surfaces */
+.cockpit-panel {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(155%);
+  -webkit-backdrop-filter: blur(20px) saturate(155%);
+  border: 1px solid #D5E2F2;
+  box-shadow: 0 12px 32px -16px rgba(2, 13, 31, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.dark .cockpit-panel {
+  background: linear-gradient(180deg, rgba(6, 28, 53, 0.94) 0%, rgba(4, 21, 43, 0.96) 100%);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid #104878;
+  box-shadow: 0 18px 42px -18px rgba(1, 7, 19, 0.92), inset 0 1px 0 rgba(0, 200, 255, 0.08);
+}
+
+.cockpit-surface-elevated {
+  background: #F8FBFF;
+  border: 1px solid #D5E2F2;
+}
+.dark .cockpit-surface-elevated {
+  background: #0B2542;
+  border: 1px solid #104878;
+  box-shadow: inset 0 1px 0 rgba(0, 200, 255, 0.07);
+}
+
+.cockpit-header-glow {
+  background:
+    radial-gradient(ellipse 70% 110% at 18% 0%, rgba(0, 102, 255, 0.12) 0%, transparent 72%),
+    radial-gradient(ellipse 50% 90% at 88% 15%, rgba(0, 141, 255, 0.08) 0%, transparent 70%);
+}
+.dark .cockpit-header-glow {
+  background:
+    radial-gradient(ellipse 75% 120% at 18% 0%, rgba(0, 102, 255, 0.24) 0%, transparent 70%),
+    radial-gradient(ellipse 55% 95% at 88% 10%, rgba(0, 200, 255, 0.14) 0%, transparent 68%);
+}
+
 /* Fade-in entrance */
 @keyframes fadeInSoft {
   from {
@@ -272,26 +481,30 @@
 }
 
 .marviz-glass {
-  background: var(--map-glass-bg);
-  backdrop-filter: blur(18px) saturate(155%);
-  -webkit-backdrop-filter: blur(18px) saturate(155%);
-  border: 1px solid var(--map-glass-border);
-  box-shadow: 0 12px 32px -10px rgba(2, 13, 31, 0.8), 0 1px 0 0 rgba(0, 200, 255, 0.08) inset;
+  background: linear-gradient(180deg, rgba(8, 30, 58, 0.84) 0%, rgba(5, 21, 44, 0.88) 100%);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(148, 185, 232, 0.14);
+  box-shadow: 0 18px 40px -18px rgba(1, 7, 19, 0.92), 0 1px 0 0 rgba(0, 200, 255, 0.08) inset;
 }
 
 .marviz-glass-strong {
-  background: var(--map-glass-strong);
-  backdrop-filter: blur(24px) saturate(170%);
-  -webkit-backdrop-filter: blur(24px) saturate(170%);
-  border: 1px solid var(--map-glass-border-strong);
-  box-shadow: 0 -10px 38px -8px rgba(2, 13, 31, 0.9), 0 1px 0 0 rgba(0, 200, 255, 0.1) inset;
+  background: linear-gradient(165deg, rgba(11, 39, 72, 0.92) 0%, rgba(5, 22, 46, 0.94) 100%);
+  backdrop-filter: blur(26px) saturate(170%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  border: 1px solid rgba(0, 200, 255, 0.24);
+  box-shadow: 0 22px 48px -18px rgba(0, 8, 24, 0.96), 0 1px 0 0 rgba(0, 200, 255, 0.14) inset;
 }
 
-/* Leaflet container tuning for dark satellite tactical map */
+/* Leaflet container tuning for architectural topographic tactical map */
 .marviz-leaflet-container {
   width: 100%;
   height: 100%;
-  background: #020D1F;
+  background-color: #020813;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none'%3E%3Cpath d='M0 120 L120 0 M120 240 L240 120 M0 240 L240 0' stroke='rgba(56,189,248,0.065)' stroke-width='0.75'/%3E%3Cpath d='M0 48 Q60 22 120 48 T240 48' stroke='rgba(0,212,255,0.14)' stroke-width='1'/%3E%3Cpath d='M0 108 Q60 134 120 108 T240 108' stroke='rgba(20,184,166,0.12)' stroke-width='0.9'/%3E%3Cpath d='M0 168 Q60 144 120 168 T240 168' stroke='rgba(129,140,248,0.11)' stroke-width='0.9'/%3E%3Cpath d='M116 120 H124 M120 116 V124' stroke='rgba(0,212,255,0.28)' stroke-width='1'/%3E%3C/svg%3E"),
+    linear-gradient(160deg, #020813 0%, #051225 46%, #031B30 78%, #020916 100%);
+  background-size: 240px 240px, 100% 100%;
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   outline: none;
 }
@@ -310,12 +523,25 @@
   filter: brightness(1.08) contrast(1.16) saturate(1.05);
 }
 
-/* Subtle tactical gridlines overlay for Terrain & Dark tactical modes */
+/* Subtle architectural contour & telemetry horizon overlay for GeoIntel map */
 .marviz-tactical-grid {
   background-image:
-    linear-gradient(to right, rgba(56, 189, 248, 0.055) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(56, 189, 248, 0.055) 1px, transparent 1px);
-  background-size: 56px 56px;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none'%3E%3Cpath d='M0 120 L120 0 M120 240 L240 120 M0 240 L240 0' stroke='rgba(56,189,248,0.06)' stroke-width='0.75'/%3E%3Cpath d='M0 48 Q60 22 120 48 T240 48' stroke='rgba(0,212,255,0.12)' stroke-width='0.9'/%3E%3Cpath d='M0 168 Q60 144 120 168 T240 168' stroke='rgba(20,184,166,0.10)' stroke-width='0.85'/%3E%3Cpath d='M116 120 H124 M120 116 V124' stroke='rgba(0,212,255,0.22)' stroke-width='0.9'/%3E%3C/svg%3E"),
+    repeating-radial-gradient(
+      circle at 88% 12%,
+      transparent 0,
+      transparent 62px,
+      rgba(0, 212, 255, 0.055) 62px,
+      rgba(0, 212, 255, 0.055) 63px
+    ),
+    linear-gradient(
+      126deg,
+      transparent 20%,
+      rgba(0, 200, 255, 0.08) 39%,
+      rgba(16, 185, 129, 0.05) 45%,
+      transparent 66%
+    );
+  background-size: 240px 240px, 100% 100%, 100% 100%;
 }
 
 .marviz-leaflet-container .leaflet-control-attribution {

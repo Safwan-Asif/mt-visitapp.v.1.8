@@ -26,7 +26,7 @@ export const MobileBottomNavigation: React.FC<MobileBottomNavigationProps> = ({
   return (
     <nav
       aria-label="Field Sales Map Navigation"
-      className="md:hidden fixed inset-x-0 bottom-0 z-[480] marviz-glass-strong border-t border-sky-400/20"
+      className="md:hidden fixed inset-x-0 bottom-0 z-[480] ov-panel-elevated border-x-0 border-b-0"
     >
       <div className="grid grid-cols-4 items-center max-w-md mx-auto px-2 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))]">
         {NAV_TABS.map((tab) => {

@@ -37,7 +37,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
   const hasAudit = outlet.hasAuditHistory !== false;
   const planDelta = outlet.planogramPercentage - outlet.previousPlanogramPercentage;
   const planTone = !hasAudit
-    ? 'border-slate-700/70 bg-slate-900/60'
+    ? 'ov-chart-well'
     : outlet.planogramPercentage < 70
     ? 'border-red-500/45 bg-red-950/35'
     : outlet.planogramPercentage < 82
@@ -45,7 +45,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
     : 'border-emerald-500/40 bg-emerald-950/30';
 
   const oosTone = !hasAudit
-    ? 'border-slate-700/70 bg-slate-900/60'
+    ? 'ov-chart-well'
     : outlet.oosSkuCount >= 4
     ? 'border-red-500/45 bg-red-950/35'
     : outlet.oosSkuCount >= 1
@@ -82,7 +82,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
               <span className="text-[9px] font-semibold text-slate-400">Pending</span>
             )}
           </div>
-          <div className="font-heading text-[21px] font-bold leading-tight text-white tabular-nums mt-0.5">
+          <div className="font-heading text-[21px] font-bold leading-tight text-white ov-tabular mt-0.5">
             {hasAudit ? `${outlet.planogramPercentage}%` : '—'}
           </div>
         </div>
@@ -104,7 +104,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
               }`}
             />
           </div>
-          <div className="font-heading text-[21px] font-bold leading-tight text-white tabular-nums mt-0.5">
+          <div className="font-heading text-[21px] font-bold leading-tight text-white ov-tabular mt-0.5">
             {hasAudit ? (
               <>
                 {outlet.oosSkuCount}{' '}
@@ -125,7 +125,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
           <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">
             Share of Shelf (SOS)
           </span>
-          <span className="text-[9.5px] font-semibold text-sky-300/90 tabular-nums">
+          <span className="text-[9.5px] font-semibold text-sky-300/90 ov-tabular">
             Target &gt; {SOS_TARGET_PCT}%
           </span>
         </div>
@@ -134,7 +134,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
             const tone = hasAudit
               ? getSosTone(cat.value)
               : {
-                  boxClass: 'border-slate-700/70 bg-slate-900/60',
+                  boxClass: 'ov-chart-well',
                   valueClass: 'text-slate-300',
                   badgeText: 'Pending'
                 };
@@ -145,7 +145,7 @@ export const OutletKPIRow: React.FC<OutletKPIRowProps> = ({ outlet, compact = fa
                 </div>
                 <div className="flex items-baseline justify-between gap-1 mt-0.5">
                   <span
-                    className={`font-heading text-[18px] font-bold leading-none tabular-nums ${tone.valueClass}`}
+                    className={`font-heading text-[18px] font-bold leading-none ov-tabular ${tone.valueClass}`}
                   >
                     {hasAudit ? `${cat.value}%` : '—'}
                   </span>

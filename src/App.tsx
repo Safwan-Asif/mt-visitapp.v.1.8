@@ -16,11 +16,12 @@ import { CameraWorkflowScreen } from './components/CameraWorkflowScreen';
 import { DashboardScreen } from './components/DashboardScreen';
 import { AddOutletModal } from './components/AddOutletModal';
 import { DesktopSidebar, MobileBottomNav, AppTab } from './components/NavigationShell';
-import { PlaceholderTabScreen } from './components/PlaceholderTabScreen';
+import { MoreWorkspaceScreen } from './components/more/MoreWorkspaceScreen';
 import { HomeAnalyticsScreen } from './components/HomeAnalyticsScreen';
 import { MobileMapScreen } from './components/map/MobileMapScreen';
 import { sendAuditToAppsScriptProxy, autoSaveAuditToGoogleSheet } from './services/googleSheetsService';
 import { fetchActivePlanograms, getCachedActivePlanograms } from './services/planogramService';
+import { fetchFieldRequests, getCachedFieldRequests } from './services/requestsService';
 import {
   LivePjpDataset,
   fetchLivePjpData,
@@ -146,6 +147,15 @@ export default function App() {
     area: string;
     nonce: number;
   } | null>(null);
+  const [mapFocusTarget, setMapFocusTarget] = useState<{
+    sapCode?: string;
+    id?: string;
+    name?: string;
+    nonce: number;
+  } | null>(null);
+  const [requestsCount, setRequestsCount] = useState<number>(
+    () => getCachedFieldRequests().filter((r) => r.status === 'Pending').length
+  );
   const [pjpRequestedFilter, setPjpRequestedFilter] = useState<{
     value: 'ALL' | 'PENDING' | 'PLANOGRAM' | 'DONE';
     nonce: number;
@@ -161,6 +171,20 @@ export default function App() {
   const [isSyncingMatch, setIsSyncingMatch] = useState<boolean>(false);
   const [isCustomPjpRoute, setIsCustomPjpRoute] = useState<boolean>(false);
   const [customRouteDate, setCustomRouteDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    fetchFieldRequests()
+      .then((res) => {
+        if (!active) return;
+        setRequestsCount(res.requests.filter((r) => r.status === 'Pending').length);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [user?.repId]);
 
   const syncPjpAndPlanograms = async (
     execName?: string,
@@ -587,12 +611,11 @@ export default function App() {
     isPjpOutletDetailOpen;
   const hideDesktopSidebar = isOutletFocused;
   const hideMobileBottomNav = isOutletFocused || (activeTab === 'map' && isMobileMapSheetOpen);
-  const requestsCount = 0; // Hidden on bar until requests module ships
 
   return (
     <div
-      className={`h-[100dvh] w-full overflow-hidden flex flex-col relative antialiased select-none transition-colors duration-300 ${
-        isDark ? 'bg-[#020D1F] text-[#F1F5FF]' : 'bg-[#F4F7FB] text-[#0B1D36]'
+      className={`h-[100dvh] w-full overflow-hidden flex flex-col relative antialiased select-none transition-colors duration-300 ov-atmospheric-canvas ${
+        isDark ? 'text-[#F1F5FF]' : 'text-[#0B1D36]'
       }`}
     >
       {isMapsQuotaExceeded && (
@@ -613,17 +636,6 @@ export default function App() {
       )}
 
       <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden relative">
-      {/* Deep Navy / Electric Blue Ambient Radiance */}
-      <div
-        className={`fixed -top-24 -left-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isDark ? 'bg-[#0066FF]/16' : 'bg-[#0066FF]/8'
-        }`}
-      />
-      <div
-        className={`fixed -bottom-28 -right-24 w-96 h-96 rounded-full blur-3xl pointer-events-none transition-opacity duration-700 ${
-          isDark ? 'bg-[#00C8FF]/12' : 'bg-[#008DFF]/8'
-        }`}
-      />
 
       {/* Desktop / Tablet Frosted Glass Left Sidebar Rail */}
       <AnimatePresence initial={false}>
@@ -641,8 +653,8 @@ export default function App() {
 
       {/* Main Content Shell */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative z-10">
-        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits/Outlet views, Map View, and dedicated PJP Route header) */}
-        {isAuthenticated && !isOutletFocused && activeTab !== 'map' && activeTab !== 'pjp' && (
+        {/* Compact Mobile Top Header (Hidden on Desktop/Tablet, Active Audits/Outlet views, Map, Overview, PJP Route, and More) */}
+        {isAuthenticated && !isOutletFocused && activeTab !== 'map' && activeTab !== 'pjp' && activeTab !== 'home' && activeTab !== 'more' && (
           <header className="md:hidden h-12 px-4 glass-nav border-b flex items-center justify-between shrink-0 z-20">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-extrabold shrink-0 bg-[#0066FF] text-[#F1F5FF] shadow-[0_0_12px_rgba(0,102,255,0.45)]">
@@ -760,6 +772,8 @@ export default function App() {
                   outlets={outlets}
                   pjpVisits={livePjpVisits}
                   masterOutlets={liveMasterOutlets}
+                  sheet2Visits={livePjpDataset.sheet2Visits || []}
+                  sheet2Audits={livePjpDataset.sheet2Audits || []}
                   audits={audits}
                   planograms={planograms}
                   isSyncingPjp={isSyncingMatch}
@@ -849,11 +863,40 @@ export default function App() {
                   onNavigateTab={(tab) => handleSelectTab(tab)}
                   onOutletSheetOpenChange={setIsMobileMapSheetOpen}
                   onLogout={handleLogout}
+                  focusedOutletRequest={mapFocusTarget}
                 />
               )}
 
-              {activeTab === 'requests' && (
-                <PlaceholderTabScreen tab="requests" />
+              {activeTab === 'more' && user && (
+                <MoreWorkspaceScreen
+                  executive={user}
+                  assignedOutlets={assignedOutletPool}
+                  audits={audits}
+                  livePjpDataset={livePjpDataset}
+                  planograms={planograms}
+                  onOpenOutletInAnalytics={(outlet) => {
+                    setMapAnalyticsTarget({
+                      id: outlet.code ? `sap-${outlet.code}` : outlet.id,
+                      name: outlet.name,
+                      area: outlet.branch,
+                      nonce: Date.now()
+                    });
+                    setActiveTab('home');
+                    setCurrentScreen('DASHBOARD');
+                  }}
+                  onOpenOutletOnMap={(outlet) => {
+                    setMapFocusTarget({
+                      sapCode: outlet.code,
+                      id: outlet.id,
+                      name: outlet.name,
+                      nonce: Date.now()
+                    });
+                    setActiveTab('map');
+                    setCurrentScreen('PJP');
+                  }}
+                  onPendingRequestsCountChange={setRequestsCount}
+                  onLogout={handleLogout}
+                />
               )}
 
               {activeTab === 'pjp' && (

@@ -95,7 +95,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
   return (
     <header
       aria-label="Command Center Header"
-      className="hidden md:flex items-center justify-between gap-3 px-4 py-2 marviz-glass-strong border-b border-sky-400/20 text-white z-[465] shrink-0"
+      className="hidden md:flex items-center justify-between gap-3 px-4 py-2 ov-panel-elevated border-x-0 border-t-0 text-white z-[465] shrink-0"
     >
       {/* 1. Wordmark + Compact Date */}
       <div className="flex items-center gap-3.5 min-w-0 shrink-0">
@@ -108,10 +108,10 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           </div>
         </div>
 
-        <div className="h-7 w-px bg-slate-700/70 shrink-0" />
+        <div className="h-7 w-px bg-white/10 shrink-0" />
 
         {/* Small Date (visible on both tablets & desktops) */}
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300 whitespace-nowrap shrink-0 tabular-nums">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300 whitespace-nowrap shrink-0 ov-tabular">
           <Calendar size={13} className="text-sky-400 shrink-0" />
           <span>{formatCompactHeaderDate()}</span>
         </div>
@@ -119,7 +119,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
 
       {/* 2. Outlet Quick-Search */}
       <div ref={searchBoxRef} className="relative flex-1 max-w-[280px] lg:max-w-[320px] min-w-[160px]">
-        <div className="flex items-center gap-2 h-9 px-3 rounded-xl bg-slate-950/60 border border-slate-700/70 focus-within:border-sky-400/75 transition-colors">
+        <div className="flex items-center gap-2 h-9 px-3 rounded-xl ov-glass-recessed focus-within:border-[#00C8FF]/65 transition-colors">
           <Search size={14} className="text-sky-400 shrink-0" />
           <input
             type="search"
@@ -154,7 +154,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           <div
             role="listbox"
             aria-label="Matching Doha outlets"
-            className="absolute left-0 right-0 top-[calc(100%+6px)] marviz-glass-strong rounded-xl border border-sky-400/30 shadow-2xl overflow-hidden z-[520]"
+            className="absolute left-0 right-0 top-[calc(100%+6px)] ov-glass-strong rounded-xl overflow-hidden z-[520]"
           >
             <ul className="max-h-64 overflow-y-auto divide-y divide-slate-800/75 no-scrollbar">
               {matchingOutlets.length === 0 ? (
@@ -204,11 +204,11 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
 
       {/* 3. Derived Territory KPI Strip + GPS Active */}
       <div className="flex items-center gap-2 xl:gap-3 shrink-0">
-        <div className="flex items-center divide-x divide-slate-700/70 bg-slate-950/45 border border-slate-700/60 rounded-xl px-1.5 py-1">
+        <div className="flex items-center divide-x divide-white/10 ov-chart-well rounded-xl px-1.5 py-1">
           <div className="flex items-center gap-2 px-2">
             <Store size={14} className="text-slate-300 shrink-0" />
             <div>
-              <div className="font-heading text-[15px] font-bold leading-none text-white tabular-nums">
+              <div className="font-heading text-[15px] font-bold leading-none text-white ov-tabular">
                 {metrics.totalAssigned}
               </div>
               <div className="text-[9px] text-slate-400 leading-tight">Assigned</div>
@@ -218,7 +218,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           <div className="flex items-center gap-2 px-2">
             <CalendarCheck size={14} className="text-sky-400 shrink-0" />
             <div>
-              <div className="font-heading text-[15px] font-bold leading-none text-sky-300 tabular-nums">
+              <div className="font-heading text-[15px] font-bold leading-none text-sky-300 ov-tabular">
                 {metrics.plannedToday}
               </div>
               <div className="text-[9px] text-slate-400 leading-tight">Planned</div>
@@ -228,7 +228,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           <div className="flex items-center gap-2 px-2">
             <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
             <div>
-              <div className="font-heading text-[15px] font-bold leading-none text-emerald-300 tabular-nums">
+              <div className="font-heading text-[15px] font-bold leading-none text-emerald-300 ov-tabular">
                 {metrics.completedToday}
               </div>
               <div className="text-[9px] text-slate-400 leading-tight">Completed</div>
@@ -238,7 +238,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           <div className="flex items-center gap-2 px-2">
             <Clock size={14} className="text-amber-400 shrink-0" />
             <div>
-              <div className="font-heading text-[15px] font-bold leading-none text-amber-300 tabular-nums">
+              <div className="font-heading text-[15px] font-bold leading-none text-amber-300 ov-tabular">
                 {metrics.pendingToday}
               </div>
               <div className="text-[9px] text-slate-400 leading-tight">Pending</div>
@@ -251,7 +251,7 @@ export const DesktopTopBar: React.FC<DesktopTopBarProps> = ({
           type="button"
           onClick={onCenterExecutive}
           title="Re-centre map on executive GPS position"
-          className="min-h-[38px] px-2.5 rounded-xl bg-slate-900/70 hover:bg-slate-800/85 border border-sky-400/30 flex items-center gap-2 cursor-pointer transition-colors"
+          className="min-h-[38px] px-2.5 rounded-xl ov-glass-recessed hover:border-[#00C8FF]/55 flex items-center gap-2 cursor-pointer transition-colors"
         >
           <div className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
             <span className={`w-[3px] h-1.5 rounded-xs ${isLiveGps ? 'bg-emerald-400' : 'bg-amber-400'}`} />

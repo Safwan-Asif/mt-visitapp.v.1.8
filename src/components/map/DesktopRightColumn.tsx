@@ -94,7 +94,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
         {/* Tactical Compass Rose */}
         <div
           aria-hidden="true"
-          className="hidden xl:flex w-14 h-14 rounded-full marviz-glass items-center justify-center shrink-0 mt-1"
+          className="hidden xl:flex w-14 h-14 rounded-full ov-panel items-center justify-center shrink-0 mt-1"
         >
           <svg width="42" height="42" viewBox="0 0 48 48" fill="none">
             <circle cx="24" cy="24" r="20" stroke="rgba(148,163,184,0.35)" strokeWidth="1" />
@@ -109,7 +109,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
         {/* Journey + Outlet Health Stacked Glass Cards */}
         <div className="flex-1 space-y-2 min-w-0">
           {/* Today's Journey */}
-          <div className="marviz-glass-strong rounded-2xl px-3 py-2 text-white">
+          <div className="ov-panel-elevated rounded-2xl px-3 py-2 text-white">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <Flag size={14} className="text-slate-200 shrink-0" />
@@ -117,16 +117,16 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
                   <div className="text-[11px] font-bold text-white leading-tight">
                     Today&apos;s Journey
                   </div>
-                  <div className="text-[10.5px] text-slate-300 tabular-nums leading-tight">
+                  <div className="text-[10.5px] text-slate-300 ov-tabular leading-tight">
                     {metrics.completedToday} of {metrics.plannedToday} Outlets
                   </div>
                 </div>
               </div>
-              <div className="font-heading text-[20px] font-bold text-emerald-400 tabular-nums leading-none">
+              <div className="font-heading text-[20px] font-bold text-emerald-400 ov-tabular leading-none">
                 {formattedProgress}
               </div>
             </div>
-            <div className="mt-1.5 h-1.5 rounded-full bg-[#04152B] overflow-hidden">
+            <div className="mt-1.5 h-1.5 rounded-full ov-chart-well overflow-hidden">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-[#0066FF] via-[#008DFF] to-[#00C8FF]"
                 style={{ width: `${Math.min(100, metrics.progressPercent)}%` }}
@@ -135,10 +135,10 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
           </div>
 
           {/* Outlet Health */}
-          <div className="marviz-glass-strong rounded-2xl px-3 py-2 text-white">
+          <div className="ov-panel rounded-2xl px-3 py-2 text-white">
             <div className="flex items-center justify-between text-[11px] font-bold text-slate-100">
               <span>Outlet Health</span>
-              <span className="text-[10px] font-medium text-slate-400 tabular-nums">
+              <span className="text-[10px] font-medium text-slate-400 ov-tabular">
                 {healthBreakdown.total} Total
               </span>
             </div>
@@ -178,7 +178,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
       {selectedOutlet && (
         <section
           aria-label={`Selected outlet details for ${selectedOutlet.name}`}
-          className="w-full marviz-glass-strong rounded-2xl overflow-hidden text-white pointer-events-auto flex flex-col flex-1 min-h-0 animate-fade-in"
+          className="w-full ov-panel-elevated rounded-2xl overflow-hidden text-white pointer-events-auto flex flex-col flex-1 min-h-0 animate-fade-in"
         >
           {/* Storefront Header Image with Scrim & Top Overlays */}
           <div className="relative h-28 shrink-0 bg-gradient-to-br from-slate-800 to-slate-950 overflow-hidden">
@@ -238,7 +238,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
               <button
                 type="button"
                 onClick={() => onMoreDetails(selectedOutlet)}
-                className="min-h-[32px] px-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-sky-400/35 text-[11px] font-semibold text-sky-300 hover:text-white flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
+                className="min-h-[32px] px-2.5 rounded-lg ov-glass-recessed hover:border-[#00C8FF]/55 text-[11px] font-semibold text-sky-300 hover:text-white flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
               >
                 <BarChart3 size={12} />
                 <span>Analytics</span>
@@ -247,9 +247,9 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
 
             {/* Dedicated Last Visit Recency & Baseline Banner Card */}
             {lastVisitRecency ? (
-              <div className="rounded-xl bg-slate-900/85 border border-slate-700/70 p-2.5 flex items-center justify-between gap-2 shadow-sm">
+              <div className="rounded-xl ov-chart-well p-2.5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
+                  <div className="w-8 h-8 rounded-lg ov-glass-recessed flex items-center justify-center shrink-0">
                     <Calendar size={15} className="text-sky-400" />
                   </div>
                   <div className="min-w-0">
@@ -263,23 +263,23 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
                         {lastVisitRecency.relativeText}
                       </span>
                     </div>
-                    <div className="text-[11.5px] font-medium text-slate-200 mt-0.5 tabular-nums truncate">
+                    <div className="text-[11.5px] font-medium text-slate-200 mt-0.5 ov-tabular truncate">
                       {lastVisitRecency.formattedDate}
                     </div>
                   </div>
                 </div>
 
-                <div className="text-right shrink-0 pl-2 border-l border-slate-700/60">
+                <div className="text-right shrink-0 pl-2 border-l border-white/10">
                   <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">
                     Baseline
                   </div>
-                  <div className="text-[10.5px] font-mono text-slate-200 tabular-nums">
+                  <div className="text-[10.5px] font-mono text-slate-200 ov-tabular">
                     SOS {selectedOutlet.previousSosScore.toFixed(1)} · PG {selectedOutlet.previousPlanogramPercentage}%
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl bg-slate-900/75 border border-slate-700/65 p-2.5 flex items-center justify-between gap-2">
+              <div className="rounded-xl ov-chart-well p-2.5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Calendar size={14} className="text-slate-400 shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300 truncate">
@@ -287,7 +287,7 @@ export const DesktopRightColumn: React.FC<DesktopRightColumnProps> = ({
                   </span>
                 </div>
                 {selectedOutlet.sapCode && (
-                  <span className="text-[10px] font-mono text-sky-300 tabular-nums shrink-0">
+                  <span className="text-[10px] font-mono text-sky-300 ov-tabular shrink-0">
                     SAP {selectedOutlet.sapCode}
                   </span>
                 )}

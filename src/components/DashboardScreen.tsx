@@ -564,21 +564,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     null;
 
   return (
-    <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full h-full overflow-hidden px-3.5 pt-3.5 md:px-8 md:pt-6 select-none animate-fade-in">
+    <div className="ov-scope flex-1 w-full h-full overflow-hidden flex flex-col ov-atmospheric-canvas">
+      <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full h-full overflow-hidden px-3.5 pt-3.5 md:px-8 md:pt-6 select-none animate-fade-in">
       <div className="flex-1 overflow-y-auto pb-[calc(80px+env(safe-area-inset-bottom,0px))] md:pb-8 space-y-4 pr-0.5">
         {/* TOP ROW: Today's Visits Hero + AI Insights Summary (Side-by-side on Desktop, Stacked on Mobile) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
           {/* 2. TODAY'S VISITS HERO CARD */}
-          <section className="lg:col-span-7 glass-panel rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-4">
+          <section className="lg:col-span-7 ov-panel-elevated rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-4">
             {/* Row 1: TODAY · Performance Review  |  PJP + XX% */}
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">
-                <span className="font-extrabold tracking-wide text-[var(--accent-primary)]">TODAY</span>
+                <span className="font-extrabold tracking-wide text-[#0066FF] dark:text-[#00C8FF]">TODAY</span>
                 <span aria-hidden="true" className="opacity-40">&middot;</span>
                 <span>Performance Review</span>
               </div>
               <span
-                className="text-xs font-bold tabular-nums text-[var(--accent-primary)] whitespace-nowrap shrink-0"
+                className="text-xs font-bold ov-tabular text-[#0066FF] dark:text-[#00C8FF] whitespace-nowrap shrink-0"
                 title="Current Month PJP Adherence"
               >
                 PJP + {monthlyPjpValue}%
@@ -588,15 +589,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             {/* Primary Counter */}
             <div className="space-y-1">
               <div className="flex items-baseline gap-2.5 flex-wrap">
-                <span className="text-5xl leading-none font-extrabold tracking-tight tabular-nums text-[var(--text-primary)]">
+                <span className="font-heading text-5xl leading-none font-extrabold tracking-tight ov-tabular text-[var(--text-primary)]">
                   {visitedPlannedCount}
                 </span>
-                <span className="text-base sm:text-lg font-medium text-[var(--text-secondary)] tabular-nums">
+                <span className="text-base sm:text-lg font-medium text-[var(--text-secondary)] ov-tabular">
                   of {plannedOutlets.length} planned outlets visited
                 </span>
               </div>
               {unplannedOutlets.length > 0 && (
-                <p className="text-xs font-semibold text-[var(--accent-primary)] tabular-nums">
+                <p className="text-xs font-semibold text-[#0066FF] dark:text-[#00C8FF] ov-tabular">
                   (unplanned outlet visit: {visitedUnplannedCount > 0 ? visitedUnplannedCount : unplannedOutlets.length})
                 </p>
               )}
@@ -675,38 +676,40 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </button>
           </section>
 
-          {/* 3. AI INSIGHTS SUMMARY CARD (Static / Un-connected Preview) */}
-          <section
-            className={`lg:col-span-5 rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3.5 transition-colors ${
-              isDark
-                ? 'glass-panel border border-[#008DFF]/35 bg-[#061C35]/95 text-[#F1F5FF]'
-                : 'bg-[#04152B] text-[#F1F5FF] border border-[#104878] shadow-[0_14px_34px_-14px_rgba(0,102,255,0.28)]'
-            }`}
-          >
+          {/* 3. AI INSIGHTS SUMMARY CARD (Unified Overview Elevated Glass) */}
+          <section className="lg:col-span-5 ov-panel-elevated rounded-3xl p-4 sm:p-5 flex flex-col justify-between gap-3.5 transition-colors">
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#00C8FF]">
+              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-black/[0.06] dark:border-white/[0.08]">
+                <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#0066FF] dark:text-[#00C8FF]">
                   <Lightbulb size={14} className="shrink-0" />
                   <span>AI Insights</span>
                 </div>
-                <span className="text-[11px] font-medium text-[#A5B8D5] whitespace-nowrap">
+                <span className="text-[11px] font-medium text-[var(--text-secondary)] whitespace-nowrap">
                   Preview Summary
                 </span>
               </div>
 
-              <div className="space-y-2.5 text-[13px] leading-relaxed text-[#F1F5FF]/90">
-                <p>
-                  <strong className="font-semibold text-[#FFB800]">Area of concern:</strong>{' '}
-                  Flour and Edible Oil facings across D-Ring and Wakra hypermarkets are trending below target shelf share, with repeat stockouts in core 1.5L and 5kg packs.
-                </p>
-                <p>
-                  <strong className="font-semibold text-[#00C8FF]">Next best step:</strong>{' '}
-                  Prioritize eye-level planogram reset and price-tag verification at your next pending stops before afternoon replenishment cutoffs.
-                </p>
+              <div className="space-y-2.5 text-[13px] leading-relaxed text-[var(--text-primary)]">
+                <div className="ov-chart-well rounded-2xl px-3.5 py-2.5">
+                  <p>
+                    <strong className="font-semibold text-amber-600 dark:text-[#FFB800]">Area of concern:</strong>{' '}
+                    <span className="text-[var(--text-secondary)]">
+                      Flour and Edible Oil facings across D-Ring and Wakra hypermarkets are trending below target shelf share, with repeat stockouts in core 1.5L and 5kg packs.
+                    </span>
+                  </p>
+                </div>
+                <div className="ov-chart-well rounded-2xl px-3.5 py-2.5">
+                  <p>
+                    <strong className="font-semibold text-[#0066FF] dark:text-[#00C8FF]">Next best step:</strong>{' '}
+                    <span className="text-[var(--text-secondary)]">
+                      Prioritize eye-level planogram reset and price-tag verification at your next pending stops before afternoon replenishment cutoffs.
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="pt-2 border-t border-white/12 flex items-center justify-between text-[11px] text-white/60 tabular-nums">
+            <div className="pt-2 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between text-[11px] text-[var(--text-muted)] ov-tabular">
               <span>2 key takeaways · Static preview</span>
               <span>Live AI sync paused</span>
             </div>
@@ -724,26 +727,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {/* a. Planogram */}
-            <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
+            <div className="ov-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">Planogram</span>
-                <LayoutGrid size={14} className="text-[var(--accent-primary)] shrink-0" />
+                <LayoutGrid size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
               </div>
               <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)]">
+                <span className="font-heading text-2xl font-extrabold tracking-tight ov-tabular text-[var(--text-primary)]">
                   {planogramMetrics.hasData ? `${planogramMetrics.pct}%` : '0%'}
                 </span>
-                <span className="text-xs font-semibold tabular-nums text-[var(--accent-primary)]">
+                <span className="text-xs font-semibold ov-tabular text-[#0066FF] dark:text-[#00C8FF]">
                   {planogramMetrics.compliant}/{planogramMetrics.evaluated}
                 </span>
               </div>
-              <span className="text-[11px] font-medium text-[var(--text-secondary)] tabular-nums">
+              <span className="text-[11px] font-medium text-[var(--text-secondary)] ov-tabular">
                 {planogramMetrics.hasData ? 'Stores compliant' : 'No planograms audited'}
               </span>
             </div>
 
             {/* b. OOS (Number of outlets with OOS) */}
-            <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
+            <div className="ov-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">OOS</span>
                 <PackageX
@@ -751,12 +754,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   className={
                     oosMetrics.outletCount > 0
                       ? 'text-rose-600 dark:text-rose-400 shrink-0'
-                      : 'text-[var(--accent-primary)] shrink-0'
+                      : 'text-[#0066FF] dark:text-[#00C8FF] shrink-0'
                   }
                 />
               </div>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)]">
+                <span className="font-heading text-2xl font-extrabold tracking-tight ov-tabular text-[var(--text-primary)]">
                   {oosMetrics.outletCount}
                 </span>
                 <span className="text-xs font-semibold text-[var(--text-secondary)]">
@@ -767,7 +770,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 className={`text-[11px] font-semibold ${
                   oosMetrics.outletCount > 0
                     ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-[var(--accent-primary)]'
+                    : 'text-[#0066FF] dark:text-[#00C8FF]'
                 }`}
               >
                 {oosMetrics.outletCount > 0 ? 'Outlets with OOS' : 'No OOS reported'}
@@ -775,12 +778,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </div>
 
             {/* c. POSM Compliance Pie Chart + % */}
-            <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
+            <div className="ov-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">POSM Compliance</span>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)]">
+                <span className="font-heading text-2xl font-extrabold tracking-tight ov-tabular text-[var(--text-primary)]">
                   {posmPct}%
                 </span>
                 <svg
@@ -809,7 +812,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     strokeDasharray={pieCircumference}
                     strokeDashoffset={pieDashOffset}
                     strokeLinecap="round"
-                    className="text-[var(--accent-primary)] transition-all duration-500"
+                    className="text-[#0066FF] dark:text-[#00C8FF] transition-all duration-500"
                   />
                 </svg>
               </div>
@@ -819,17 +822,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </div>
 
             {/* d. Avg. Audit Time */}
-            <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
+            <div className="ov-panel rounded-2xl p-4 flex flex-col justify-between gap-1.5">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">Avg. Audit Time</span>
-                <Clock size={14} className="text-[var(--accent-primary)] shrink-0" />
+                <Clock size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
               </div>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-extrabold tracking-tight tabular-nums text-[var(--text-primary)]">
+                <span className="font-heading text-2xl font-extrabold tracking-tight ov-tabular text-[var(--text-primary)]">
                   {avgAuditTimeLabel}
                 </span>
               </div>
-              <span className="text-[11px] font-medium text-[var(--text-secondary)] tabular-nums">
+              <span className="text-[11px] font-medium text-[var(--text-secondary)] ov-tabular">
                 {totalAuditsCount > 0 ? `Across ${totalAuditsCount} audits` : 'Sub-2 min goal'}
               </span>
             </div>
@@ -855,7 +858,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
 
           {attentionItems.length === 0 ? (
-            <div className="glass-panel rounded-2xl p-4 flex items-center gap-3">
+            <div className="ov-panel rounded-2xl p-4 flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-[#22C55E]/15 text-[#22C55E] flex items-center justify-center shrink-0">
                 <CheckCircle2 size={18} />
               </div>
@@ -892,7 +895,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     key={item.id}
                     type="button"
                     onClick={goPendingPjp}
-                    className="glass-panel rounded-2xl px-3.5 py-3 min-h-[64px] w-full flex items-center gap-3 text-left transition-all cursor-pointer hover:border-[var(--border-glass-strong)] active:scale-[0.99]"
+                    className="ov-panel rounded-2xl px-3.5 py-3 min-h-[64px] w-full flex items-center gap-3 text-left transition-all cursor-pointer hover:border-[#0066FF]/35 dark:hover:border-[#00C8FF]/40 active:scale-[0.99]"
                   >
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconBoxClass}`}>
                       {item.kind === 'sos' ? (
@@ -929,8 +932,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </section>
 
         {/* 6. SOS — CATEGORY CARDS + TRENDLINE (X: Outlets, Y: 0% to 50%) */}
-        <section className="glass-panel rounded-3xl p-4 sm:p-5 space-y-4">
-          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <section className="ov-panel rounded-3xl p-4 sm:p-5 space-y-4">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap pb-2.5 border-b border-black/[0.06] dark:border-white/[0.08]">
             <div>
               <h2 className="text-sm font-bold text-[var(--text-primary)]">
                 SOS Performance by Category
@@ -940,7 +943,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </p>
             </div>
             {activeNode && activeNode.value !== null && (
-              <span className="text-xs font-semibold tabular-nums text-[var(--accent-primary)]">
+              <span className="text-xs font-semibold ov-tabular text-[#0066FF] dark:text-[#00C8FF]">
                 {activeNode.outletName}: {activeNode.value}% SOS
               </span>
             )}
@@ -970,9 +973,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   className={`rounded-2xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between gap-1 min-h-[68px] ${
                     isSelected
                       ? isDark
-                        ? 'bg-[#0066FF]/22 border border-[#008DFF] text-[#F1F5FF] shadow-[0_0_18px_rgba(0,102,255,0.22)]'
+                        ? 'bg-[#0066FF]/22 border border-[#00C8FF]/65 text-[#F1F5FF] shadow-[0_0_18px_rgba(0,102,255,0.22)]'
                         : 'bg-[#0066FF] border border-[#0066FF] text-white shadow-sm'
-                      : 'glass-subtle text-[var(--text-primary)] hover:border-[var(--border-glass-strong)]'
+                      : 'ov-glass-recessed text-[var(--text-primary)] hover:border-[#0066FF]/35 dark:hover:border-[#00C8FF]/40'
                   }`}
                 >
                   <span
@@ -987,11 +990,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     {cat.label}
                   </span>
                   <div className="flex items-baseline justify-between gap-1">
-                    <span className="text-lg font-extrabold tabular-nums">
+                    <span className="font-heading text-lg font-extrabold ov-tabular">
                       {stat.avg !== null ? `${stat.avg}%` : '—'}
                     </span>
                     <span
-                      className={`text-[10px] tabular-nums ${
+                      className={`text-[10px] ov-tabular ${
                         isSelected
                           ? isDark
                             ? 'text-[#A5B8D5]'
@@ -1008,7 +1011,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
 
           {/* Trendline SVG Chart (Y-axis 0% to 50%, no benchmark line) */}
-          <div className="w-full relative">
+          <div className="w-full relative ov-chart-well rounded-2xl p-3">
             <svg
               viewBox={`0 0 ${chartW} ${chartH}`}
               className="w-full h-44 sm:h-48 overflow-visible"
@@ -1160,7 +1163,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   key={entry.id}
                   type="button"
                   onClick={goPendingPjp}
-                  className="glass-panel rounded-2xl px-3.5 py-3 min-h-[70px] w-full flex items-center gap-3 text-left transition-all cursor-pointer hover:border-[var(--border-glass-strong)] active:scale-[0.99]"
+                  className="ov-panel rounded-2xl px-3.5 py-3 min-h-[70px] w-full flex items-center gap-3 text-left transition-all cursor-pointer hover:border-[#0066FF]/35 dark:hover:border-[#00C8FF]/40 active:scale-[0.99]"
                 >
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
@@ -1178,11 +1181,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
                       {entry.outletName} – {entry.outletBranch}
                     </p>
-                    <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate">
+                    <p className="text-xs text-[var(--text-secondary)] ov-tabular truncate">
                       {entry.timeLabel} &middot; {entry.categoryCountLabel}
                     </p>
                     <p
-                      className={`text-xs tabular-nums truncate ${
+                      className={`text-xs ov-tabular truncate ${
                         isProcessing
                           ? 'font-semibold text-amber-700 dark:text-amber-400'
                           : 'text-[var(--text-primary)]'
@@ -1202,13 +1205,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <button
                 type="button"
                 onClick={goPendingPjp}
-                className="w-full min-h-[58px] px-3.5 py-2.5 rounded-2xl border border-dashed border-[var(--border-glass-strong)] glass-subtle flex items-center gap-3 text-left transition-all cursor-pointer hover:bg-white/65 dark:hover:bg-white/10"
+                className="w-full min-h-[58px] px-3.5 py-2.5 rounded-2xl border border-dashed border-[#0066FF]/35 dark:border-[#00C8FF]/35 ov-glass-recessed flex items-center gap-3 text-left transition-all cursor-pointer hover:brightness-105"
               >
                 <div className="w-10 h-10 rounded-xl bg-black/5 dark:bg-white/10 text-[var(--text-secondary)] flex items-center justify-center shrink-0">
                   <Clock size={18} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[var(--text-primary)] tabular-nums">
+                  <p className="text-sm font-semibold text-[var(--text-primary)] ov-tabular">
                     {remainingPlannedList.length} still planned today
                   </p>
                   <p className="text-xs text-[var(--text-secondary)] truncate">
@@ -1225,14 +1228,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </section>
 
         {/* COLLAPSIBLE CLOUD SYNC & TOOLS DRAWER (Preserved functionality without clutter) */}
-        <section className="glass-panel rounded-2xl overflow-hidden">
+        <section className="ov-panel rounded-2xl overflow-hidden">
           <button
             type="button"
             onClick={() => setIsToolsOpen((prev) => !prev)}
             className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between gap-3 text-left cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors"
           >
             <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]">
-              <Zap size={14} className="text-[var(--accent-primary)] shrink-0" />
+              <Zap size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
               <span>Cloud Sync &amp; Workspace Tools</span>
             </div>
             <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
@@ -1245,10 +1248,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </button>
 
           {isToolsOpen && (
-            <div className="px-4 pb-4 pt-2 border-t border-[var(--border-glass)] space-y-3">
+            <div className="px-4 pb-4 pt-2 border-t border-black/[0.06] dark:border-white/[0.08] space-y-3">
               <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
                 <span>Silent Google Workspace auto-sync active</span>
-                <span className="font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1">
+                <span className="font-semibold text-[#0066FF] dark:text-[#00C8FF] inline-flex items-center gap-1">
                   <ShieldCheck size={13} /> Connected
                 </span>
               </div>
@@ -1258,10 +1261,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   href={sheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-2.5 rounded-xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between gap-2 text-[var(--text-primary)]"
+                  className="p-2.5 rounded-xl ov-glass-recessed hover:border-[#0066FF]/40 dark:hover:border-[#00C8FF]/45 flex items-center justify-between gap-2 text-[var(--text-primary)]"
                 >
                   <span className="flex items-center gap-2 truncate font-semibold">
-                    <FileSpreadsheet size={14} className="text-[var(--accent-primary)] shrink-0" />
+                    <FileSpreadsheet size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
                     <span className="truncate">Audit Log Sheet</span>
                   </span>
                   <ExternalLink size={12} className="text-[var(--text-muted)] shrink-0" />
@@ -1271,10 +1274,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   href={TARGET_DRIVE_FOLDER_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-2.5 rounded-xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between gap-2 text-[var(--text-primary)]"
+                  className="p-2.5 rounded-xl ov-glass-recessed hover:border-[#0066FF]/40 dark:hover:border-[#00C8FF]/45 flex items-center justify-between gap-2 text-[var(--text-primary)]"
                 >
                   <span className="flex items-center gap-2 truncate font-semibold">
-                    <Folder size={14} className="text-[var(--accent-primary)] shrink-0" />
+                    <Folder size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
                     <span className="truncate">Drive Photos Folder</span>
                   </span>
                   <ExternalLink size={12} className="text-[var(--text-muted)] shrink-0" />
@@ -1284,10 +1287,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   href={PJP_SPREADSHEET_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-2.5 rounded-xl glass-subtle hover:border-[var(--border-glass-strong)] flex items-center justify-between gap-2 text-[var(--text-primary)]"
+                  className="p-2.5 rounded-xl ov-glass-recessed hover:border-[#0066FF]/40 dark:hover:border-[#00C8FF]/45 flex items-center justify-between gap-2 text-[var(--text-primary)]"
                 >
                   <span className="flex items-center gap-2 truncate font-semibold">
-                    <FileSpreadsheet size={14} className="text-[var(--accent-primary)] shrink-0" />
+                    <FileSpreadsheet size={14} className="text-[#0066FF] dark:text-[#00C8FF] shrink-0" />
                     <span className="truncate">Master PJP Schedule</span>
                   </span>
                   <ExternalLink size={12} className="text-[var(--text-muted)] shrink-0" />
@@ -1295,7 +1298,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </div>
 
               {exportStatus && (
-                <div className="glass-subtle rounded-xl p-2.5 text-xs font-medium text-[var(--text-primary)]">
+                <div className="ov-glass-recessed rounded-xl p-2.5 text-xs font-medium text-[var(--text-primary)]">
                   {exportStatus}
                 </div>
               )}
@@ -1323,7 +1326,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowScriptModal(true)}
-                  className="min-h-[44px] py-2 px-3 rounded-xl glass-subtle text-xs font-semibold text-[var(--accent-primary)] hover:border-[var(--border-glass-strong)] flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="min-h-[44px] py-2 px-3 rounded-xl ov-glass-recessed text-xs font-semibold text-[#0066FF] dark:text-[#00C8FF] hover:border-[#0066FF]/40 dark:hover:border-[#00C8FF]/45 flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Code size={14} />
                   <span>Apps Script Setup</span>
@@ -1332,7 +1335,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <button
                   type="button"
                   onClick={onResetData}
-                  className="min-h-[44px] py-2 px-3 rounded-xl glass-subtle hover:border-rose-500/40 text-xs font-semibold text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="min-h-[44px] py-2 px-3 rounded-xl ov-glass-recessed hover:border-rose-500/40 text-xs font-semibold text-[var(--text-secondary)] hover:text-rose-600 dark:hover:text-rose-400 flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <RotateCcw size={14} />
                   <span>Reset Demo Data</span>
@@ -1346,15 +1349,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       {/* Apps Script Template Code Modal */}
       {showScriptModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-          <div className="w-full max-w-md glass-panel-strong rounded-3xl p-5 space-y-3 max-h-[88vh] flex flex-col">
+          <div className="w-full max-w-md ov-glass-strong rounded-3xl p-5 space-y-3 max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--accent-primary)] flex items-center gap-1.5">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#0066FF] dark:text-[#00C8FF] flex items-center gap-1.5">
                 <Code size={14} /> Google Apps Script Setup
               </h3>
               <button
                 type="button"
                 onClick={() => setShowScriptModal(false)}
-                className="w-8 h-8 rounded-xl glass-subtle flex items-center justify-center text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                className="w-8 h-8 rounded-xl ov-glass-recessed flex items-center justify-center text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 ✕
               </button>
@@ -1382,7 +1385,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setShowScriptModal(false)}
-                className="min-h-[44px] px-4 py-2 glass-subtle text-[var(--text-primary)] font-bold text-xs rounded-2xl cursor-pointer"
+                className="min-h-[44px] px-4 py-2 ov-glass-recessed text-[var(--text-primary)] font-bold text-xs rounded-2xl cursor-pointer"
               >
                 Close
               </button>
@@ -1390,6 +1393,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

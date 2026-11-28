@@ -105,12 +105,12 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
       className="hidden md:flex flex-col gap-2 w-[208px] lg:w-[228px] max-h-[calc(100%-70px)] overflow-y-auto no-scrollbar pointer-events-auto"
     >
       {/* 1. MAP LAYERS */}
-      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
+      <section className="ov-panel-elevated rounded-2xl overflow-hidden text-white shrink-0">
         <button
           type="button"
           onClick={() => setLayersExpanded((v) => !v)}
           aria-expanded={layersExpanded}
-          className="w-full px-3 py-2 flex items-center justify-between border-b border-slate-700/60 hover:bg-white/5 cursor-pointer"
+          className="w-full px-3 py-2 flex items-center justify-between border-b border-white/[0.08] hover:bg-white/5 cursor-pointer"
         >
           <span className="font-heading text-[12px] font-bold uppercase tracking-wider text-slate-100">
             MAP LAYERS
@@ -132,7 +132,7 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
               <div
                 role="radiogroup"
                 aria-label="Map base style"
-                className="grid grid-cols-3 gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-700/60"
+                className="grid grid-cols-3 gap-1 ov-chart-well p-1 rounded-xl"
               >
                 {MAP_BASE_STYLES.map((style) => {
                   const selected = mapBaseStyle === style.id;
@@ -234,12 +234,12 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
       </section>
 
       {/* 2. QUICK FILTERS */}
-      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
+      <section className="ov-panel-elevated rounded-2xl overflow-hidden text-white shrink-0">
         <button
           type="button"
           onClick={() => setFiltersExpanded((v) => !v)}
           aria-expanded={filtersExpanded}
-          className="w-full px-3 py-2 flex items-center justify-between border-b border-slate-700/60 hover:bg-white/5 cursor-pointer"
+          className="w-full px-3 py-2 flex items-center justify-between border-b border-white/[0.08] hover:bg-white/5 cursor-pointer"
         >
           <span className="font-heading text-[12px] font-bold uppercase tracking-wider text-slate-100">
             QUICK FILTERS
@@ -275,13 +275,13 @@ export const DesktopLeftRail: React.FC<DesktopLeftRailProps> = ({
       </section>
 
       {/* 3. OUTLET LEGEND (Collapsible, closed by default) */}
-      <section className="marviz-glass-strong rounded-2xl overflow-hidden text-white shrink-0">
+      <section className="ov-panel rounded-2xl overflow-hidden text-white shrink-0">
         <button
           type="button"
           onClick={() => setLegendExpanded((v) => !v)}
           aria-expanded={legendExpanded}
           className={`w-full px-3 py-1.5 flex items-center justify-between hover:bg-white/5 cursor-pointer ${
-            legendExpanded ? 'border-b border-slate-700/60' : ''
+            legendExpanded ? 'border-b border-white/[0.08]' : ''
           }`}
         >
           <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-slate-200">

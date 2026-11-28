@@ -5,7 +5,7 @@ import {
   Map as MapIcon,
   Route as RouteIcon,
   CalendarCheck,
-  Inbox,
+  MoreHorizontal,
   Sun,
   Moon,
   LogOut,
@@ -15,7 +15,7 @@ import {
 import { UserProfile } from '../types';
 import { useTheme } from '../ThemeContext';
 
-export type AppTab = 'home' | 'map' | 'pjp' | 'today' | 'requests';
+export type AppTab = 'home' | 'map' | 'pjp' | 'today' | 'more';
 
 interface NavigationProps {
   activeTab: AppTab;
@@ -45,7 +45,7 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
     { id: 'home', label: 'Overview', icon: LayoutGrid },
     { id: 'pjp', label: 'PJP Route', icon: RouteIcon },
     { id: 'today', label: 'Today', icon: CalendarCheck },
-    { id: 'requests', label: 'Requests', icon: Inbox }
+    { id: 'more', label: 'More', icon: MoreHorizontal }
   ];
 
   const capsuleSpring = shouldReduceMotion
@@ -66,11 +66,11 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
       animate={{ y: 0, opacity: 1, scale: 1 }}
       exit={shouldReduceMotion ? { opacity: 0 } : { y: 52, opacity: 0, scale: 0.95 }}
       transition={dockTransition}
-      className="md:hidden fixed inset-x-0 bottom-0 z-40 pointer-events-none px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      className="md:hidden fixed inset-x-0 bottom-0 z-40 pointer-events-none px-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]"
     >
       <nav
         aria-label="Primary Mobile Navigation"
-        className="mobile-bottom-nav-container pointer-events-auto relative w-fit mx-auto rounded-full glass-capsule-dock px-2 py-1.5"
+        className="mobile-bottom-nav-container pointer-events-auto relative w-full max-w-[430px] mx-auto rounded-[22px] glass-capsule-dock px-[6px] py-[6px]"
       >
         {/* Subtle futuristic top specular edge highlight */}
         <div
@@ -83,7 +83,7 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
         />
 
         <LayoutGroup id="mobile-bottom-nav">
-          <div className="grid grid-cols-5 gap-1.5 items-center">
+          <div className="grid grid-cols-5 gap-[4px] items-center">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
               const Icon = tab.icon;
@@ -92,29 +92,27 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
                   key={tab.id}
                   type="button"
                   onClick={() => onSelectTab(tab.id)}
-                  whileTap={shouldReduceMotion ? undefined : { scale: 0.88 }}
+                  whileTap={shouldReduceMotion ? undefined : { scale: 0.92 }}
                   transition={iconSpring}
                   aria-label={tab.label}
                   title={tab.label}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`relative w-11 h-11 flex items-center justify-center rounded-full transition-colors cursor-pointer ${
+                  className={`relative min-h-[48px] px-[4px] py-[6px] flex flex-col items-center justify-center gap-[3px] rounded-[16px] transition-colors cursor-pointer ${
                     isActive
-                      ? isDark
-                        ? 'text-[#00D2FF]'
-                        : 'text-white'
+                      ? 'text-white'
                       : isDark
                       ? 'text-[#92A9CA] hover:text-[#F1F5FF]'
-                      : 'text-[#647D9E] hover:text-[#0B1D36]'
+                      : 'text-[#475E7D] hover:text-[#0B1D36]'
                   }`}
                 >
                   {isActive && (
                     <motion.span
                       layoutId="mobile-dock-active-pill"
                       transition={capsuleSpring}
-                      className={`absolute inset-0 rounded-full ${
+                      className={`absolute inset-0 rounded-[16px] ${
                         isDark
-                          ? 'bg-gradient-to-br from-[#00B7FF]/30 via-[#007AFF]/24 to-[#0054E9]/32 border border-[#00C8FF]/70 shadow-[0_0_22px_-3px_rgba(0,183,255,0.72),inset_0_1px_0_rgba(255,255,255,0.22)]'
-                          : 'btn-electric-blue'
+                          ? 'bg-gradient-to-br from-[#0066FF]/95 via-[#007AFF]/90 to-[#008DFF]/95 border border-[#00C8FF]/70 shadow-[0_0_22px_-3px_rgba(0,141,255,0.78),inset_0_1px_0_rgba(255,255,255,0.22)]'
+                          : 'btn-electric-blue border border-[#008DFF]/60 shadow-[0_6px_18px_-4px_rgba(0,102,255,0.55)]'
                       }`}
                     />
                   )}
@@ -124,41 +122,35 @@ export const MobileBottomNav: React.FC<NavigationProps> = ({
                       shouldReduceMotion
                         ? { scale: 1, y: 0 }
                         : {
-                            scale: isActive ? 1.12 : 1,
-                            y: isActive ? -1 : 0
+                            scale: isActive ? 1.06 : 1,
+                            y: isActive ? -0.5 : 0
                           }
                     }
                     transition={iconSpring}
                     className="relative z-10 flex items-center justify-center"
                   >
                     <Icon
-                      size={20}
+                      size={18}
                       strokeWidth={isActive ? 2.3 : 1.85}
                       className={
-                        isActive && isDark
-                          ? 'drop-shadow-[0_0_8px_rgba(0,200,255,0.85)]'
+                        isActive
+                          ? 'text-[#00C8FF] drop-shadow-[0_0_8px_rgba(0,200,255,0.85)]'
                           : ''
                       }
                     />
-                    {tab.id === 'requests' && requestsCount > 0 && (
-                      <span className="absolute -top-1.5 -right-2 min-w-[15px] h-[15px] px-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center tabular-nums shadow-sm bg-[#EF4444]">
+                    {tab.id === 'more' && requestsCount > 0 && (
+                      <span className="absolute -top-1.5 -right-2.5 min-w-[15px] h-[15px] px-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center tabular-nums shadow-sm bg-[#EF4444]">
                         {requestsCount > 99 ? '99+' : requestsCount}
                       </span>
                     )}
                   </motion.div>
-                  {isActive && (
-                    <motion.span
-                      layoutId="mobile-dock-active-beacon"
-                      transition={capsuleSpring}
-                      aria-hidden="true"
-                      className={`absolute bottom-1 w-3.5 h-[2px] rounded-full z-10 ${
-                        isDark
-                          ? 'bg-[#00D2FF] shadow-[0_0_8px_#00D2FF]'
-                          : 'bg-white/90'
-                      }`}
-                    />
-                  )}
-                  <span className="sr-only">{tab.label}</span>
+                  <span
+                    className={`relative z-10 text-[10px] leading-none tracking-[0.01em] whitespace-nowrap ${
+                      isActive ? 'font-semibold text-white' : 'font-medium'
+                    }`}
+                  >
+                    {tab.label}
+                  </span>
                 </motion.button>
               );
             })}
@@ -213,7 +205,12 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       subtitle: 'Daily KPI',
       icon: CalendarCheck
     },
-    { id: 'requests', label: 'Requests', icon: Inbox }
+    {
+      id: 'more',
+      label: 'More',
+      subtitle: 'Workspace',
+      icon: MoreHorizontal
+    }
   ];
 
   return (
@@ -392,7 +389,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
                   )}
                 </div>
 
-                {item.id === 'requests' && requestsCount > 0 && (
+                {item.id === 'more' && requestsCount > 0 && (
                   <span
                     className={
                       isCollapsed

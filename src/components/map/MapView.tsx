@@ -278,24 +278,24 @@ export const MapView: React.FC<MapViewProps> = ({
         ))}
       </MapContainer>
 
-      {/* Subtle Tactical Sector Grid Overlay for Terrain & Dark Tactical Modes */}
-      {mapBaseStyle !== 'satellite' && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-[375] marviz-tactical-grid"
-        />
-      )}
+      {/* Subtle Architectural Contour & Orbital Telemetry Overlay */}
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 z-[375] marviz-tactical-grid ${
+          mapBaseStyle === 'satellite' ? 'opacity-65' : 'opacity-90'
+        }`}
+      />
 
       {/* Subtle Tactical Vignette around screen edges for contrast */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-[380] bg-[radial-gradient(circle_at_center,transparent_58%,rgba(4,12,24,0.48)_100%)]"
+        className="pointer-events-none absolute inset-0 z-[380] bg-[radial-gradient(circle_at_center,transparent_58%,rgba(2,8,19,0.52)_100%)]"
       />
 
       {/* Empty Filter State */}
       {outlets.length === 0 && (
         <div className="absolute inset-0 z-[430] flex items-center justify-center px-6 pointer-events-none">
-          <div className="marviz-glass-strong rounded-2xl p-4 text-center max-w-xs pointer-events-auto text-white">
+          <div className="ov-panel-elevated rounded-2xl p-4 text-center max-w-xs pointer-events-auto text-white">
             <p className="font-heading text-base font-bold uppercase tracking-wide">
               No matching outlets
             </p>
@@ -336,10 +336,10 @@ export const MapView: React.FC<MapViewProps> = ({
             aria-expanded={onToggleMobileLayersMenu ? isMobileLayersOpen : undefined}
             aria-label={`Map layout and journey layers (current: ${activeStyleConfig.label})`}
             title={`Map Mode: ${activeStyleConfig.label}`}
-            className={`relative w-11 h-11 rounded-2xl marviz-glass flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer ${
+            className={`relative w-11 h-11 rounded-2xl ov-panel flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer ${
               isMobileLayersOpen
-                ? 'border-sky-400/80 bg-[#0066FF]/28 text-white shadow-[0_0_16px_rgba(0,141,255,0.45)]'
-                : 'text-[#00C8FF] hover:text-white hover:border-[#008DFF]'
+                ? 'border-[#00C8FF]/80 bg-[#0066FF]/28 text-white shadow-[0_0_16px_rgba(0,141,255,0.45)]'
+                : 'text-[#00C8FF] hover:text-white hover:border-[#00C8FF]/55'
             }`}
           >
             <span
@@ -361,12 +361,12 @@ export const MapView: React.FC<MapViewProps> = ({
           </button>
         )}
 
-        <div className="marviz-glass rounded-2xl flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[#104878] overflow-hidden">
+        <div className="ov-panel rounded-2xl flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-white/10 overflow-hidden">
           <button
             type="button"
             onClick={handleZoomIn}
             aria-label="Zoom in map"
-            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-[#0B2542] active:bg-[#0066FF]/25 transition-colors cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-white/10 active:bg-[#0066FF]/25 transition-colors cursor-pointer"
           >
             <Plus size={18} />
           </button>
@@ -374,7 +374,7 @@ export const MapView: React.FC<MapViewProps> = ({
             type="button"
             onClick={handleZoomOut}
             aria-label="Zoom out map"
-            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-[#0B2542] active:bg-[#0066FF]/25 transition-colors cursor-pointer"
+            className="w-11 h-11 flex items-center justify-center text-[#F1F5FF] hover:bg-white/10 active:bg-[#0066FF]/25 transition-colors cursor-pointer"
           >
             <Minus size={18} />
           </button>
@@ -385,7 +385,7 @@ export const MapView: React.FC<MapViewProps> = ({
           onClick={onRecenterExecutive}
           aria-label="Re-centre on current location"
           title="Re-centre on Doha executive position"
-          className="w-11 h-11 rounded-2xl marviz-glass flex items-center justify-center text-[#00C8FF] hover:text-white hover:border-[#008DFF] active:scale-95 transition-all cursor-pointer"
+          className="w-11 h-11 rounded-2xl ov-panel flex items-center justify-center text-[#00C8FF] hover:text-white hover:border-[#00C8FF]/55 active:scale-95 transition-all cursor-pointer"
         >
           <Crosshair size={18} />
         </button>

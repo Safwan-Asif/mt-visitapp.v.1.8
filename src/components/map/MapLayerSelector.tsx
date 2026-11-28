@@ -67,9 +67,9 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
         <div
           role="dialog"
           aria-label="Map Layers"
-          className="marviz-glass-strong rounded-2xl w-[248px] max-w-[calc(100vw-24px)] p-2.5 text-white animate-fade-in"
+          className="ov-panel-elevated rounded-2xl w-[248px] max-w-[calc(100vw-24px)] p-2.5 text-white animate-fade-in"
         >
-          <div className="flex items-center justify-between px-1 pb-2 border-b border-slate-700/60">
+          <div className="flex items-center justify-between px-1 pb-2 border-b border-white/[0.08]">
             <div className="flex items-center gap-1.5">
               <Layers size={14} className="text-sky-400" />
               <span className="font-heading text-xs font-bold uppercase tracking-wider text-slate-100">
@@ -87,14 +87,14 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
           </div>
 
           {/* Map Base Style Switcher */}
-          <div className="pt-2 pb-2 border-b border-slate-700/60">
+          <div className="pt-2 pb-2 border-b border-white/[0.08]">
             <div className="px-1 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
               Map Layout
             </div>
             <div
               role="radiogroup"
               aria-label="Map base style"
-              className="grid grid-cols-3 gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-700/60"
+              className="grid grid-cols-3 gap-1 ov-chart-well p-1 rounded-xl"
             >
               {MAP_BASE_STYLES.map((style) => {
                 const selected = mapBaseStyle === style.id;
@@ -119,13 +119,13 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
           </div>
 
           {/* Independent Journey Plan Route Overlay Toggle */}
-          <div className="pt-2 pb-2 border-b border-slate-700/60">
+          <div className="pt-2 pb-2 border-b border-white/[0.08]">
             <button
               type="button"
               role="switch"
               aria-checked={showJourneyPlan}
               onClick={onToggleJourneyPlan}
-              className="w-full min-h-[44px] px-2.5 py-1.5 rounded-xl bg-slate-900/60 hover:bg-slate-800/75 border border-slate-700/60 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+              className="w-full min-h-[44px] px-2.5 py-1.5 rounded-xl ov-glass-recessed hover:border-[#00C8FF]/45 flex items-center justify-between gap-2 transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-2 min-w-0 text-left">
                 <Route
@@ -204,10 +204,10 @@ export const MapLayerSelector: React.FC<MapLayerSelectorProps> = ({
           onClick={onToggleOpen}
           aria-expanded={isOpen}
           aria-label="Toggle map layers"
-          className={`min-h-[44px] px-3.5 rounded-2xl marviz-glass flex items-center gap-2 text-white transition-all cursor-pointer active:scale-95 ${
+          className={`min-h-[44px] px-3.5 rounded-2xl ov-panel flex items-center gap-2 text-white transition-all cursor-pointer active:scale-95 ${
             isOpen
-              ? 'border-sky-400/70 bg-[#0066FF]/25'
-              : 'hover:border-sky-400/50'
+              ? 'border-[#00C8FF]/70 bg-[#0066FF]/25'
+              : 'hover:border-[#00C8FF]/50'
           }`}
         >
           <Layers size={16} className="text-sky-400 shrink-0" />

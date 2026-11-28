@@ -84,7 +84,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
     <div ref={containerRef} className="relative">
       <header
         aria-label="GeoIntel Header"
-        className="marviz-glass-strong rounded-xl px-3 py-1.5 flex items-center justify-between gap-2 text-white border border-sky-400/20 backdrop-blur-md"
+        className="ov-panel-elevated rounded-xl px-3 py-1.5 flex items-center justify-between gap-2 text-white"
       >
         {/* Wordmark matching Desktop HUD */}
         <div className="leading-none select-none pl-0.5">
@@ -106,7 +106,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer active:scale-95 shrink-0 ${
               isSearchOpen
                 ? 'bg-[#0066FF] text-white'
-                : 'text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542]'
+                : 'text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-white/10'
             }`}
           >
             {isSearchOpen ? <X size={14} /> : <Search size={14} />}
@@ -120,7 +120,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
                 onOpenSettings();
               }}
               aria-label="Open GeoIntel settings and theme"
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-[#0B2542] transition-colors cursor-pointer active:scale-95 shrink-0"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[#A5B8D5] hover:text-[#F1F5FF] hover:bg-white/10 transition-colors cursor-pointer active:scale-95 shrink-0"
             >
               <SlidersHorizontal size={14} />
             </button>
@@ -133,9 +133,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         <div
           role="dialog"
           aria-label="Search Doha outlets"
-          className="mt-1.5 marviz-glass-strong rounded-2xl p-2 text-[#F1F5FF] shadow-2xl border border-[#008DFF]/40 animate-fade-in"
+          className="mt-1.5 ov-glass-strong rounded-2xl p-2 text-[#F1F5FF] animate-fade-in"
         >
-          <div className="flex items-center gap-2 px-2.5 h-10 rounded-xl bg-[#04152B] border border-[#104878] focus-within:border-[#008DFF]">
+          <div className="flex items-center gap-2 px-2.5 h-10 rounded-xl ov-glass-recessed focus-within:border-[#00C8FF]/65">
             <Search size={15} className="text-sky-400 shrink-0" />
             <input
               ref={inputRef}

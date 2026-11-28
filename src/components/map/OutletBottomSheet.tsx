@@ -141,7 +141,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
           <motion.div
             layout={!shouldReduceMotion}
             transition={sheetTransition}
-            className="max-w-md mx-auto marviz-glass-strong rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white"
+            className="max-w-md mx-auto ov-panel-elevated rounded-t-3xl rounded-b-2xl pointer-events-auto overflow-hidden text-white"
           >
         {/* Touch-Draggable Header & Handle */}
         <div
@@ -203,9 +203,9 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
           <div className="px-4 pb-3.5 pt-0.5 space-y-2.5 animate-fade-in">
             {/* Dedicated Last Visit Recency & Baseline Banner Card */}
             {lastVisitRecency ? (
-              <div className="rounded-xl bg-slate-900/80 border border-slate-700/65 px-3 py-2 flex items-center justify-between gap-2 shadow-sm">
+              <div className="rounded-xl ov-chart-well px-3 py-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-7 h-7 rounded-lg bg-slate-950/70 border border-slate-700/70 flex items-center justify-center shrink-0">
+                  <div className="w-7 h-7 rounded-lg ov-glass-recessed flex items-center justify-center shrink-0">
                     <Calendar size={14} className="text-sky-400" />
                   </div>
                   <div className="min-w-0">
@@ -219,23 +219,23 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
                         {lastVisitRecency.relativeText}
                       </span>
                     </div>
-                    <div className="text-[11px] font-medium text-slate-200 mt-0.5 tabular-nums truncate">
+                    <div className="text-[11px] font-medium text-slate-200 mt-0.5 ov-tabular truncate">
                       {lastVisitRecency.formattedDate}
                     </div>
                   </div>
                 </div>
 
-                <div className="text-right shrink-0 pl-2 border-l border-slate-700/60">
+                <div className="text-right shrink-0 pl-2 border-l border-white/10">
                   <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-tight">
                     Baseline
                   </div>
-                  <div className="text-[10.5px] font-mono text-slate-300 tabular-nums">
+                  <div className="text-[10.5px] font-mono text-slate-300 ov-tabular">
                     SOS {outlet.previousSosScore.toFixed(1)} · PG {outlet.previousPlanogramPercentage}%
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl bg-slate-900/70 border border-slate-700/65 px-3 py-2 flex items-center justify-between gap-2">
+              <div className="rounded-xl ov-chart-well px-3 py-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Calendar size={14} className="text-slate-400 shrink-0" />
                   <span className="text-[11px] font-medium text-slate-300 truncate">
@@ -243,7 +243,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
                   </span>
                 </div>
                 {outlet.sapCode && (
-                  <span className="text-[10px] font-mono text-sky-300 tabular-nums shrink-0">
+                  <span className="text-[10px] font-mono text-sky-300 ov-tabular shrink-0">
                     SAP {outlet.sapCode}
                   </span>
                 )}
@@ -253,7 +253,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
             <OutletKPIRow outlet={outlet} compact />
 
             {/* Deterministic One-Line Intelligence Summary */}
-            <div className="flex items-center gap-2 rounded-xl bg-slate-900/70 border border-slate-700/65 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-xl ov-chart-well px-3 py-2">
               <AlertCircle
                 size={14}
                 className={
@@ -295,7 +295,7 @@ export const OutletBottomSheet: React.FC<OutletBottomSheetProps> = ({
                   type="button"
                   onClick={() => onMoreDetails(outlet)}
                   aria-label={`View analytics for ${outlet.name}`}
-                  className="min-h-[46px] px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-sky-400/35 text-xs font-bold text-sky-300 hover:text-white flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                  className="min-h-[46px] px-3 rounded-xl ov-glass-recessed hover:border-[#00C8FF]/55 text-xs font-bold text-sky-300 hover:text-white flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
                 >
                   <BarChart3 size={15} />
                   <span>Analytics</span>

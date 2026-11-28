@@ -147,6 +147,7 @@ export function createApiApp(): express.Express {
   const CONFIG_FILE = path.join(DATA_DIR, 'apps_script_config.json');
   const PLANOGRAMS_CACHE_FILE = path.join(DATA_DIR, 'planograms_cache.json');
   const PJP_CACHE_FILE = path.join(DATA_DIR, 'pjp_cache.json');
+  const FIELD_REQUESTS_FILE = path.join(DATA_DIR, 'field_requests.json');
 
   // Load runtime configuration (V1 and V2)
   let runtimeAppsScriptUrl = process.env.APPS_SCRIPT_URL || '';
@@ -1527,6 +1528,336 @@ export function createApiApp(): express.Express {
       return res.status(500).json({
         ok: false,
         error: err?.message || 'Failed to optimize PJP driving route'
+      });
+    }
+  });
+
+  // =========================================================================
+  // FIELD REQUESTS API (Google Sheets Backend Sync + Persistent Server Cache)
+  // =========================================================================
+  const isServerSupervisorRole = (role: unknown): boolean => {
+    const clean = String(role || '').trim().toLowerCase();
+    return (
+      clean.includes('senior') ||
+      clean.includes('supervisor') ||
+      clean.includes('manager') ||
+      clean.includes('admin') ||
+      clean.includes('lead') ||
+      clean.includes('head')
+    );
+  };
+
+  const readPersistedRequests = (): any[] => {
+    try {
+      if (fs.existsSync(FIELD_REQUESTS_FILE)) {
+        const parsed = JSON.parse(fs.readFileSync(FIELD_REQUESTS_FILE, 'utf-8'));
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch {
+      // Ignore corrupt cache
+    }
+    return [];
+  };
+
+  const writePersistedRequests = (list: any[]): void => {
+    try {
+      fs.writeFileSync(FIELD_REQUESTS_FILE, JSON.stringify(list.slice(0, 500), null, 2));
+    } catch {
+      // Non-fatal on ephemeral serverless runtime
+    }
+  };
+
+  const syncRequestToGoogleSheets = async (
+    action: 'sync_request' | 'update_request_status',
+    requestRecord: any
+  ): Promise<boolean> => {
+    const targetUrl =
+      (useSheetsV2 && sheetsV2Url ? sheetsV2Url : '') ||
+      runtimeAppsScriptUrl ||
+      process.env.APPS_SCRIPT_URL ||
+      '';
+
+    if (!targetUrl) {
+      return true; // Local server cache acts as authoritative store until Apps Script URL is set
+    }
+
+    const rowPayload = {
+      id: requestRecord.id,
+      reference_code: requestRecord.referenceCode,
+      type: requestRecord.type,
+      outlet_id: requestRecord.outletId || '',
+      outlet_sap_code: requestRecord.outletSapCode || '',
+      outlet_name: requestRecord.outletName,
+      priority: requestRecord.priority,
+      description: requestRecord.description,
+      planogram_id: requestRecord.planogramRef?.planogramId || '',
+      planogram_version: requestRecord.planogramRef?.version ?? '',
+      planogram_category: requestRecord.planogramRef?.category || '',
+      status: requestRecord.status,
+      created_by_name: requestRecord.createdByName,
+      created_by_rep_id: requestRecord.createdByRepId,
+      created_by_role: requestRecord.createdByRole,
+      created_at: requestRecord.createdAt,
+      updated_at: requestRecord.updatedAt,
+      manager_remarks: requestRecord.managerRemarks || '',
+      reviewed_by: requestRecord.reviewedBy || '',
+      reviewed_at: requestRecord.reviewedAt || ''
+    };
+
+    try {
+      const payload = useSheetsV2
+        ? {
+            api_key: sheetsV2ApiKey,
+            action,
+            request: rowPayload,
+            tables: {
+              field_requests: [rowPayload]
+            }
+          }
+        : {
+            action,
+            request: rowPayload,
+            tables: {
+              field_requests: [rowPayload]
+            }
+          };
+
+      const res = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000)
+      });
+      return res.ok;
+    } catch (err: any) {
+      console.warn(`[Requests Sheets Sync] ${action} warning:`, err?.message);
+      return false;
+    }
+  };
+
+  app.get('/api/requests', async (_req, res) => {
+    try {
+      const localList = readPersistedRequests();
+      const targetUrl =
+        (useSheetsV2 && sheetsV2Url ? sheetsV2Url : '') ||
+        runtimeAppsScriptUrl ||
+        process.env.APPS_SCRIPT_URL ||
+        '';
+
+      let merged = localList;
+
+      if (targetUrl) {
+        try {
+          const gasRes = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              useSheetsV2
+                ? { api_key: sheetsV2ApiKey, action: 'get_requests' }
+                : { action: 'get_requests' }
+            ),
+            signal: AbortSignal.timeout(8000)
+          });
+
+          if (gasRes.ok) {
+            const json: any = await gasRes.json().catch(() => null);
+            const remoteList: any[] = Array.isArray(json?.requests) ? json.requests : [];
+            if (remoteList.length > 0) {
+              const byId = new Map<string, any>();
+              localList.forEach((item) => {
+                if (item?.id) byId.set(item.id, item);
+              });
+              remoteList.forEach((r) => {
+                const id = String(r.id || r.reference_code || '');
+                if (!id) return;
+                const normalized = {
+                  id,
+                  referenceCode: String(r.referenceCode || r.reference_code || id),
+                  type: String(r.type || 'Other'),
+                  outletId: r.outletId || r.outlet_id || undefined,
+                  outletSapCode: r.outletSapCode || r.outlet_sap_code || undefined,
+                  outletName: String(r.outletName || r.outlet_name || 'General'),
+                  priority: String(r.priority || 'Normal'),
+                  description: String(r.description || ''),
+                  status: String(r.status || 'Pending'),
+                  createdByName: String(r.createdByName || r.created_by_name || ''),
+                  createdByRepId: String(r.createdByRepId || r.created_by_rep_id || ''),
+                  createdByRole: String(r.createdByRole || r.created_by_role || 'Modern Trade Executive'),
+                  createdAt: String(r.createdAt || r.created_at || new Date().toISOString()),
+                  updatedAt: String(r.updatedAt || r.updated_at || new Date().toISOString()),
+                  managerRemarks: r.managerRemarks || r.manager_remarks || undefined,
+                  reviewedBy: r.reviewedBy || r.reviewed_by || undefined,
+                  reviewedAt: r.reviewedAt || r.reviewed_at || undefined,
+                  statusHistory: Array.isArray(r.statusHistory) ? r.statusHistory : []
+                };
+                const existing = byId.get(id);
+                if (!existing || Date.parse(normalized.updatedAt) >= Date.parse(existing.updatedAt || '')) {
+                  byId.set(id, normalized);
+                }
+              });
+              merged = Array.from(byId.values());
+              writePersistedRequests(merged);
+            }
+          }
+        } catch {
+          // Non-fatal fallback to local persisted store
+        }
+      }
+
+      const sorted = [...merged].sort(
+        (a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0)
+      );
+
+      return res.json({
+        success: true,
+        requests: sorted
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to load field requests'
+      });
+    }
+  });
+
+  app.post('/api/requests', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const type = String(body.type || '').trim();
+      const outletName = String(body.outletName || '').trim();
+      const priority = String(body.priority || 'Normal').trim();
+      const description = String(body.description || '').trim();
+      const createdByName = String(body.createdByName || '').trim();
+      const createdByRepId = String(body.createdByRepId || '').trim();
+      const createdByRole = String(body.createdByRole || 'Modern Trade Executive').trim();
+
+      if (!type || !outletName || !description || !createdByName) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required fields: type, outletName, description, or createdByName'
+        });
+      }
+
+      const existing = readPersistedRequests();
+      const nowIso = new Date().toISOString();
+      const seqNum = String(existing.length + 1).padStart(4, '0');
+      const id = String(body.clientRequestId || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+      const referenceCode = `REQ-${nowIso.slice(0, 4)}-${seqNum}`;
+
+      const record = {
+        id,
+        referenceCode,
+        type,
+        outletId: body.outletId ? String(body.outletId) : undefined,
+        outletSapCode: body.outletSapCode ? String(body.outletSapCode) : undefined,
+        outletName,
+        priority,
+        description,
+        attachmentDataUrl:
+          typeof body.attachmentDataUrl === 'string' && body.attachmentDataUrl.startsWith('data:image/')
+            ? body.attachmentDataUrl.slice(0, 2_500_000)
+            : undefined,
+        planogramRef: body.planogramRef && typeof body.planogramRef === 'object' ? body.planogramRef : undefined,
+        status: 'Pending',
+        createdByName,
+        createdByRepId,
+        createdByRole,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        statusHistory: [
+          {
+            status: 'Pending',
+            actor: createdByName,
+            actorRole: createdByRole,
+            timestamp: nowIso,
+            note: 'Submitted by field executive'
+          }
+        ]
+      };
+
+      const nextList = [record, ...existing.filter((r) => r.id !== id)];
+      writePersistedRequests(nextList);
+
+      const sheetsSynced = await syncRequestToGoogleSheets('sync_request', record);
+
+      return res.json({
+        success: true,
+        sheetsSynced,
+        request: record
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to create field request'
+      });
+    }
+  });
+
+  app.patch('/api/requests/:id', async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const { status, managerRemarks, actorName, actorRole } = req.body || {};
+
+      if (!isServerSupervisorRole(actorRole)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Only supervisors or senior executives can approve, reject, or complete requests.'
+        });
+      }
+
+      const validStatuses = ['Approved', 'Rejected', 'Completed'];
+      if (!validStatuses.includes(String(status))) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid target status'
+        });
+      }
+
+      const existing = readPersistedRequests();
+      const idx = existing.findIndex((r) => r.id === id);
+      if (idx < 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Request not found'
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      const current = existing[idx];
+      const cleanRemarks = String(managerRemarks || '').trim();
+      const updated = {
+        ...current,
+        status: String(status),
+        managerRemarks: cleanRemarks || current.managerRemarks,
+        reviewedBy: String(actorName || 'Supervisor'),
+        reviewedAt: nowIso,
+        updatedAt: nowIso,
+        statusHistory: [
+          ...(Array.isArray(current.statusHistory) ? current.statusHistory : []),
+          {
+            status: String(status),
+            actor: String(actorName || 'Supervisor'),
+            actorRole: String(actorRole || 'Supervisor'),
+            timestamp: nowIso,
+            note: cleanRemarks || `Marked as ${status}`
+          }
+        ]
+      };
+
+      existing[idx] = updated;
+      writePersistedRequests(existing);
+
+      const sheetsSynced = await syncRequestToGoogleSheets('update_request_status', updated);
+
+      return res.json({
+        success: true,
+        sheetsSynced,
+        request: updated
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to update field request'
       });
     }
   });
